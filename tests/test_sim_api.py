@@ -163,8 +163,11 @@ def test_smile_capture_succeeds_when_chain_seeded(client, monkeypatch, tmp_path)
     old_spot = server.state.spx_price
     monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
     # chain rows mirror chain_manager.build_chain_quotes: strike + put_iv in percent.
-    strikes = [{"strike": float(s), "put_iv": 20.0} for s in (5700, 5800, 5900, 5950,
-                                                               6000, 6050, 6100)]
+    # A real put skew (IV falls from the far wing to ATM); a flat chain is rejected by
+    # the no-skew guard and falls back — see test_fit_smile_flat_degenerate_is_rejected.
+    strikes = [{"strike": float(s), "put_iv": p} for s, p in (
+        (5700, 40.0), (5800, 32.0), (5900, 26.0), (5950, 22.0),
+        (6000, 20.0), (6050, 19.0), (6100, 18.5))]
     server.state.chain_quotes_cache = {"strikes": strikes}
     server.state.spx_price = 6000.0
     try:
@@ -218,6 +221,69 @@ def test_smile_capture_stray_outlier_409(client, monkeypatch, tmp_path):
     try:
         r = client.post("/api/sim/smile/capture")
         assert r.status_code == 409, r.text
+    finally:
+        server.state.chain_quotes_cache = old_cache
+        server.state.spx_price = old_spot
+
+
+# Live SPX 0DTE chain slice, 2026-09-09 12:05 ET (spot 7638.21). Carries the three
+# vega-less quote pathologies a real chain always has: no-bid far-OTM puts (ask 0.05),
+# a tick-floor plateau pinned at mid 0.075, and deep-ITM puts whose IV is pure noise.
+_LIVE_0DTE_ROWS = [
+    # (strike, put_iv %, bid, ask, oi, delta)
+    (7210, 53.04, None, 0.05, 81, -0.0),      # no bid -> IV is a tick artifact
+    (7250, 52.88, None, 0.05, 422, -0.0),
+    (7280, 53.11, None, 0.05, 594, -0.0),
+    (7350, 55.01, 0.05, 0.10, 1156, -0.0005),  # mid stuck on the 0.05 tick -> fake hump
+    (7400, 52.85, 0.05, 0.10, 4570, -0.0024),
+    (7435, 46.09, 0.05, 0.10, 8646, -0.0035),
+    (7470, 40.37, 0.05, 0.10, 401, -0.0045),
+    (7490, 36.01, 0.10, 0.15, 2942, -0.005),   # informative put wing
+    (7500, 33.82, 0.10, 0.15, 6300, -0.0053),
+    (7520, 30.13, 0.10, 0.15, 1179, -0.0072),
+    (7540, 26.85, 0.15, 0.20, 1737, -0.0113),
+    (7560, 22.62, 0.20, 0.25, 1316, -0.0161),
+    (7580, 19.65, 0.40, 0.45, 2646, -0.0342),
+    (7600, 16.56, 0.90, 0.95, 5151, -0.0766),
+    (7620, 14.11, 2.75, 2.80, 3866, -0.2216),
+    (7635, 12.77, 6.80, 6.90, 2167, -0.4446),
+    (7650, 12.05, 15.30, 15.40, 3219, -0.7328),
+    (7660, 12.31, 23.30, 23.50, 1866, -0.8664),  # deep ITM -> IV ~ noise
+    (7700, 18.49, 61.80, 62.60, 2998, -0.9843),
+    (7750, 28.05, 111.10, 112.30, 1088, -0.994),
+    (7790, 36.93, 148.80, 155.80, 48, -0.9976),
+]
+
+
+def test_smile_capture_live_0dte_chain_succeeds(client, monkeypatch, tmp_path):
+    """A real 0DTE chain used to 409 ('SVI fit failed guards') because the vega-less
+    rows above drag the unconstrained fit onto the b-bound. Capture must drop them and
+    return a bounded, put-skewed smile that tracks the informative strikes."""
+    import sim_calibrate
+    from sim_calibrate import SmileParams
+    old_cache = server.state.chain_quotes_cache
+    old_spot = server.state.spx_price
+    monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
+    strikes = [{"strike": float(k), "put_iv": iv, "put_bid": b, "put_ask": a,
+                "put_oi": oi, "put_delta": d}
+               for k, iv, b, a, oi, d in _LIVE_0DTE_ROWS]
+    # spot deliberately differs from the cache's own snapshot price, as it does live
+    server.state.chain_quotes_cache = {"strikes": strikes, "spot_price": 7638.21}
+    server.state.spx_price = 7637.85
+    try:
+        r = client.post("/api/sim/smile/capture")
+        assert r.status_code == 200, r.text
+        smile = SmileParams.from_dict(r.json()["smile"])
+        assert 0.0 < smile.iv(-0.15) < 1.0 and 0.0 < smile.iv(0.15) < 1.0
+        assert smile.iv(-0.15) > smile.iv(0.0)          # put skew survives
+        assert 0.08 < smile.iv(0.0) < 0.25              # ATM IV near the observed ~12%
+        m = np.log(np.array([7490, 7500, 7520, 7540, 7560, 7580,
+                             7600, 7620, 7635], float) / 7638.21)
+        iv = np.array([36.01, 33.82, 30.13, 26.85, 22.62, 19.65,
+                       16.56, 14.11, 12.77]) / 100.0
+        rmse = float(np.sqrt(np.mean((smile.iv(m) - iv) ** 2)))
+        flat_rmse = float(np.sqrt(np.mean((iv - iv.mean()) ** 2)))
+        assert rmse < flat_rmse                         # not dragged by the junk rows
     finally:
         server.state.chain_quotes_cache = old_cache
         server.state.spx_price = old_spot

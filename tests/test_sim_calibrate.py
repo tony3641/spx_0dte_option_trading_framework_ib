@@ -265,6 +265,39 @@ def test_conditional_expectation_closed_form():
                                    rel=1e-12)
 
 
+def test_fit_smile_steep_0dte_skew_stays_bounded():
+    """A real 0DTE put skew is far steeper than the synthetic fixtures: IV ~36% at -2%
+    moneyness falling to ~12% ATM. The unconstrained SVI optimum then sits on the b
+    bound with sigma -> 0, whose wings blow past SVI_WING_CAP at the +/-15% ladder edge,
+    so every seed used to be rejected and the capture 409'd. The fit must instead return
+    the best BOUNDED smile, not the fallback.
+    """
+    # live SPX 0DTE slice, 2026-09-09 12:05 ET, spot 7638.21 (informative quotes only)
+    pairs = [(7490, 36.01), (7500, 33.82), (7520, 30.13), (7540, 26.85),
+             (7560, 22.62), (7580, 19.65), (7600, 16.56), (7620, 14.11),
+             (7635, 12.77), (7640, 12.44), (7650, 12.05)]
+    m = np.log(np.array([k for k, _ in pairs], float) / 7638.21)
+    iv = np.array([v for _, v in pairs]) / 100.0
+    smile, warnings = fit_smile(m, iv, DEFAULT_SMILE)
+    assert not warnings
+    # the cap is the active constraint here, so the fit sits ON it (float slack only)
+    assert 0.0 < smile.iv(-0.15) <= 1.0 + 1e-6 and 0.0 < smile.iv(0.15) <= 1.0 + 1e-6
+    assert smile.iv(-0.15) > smile.iv(0.0)              # put skew present
+    assert 0.08 < smile.iv(0.0) < 0.25                  # ATM IV near the observed 12-14%
+    rmse = float(np.sqrt(np.mean((smile.iv(m) - iv) ** 2)))
+    flat_rmse = float(np.sqrt(np.mean((iv - iv.mean()) ** 2)))
+    assert rmse < flat_rmse                             # beats a flat line
+
+
+def test_fit_smile_flat_degenerate_is_rejected():
+    """A constant IV cloud has no skew for the SVI to find. Returning a flat smile would
+    silently feed the sim an information-free curve; the fit must fall back instead."""
+    m = np.linspace(-0.03, 0.005, 15)
+    iv = np.full(m.shape, 0.18)
+    smile, warnings = fit_smile(m, iv, DEFAULT_SMILE)
+    assert warnings and smile == DEFAULT_SMILE
+
+
 def test_budget_off_leaves_tables_empty():
     from sim_calibrate import build_dynamics
     from sim_config import SimRunConfig
