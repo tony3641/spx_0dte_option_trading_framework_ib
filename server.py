@@ -11,7 +11,6 @@ and the WebSocket endpoint.
 
 import asyncio
 import logging
-import math
 import signal
 import sys
 from pathlib import Path
@@ -23,7 +22,6 @@ if sys.platform == "win32":
 
 import nest_asyncio
 import uvicorn
-import numpy as np
 from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, WebSocket, HTTPException, Request
 from pydantic import BaseModel
@@ -474,24 +472,15 @@ async def api_sim_smile():
 async def api_sim_smile_capture():
     rows = getattr(state, "chain_quotes_cache", {}) or {}
     strikes = rows.get("strikes") or []
-    spot = float(getattr(state, "spx_price", 0) or 0)
-    pts_m, pts_iv = [], []
-    for row in strikes:
-        iv = row.get("put_iv")
-        k = row.get("strike")
-        if not iv or not spot or not k:
-            continue
-        oi = row.get("put_oi")
-        if oi is not None and oi <= 0:            # 0-OI rows are untradeable; absent key passes
-            continue
-        m = math.log(float(k) / spot)             # log-moneyness (matches the pricer)
-        if -0.15 <= m <= 0.02:                    # put wing + ATM anchor; exclude far-ITM puts
-            pts_m.append(m)
-            pts_iv.append(float(iv) / 100.0)
+    # The IVs were computed against the snapshot's own spot; map moneyness with that same
+    # spot so m and IV describe the same instant (the live state.spx_price has moved on).
+    spot = float(rows.get("spot_price") or getattr(state, "spx_price", 0) or 0)
+    from sim_calibrate import (DEFAULT_SMILE, fit_smile, save_smile_snapshot,
+                               smile_capture_points)
+    pts_m, pts_iv = smile_capture_points(strikes, spot)
     if len(pts_m) < 5:
         return JSONResponse(status_code=409, content={"detail": "live chain not available"})
-    from sim_calibrate import fit_smile, DEFAULT_SMILE, save_smile_snapshot
-    smile, warnings = fit_smile(np.array(pts_m), np.array(pts_iv), DEFAULT_SMILE)
+    smile, warnings = fit_smile(pts_m, pts_iv, DEFAULT_SMILE)
     if warnings:
         return JSONResponse(status_code=409, content={"detail": warnings[0]})
     save_smile_snapshot(smile)
