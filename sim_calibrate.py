@@ -4,6 +4,7 @@ Preset fallback on non-convergence keeps runs alive; warnings surface in the UI
 calibration panel. All functions are pure — no IO.
 """
 import math
+import warnings
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -151,6 +152,48 @@ SVI_WIDE = 0.30            # wider floor/negativity horizon
 SVI_WING_CAP = 1.0         # max IV (decimal) allowed across [-SVI_EDGE, SVI_EDGE]
 SVI_FLOOR = 0.005          # min IV allowed anywhere
 _SVI_BOUNDS = [(0.005, 3.0), (1e-4, 6.0), (-0.999, 0.999), (-0.15, 0.10), (1e-4, 0.5)]
+_SVI_TOL = 1e-9            # float slack so a boundary solution is not rejected
+SVI_MIN_PUT_SKEW = 0.01    # a fit flatter than 1 vol point ATM->-15% carries no skew info
+
+# Capture input hygiene. A live 0DTE chain carries rows whose IV is not information:
+# far-OTM puts with no bid (ask pinned on the 0.05 tick), strikes whose mid is stuck on
+# the tick floor (a constant price across ~14 strikes -> an IV "hump" no convex SVI can
+# match), and deep-ITM puts whose mid is almost pure intrinsic. Feeding those to the fit
+# drives the seed wing slopes to the b bound and makes the capture fail its own guards.
+CAPTURE_M_LO = -SVI_EDGE   # same band as the sim ladder
+CAPTURE_M_HI = 0.02        # small ITM anchor around ATM
+CAPTURE_MIN_BID = 0.10     # 2x the 0.05 SPX tick: below this the quote is tick-pinned
+CAPTURE_MIN_ABS_DELTA = 0.005   # below this the option has no vega left
+CAPTURE_MAX_ABS_DELTA = 0.75    # above this the mid is ~intrinsic and IV is noise
+
+
+def smile_capture_points(strikes, spot) -> Tuple[np.ndarray, np.ndarray]:
+    """(m, iv) capture points from live chain rows, dropping vega-less quotes.
+
+    Rows that omit a field keep passing (wire payloads and tests may not carry it); a
+    row that supplies one must clear it — the same "absent key passes" convention the
+    capture endpoint already used for open interest.
+    """
+    pts_m, pts_iv = [], []
+    for row in strikes:
+        iv = row.get("put_iv")
+        k = row.get("strike")
+        if not iv or not spot or not k:
+            continue
+        oi = row.get("put_oi")
+        if oi is not None and oi <= 0:
+            continue
+        bid = row.get("put_bid")
+        if bid is not None and bid < CAPTURE_MIN_BID:
+            continue
+        delta = row.get("put_delta")
+        if delta is not None and not (CAPTURE_MIN_ABS_DELTA <= abs(delta) <= CAPTURE_MAX_ABS_DELTA):
+            continue
+        m = math.log(float(k) / spot)
+        if CAPTURE_M_LO <= m <= CAPTURE_M_HI:
+            pts_m.append(m)
+            pts_iv.append(float(iv) / 100.0)
+    return np.array(pts_m), np.array(pts_iv)
 
 
 @dataclass
@@ -313,20 +356,59 @@ def _svi_guards(smile: SmileParams, m, iv) -> List[str]:
     """
     core = np.linspace(-SVI_EDGE, SVI_EDGE, 301)
     g = smile.iv(core)
-    if not np.isfinite(g).all() or g.max() > SVI_WING_CAP or g.min() < SVI_FLOOR:
+    if (not np.isfinite(g).all() or g.max() > SVI_WING_CAP + _SVI_TOL
+            or g.min() < SVI_FLOOR - _SVI_TOL):
         return ["smile: fit IV exceeds bounds at +-%g — using fallback snapshot" % SVI_EDGE]
     wide = smile.iv(np.linspace(-SVI_WIDE, SVI_WIDE, 401))
-    if not np.isfinite(wide).all() or wide.min() < SVI_FLOOR:
+    if not np.isfinite(wide).all() or wide.min() < SVI_FLOOR - _SVI_TOL:
         return ["smile: fit IV negative/non-finite outside +-%g — using fallback snapshot" % SVI_EDGE]
     pw = smile.iv(np.linspace(-SVI_EDGE, 0.0, 201))
     if np.any(np.diff(pw) > 1e-6):
         return ["smile: fit non-monotone put wing — using fallback snapshot"]
+    if smile.iv(-SVI_EDGE) - smile.iv(0.0) < SVI_MIN_PUT_SKEW:
+        return ["smile: fit flat (no put skew) — using fallback snapshot"]
     pred = smile.iv(m)
     rmse = float(np.sqrt(np.mean((pred - iv) ** 2)))
-    flat_rmse = float(np.sqrt(np.mean((iv - np.median(iv)) ** 2)))
-    if rmse > flat_rmse + 0.005:
-        return ["smile: SVI no better than flat IV — using fallback snapshot"]
+    # Compare against a robust spread, not an RMSE baseline: one wild quote inflates
+    # any mean/median-squared baseline enough to admit a fit that ignores the rest of
+    # the chain (the stray-outlier case this guard exists to catch).
+    if rmse > _robust_scale(iv) + 0.005:
+        return ["smile: SVI fit does not track the chain — using fallback snapshot"]
     return []
+
+
+def _robust_scale(iv) -> float:
+    """1.4826 * MAD — a spread estimate a single wild quote cannot inflate."""
+    med = float(np.median(iv))
+    return 1.4826 * float(np.median(np.abs(np.asarray(iv) - med)))
+
+
+def _svi_constraints() -> list:
+    """The guard envelope as scalar inequalities, so the solver honours it directly.
+
+    IV(m) = a + b*(rho*x + sqrt(x^2+sigma^2)) is convex in m, so its maximum over the
+    core band sits at an endpoint and its minimum over the wide band at the vertex or an
+    endpoint; the put-wing monotonicity is one slope sign at m = 0. That turns the
+    guards' 800-point scan into four cheap inequalities.
+    """
+    def iv_at(theta, xs):
+        a, b, rho, m0, sigma = theta
+        x = np.asarray(xs) - m0
+        return a + b * (rho * x + np.sqrt(x * x + sigma * sigma))
+
+    def vertex(theta):
+        return theta[3] + theta[4] * (-theta[2]) / np.sqrt(1.0 - theta[2] ** 2)
+
+    return [
+        {"type": "ineq", "fun": lambda t: SVI_WING_CAP - iv_at(t, -SVI_EDGE)},
+        {"type": "ineq", "fun": lambda t: SVI_WING_CAP - iv_at(t, SVI_EDGE)},
+        # convex in m, so the band minimum is at the vertex clamped into the band
+        {"type": "ineq", "fun": lambda t: iv_at(t, np.clip(vertex(t), -SVI_WIDE, SVI_WIDE))
+         - SVI_FLOOR},
+        # IV'(0) <= 0 keeps the put wing monotone (IV is convex, so the largest slope
+        # over [-EDGE, 0] is at m = 0)
+        {"type": "ineq", "fun": lambda t: -(t[2] - t[3] / np.sqrt(t[3] ** 2 + t[4] ** 2))},
+    ]
 
 
 def fit_smile(m_points, iv_points, fallback: SmileParams) -> Tuple[SmileParams, List[str]]:
@@ -342,9 +424,19 @@ def fit_smile(m_points, iv_points, fallback: SmileParams) -> Tuple[SmileParams, 
     if len(m) < 5:
         return fallback, ["smile: too few IV points inside +-%g — using fallback snapshot" % SVI_EDGE]
     best_ok, best_val = None, float("inf")
+    constraints = _svi_constraints()
     for x0 in _svi_seeds(m, iv):
-        res = minimize(_svi_objective, x0, args=(m, iv), method="L-BFGS-B",
-                       bounds=_SVI_BOUNDS, options=dict(maxiter=2000, ftol=1e-12, gtol=1e-8))
+        # SLSQP, not L-BFGS-B: on a steep 0DTE skew the unconstrained optimum sits on
+        # the b bound and its wings blow past SVI_WING_CAP, so every seed used to be
+        # thrown away even though a bounded fit exists. Constrain the search instead.
+        with warnings.catch_warnings():
+            # scipy's SLSQP line search clips iterates to the box and carries on; the
+            # returned solution is re-checked against the bounds, so the noise is benign.
+            warnings.filterwarnings(
+                "ignore", message="Values in x were outside bounds during a minimize step")
+            res = minimize(_svi_objective, x0, args=(m, iv), method="SLSQP",
+                           bounds=_SVI_BOUNDS, constraints=constraints,
+                           options=dict(maxiter=400, ftol=1e-12))
         if not res.success or not np.isfinite(res.fun):
             continue
         cand = SmileParams(*(float(v) for v in res.x),
