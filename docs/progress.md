@@ -4,6 +4,40 @@ All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboa
 
 ---
 
+## Session: September 7, 2026 - Strategy-tuning skill + sim_tune.py runner
+
+- Added `sim_tune.py` (repo root): deterministic variant runner for agent-driven
+  strategy tuning. Takes a `variants.json` spec (global dataset/run/stress blocks +
+  named knob variants), injects overridden `Strategy` objects in memory via the
+  `state` stub (never writes `config/strategies.json`), runs one `execute_pipeline`
+  call per variant, and writes `results.csv` / `results.json` into an experiment
+  folder. Always runs the live config as the `baseline` control first; validates the
+  knob whitelist up front and refuses sim-unsupported gates (trend, atm_iv,
+  non-bull_put) before any compute; warns if `spx_fan` differs across variants
+  (common-random-numbers check).
+- Added project skill `.claude/skills/strategy-tuning/` (SKILL.md + references):
+  a five-phase methodology — scope/freeze, baseline + noise floor, diagnose from
+  the exit-reason breakdown, one-knob-at-a-time rounds with keep/revert decision
+  log, multi-seed robustness gate, then a propose-only JSON diff report. Judgment
+  over brute force: the agent picks the binding knob per round; the runner just
+  executes deterministically. Includes the knob taxonomy (sim-consumed subset,
+  effect directions, quantization traps) and the future family-mode extension
+  design.
+- Reproducibility property relied on by the methodology: for identical
+  (seed, dataset, n_paths, single sweep cell) the sim replays bit-identical spot
+  paths across strategy-knob variants (`SeedSequence(entropy=cfg.seed,
+  spawn_key=(ci, ch))`; no RNG in the strategy engine), so per-round deltas are
+  attributable to knobs alone.
+- Tests: `tests/test_sim_tune.py` (10 tests) — knob whitelist/unset semantics,
+  fail-fast on unsupported strategies, CRN `spx_fan` equality, byte-identical
+  results across invocations, config-file-untouched guarantee, CSV/JSON schemas,
+  multi-seed rows, CLI smoke end-to-end. Full suite: 551 passed; the 2 pre-existing
+  failures (chain_fetcher GEX tolerance, FOMC date) and the e2e server-start error
+  are unrelated to this change.
+- README: new "Strategy tuning (agent workflow)" subsection under Simulation.
+
+---
+
 ## Session: April 10, 2026 - Current update
 
 - Added a broad backend refactor and new core service modules: `account_manager.py`, `app_state.py`, `chain_manager.py`, `config.py`, `ib_connection.py`, `order_manager.py`, `price_bars.py`, `risk_free.py`, `ws_handler.py`.

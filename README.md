@@ -202,6 +202,24 @@ guidance.
   (histograms, MTM fan, bootstrap DDs, SPX fan), and a glossary reusing the UI's "?"
   explanations.
 
+### Strategy tuning (agent workflow)
+
+`sim_tune.py` executes **named knob variants** of one live strategy from
+`config/strategies.json` through the simulator — deterministically, without ever
+writing the config file. It backs the agent-driven tuning methodology in
+`.claude/skills/strategy-tuning/` (baseline → diagnose → one-knob-at-a-time
+rounds → multi-seed robustness gate → propose-only JSON diff), where the agent
+picks which knob to probe by judgment rather than sweeping grids. Variant specs
+and results land in `docs/experiments/<slug>/` (`variants.json`, `results.csv`,
+`results.json`, `report.md`). All variants in a spec share the same seed,
+dataset, and `n_paths`, so the simulator replays identical spot paths per variant
+(common random numbers) and metric deltas are attributable to the knobs alone.
+
+```
+python sim_tune.py --strategy Experiment_1 --spec docs/experiments/<slug>/variants.json --smoke  # wiring check
+python sim_tune.py --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
+```
+
 ## Charts
 
 ### 1. SPX Intraday (top)
