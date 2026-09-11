@@ -87,6 +87,24 @@ Here's what the report it produces looks like:
 ![Day PnL distribution and spread mark-to-market through the day](docs/simulation2.png)
 ![Bootstrap max-drawdown histogram over 60-day sequences](docs/simulation3.png)
 
+### Parallel execution
+
+A run is split into `(sweep cell, chunk)` tasks and executed on a **process pool**
+(`sim_parallel.py`), so a full-size run uses every CPU core. Processes rather than
+threads: the exit scan is a per-path Python loop, which the GIL would serialize.
+
+- **Workers**: set in the gear menu (Settings → Simulator → *Worker processes*), or
+  `SIM_WORKERS` in `.env`. `0` = auto = CPU count; `1` = serial.
+- **Auto stays serial for small runs** (< ~1000 paths): spawning workers costs more
+  than the run itself. Explicit `n_workers`/`SIM_WORKERS` overrides that.
+- **Results are identical either way** — the RNG stream is keyed by
+  `(seed, cell, chunk)` and results are reassembled by index, never by completion
+  order, so parallel and serial runs are bit-for-bit the same.
+- **Cancel** stops submitting new chunks and kills the in-flight ones; cells whose
+  chunks did not all finish are dropped, as before.
+- First-run cost on Windows: each worker re-imports the app (~1–3 s per worker) when
+  the pool is created. The pool is per run — no idle worker processes between runs.
+
 ### Known limitations
 
 - **Family mode** uses placeholder per-path stats (`mtm=None`) and does **not** support
@@ -100,8 +118,9 @@ Here's what the report it produces looks like:
   mis-simulated with bull-put geometry.
 - **Single-mode day-PnL stats count entered days only**; family-mode totals include zero-PnL
   days for never-entered children paths (a definition mismatch between the two modes).
-- **Engine-mode exit scans are per-path Python loops**; "~10k paths in seconds" is optimistic
-  for large sweeps with many cells.
+- **Engine-mode exit scans are per-path Python loops** — the reason runs are CPU-bound.
+  They are parallelized across processes (see "Parallel execution"), so wall-clock scales
+  with cores, but a single huge sweep still takes minutes.
 - **Sweep cells use independent RNG streams** (no common random numbers), so cross-cell
   differences include sampling noise — an experiment-quality tradeoff, not a paired A/B.
 - **Bars and the fitted model are cached per `(source, csv_path, bar size, lookback)`** —
@@ -314,6 +333,7 @@ Settings are resolved in order: **environment variable → repo-root `.env` → 
 | `MONTHLY_CACHE_TTL` | `600` | Monthly chain cache TTL (seconds) |
 | `SGOV_TICKER` | `SGOV` | Ticker used for risk-free rate |
 | `DEFAULT_RISK_FREE_RATE` | `0.043` | Fallback risk-free rate |
+| `SIM_WORKERS` | `0` | Sim worker processes: `0` = auto (CPU count), `1` = serial |
 | `RTH_OPEN` / `RTH_CLOSE` | `09:30` / `16:15` | Regular trading hours window (ET) |
 | `FOMC_DATES` | `[]` | FOMC meeting dates (via `params.yaml`) |
 

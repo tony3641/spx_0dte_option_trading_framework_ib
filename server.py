@@ -11,6 +11,7 @@ and the WebSocket endpoint.
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -57,6 +58,7 @@ from discord_settings import (
 )
 from env_store import update_env
 import sim_jobs
+import sim_parallel
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -339,6 +341,10 @@ class IbSettingsIn(BaseModel):
     port: int
 
 
+class SimSettingsIn(BaseModel):
+    workers: int
+
+
 @app.get("/api/settings/discord")
 async def get_discord_settings(request: Request):
     if not _is_localhost(request):
@@ -412,6 +418,34 @@ async def post_ib_settings(body: IbSettingsIn, request: Request):
         logger.warning(f"Failed to persist IB_PORT to .env: {e}")
         persisted = False
     return {"ok": True, "port": body.port, "persisted": persisted}
+
+
+@app.get("/api/settings/sim")
+async def get_sim_settings(request: Request):
+    if not _is_localhost(request):
+        raise HTTPException(status_code=403, detail="Localhost only")
+    return {"workers": sim_parallel.configured_workers(),
+            "cpu_count": os.cpu_count() or 1}
+
+
+@app.post("/api/settings/sim")
+async def post_sim_settings(body: SimSettingsIn, request: Request):
+    if not _is_localhost(request):
+        raise HTTPException(status_code=403, detail="Localhost only")
+    if body.workers < 0:
+        raise HTTPException(status_code=400,
+                            detail="workers must be >= 0 (0 = auto)")
+    # Hot-apply first: resolve_workers reads the live env, so the next run picks
+    # this up without a restart; the .env write only makes it survive restarts.
+    os.environ["SIM_WORKERS"] = str(body.workers)
+    persisted = True
+    try:
+        update_env({"SIM_WORKERS": str(body.workers)})
+    except Exception as e:
+        logger.warning(f"Failed to persist SIM_WORKERS to .env: {e}")
+        persisted = False
+    return {"ok": True, "workers": body.workers,
+            "cpu_count": os.cpu_count() or 1, "persisted": persisted}
 
 
 # ---------------------------------------------------------------------------
