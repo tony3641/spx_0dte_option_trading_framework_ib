@@ -36,7 +36,7 @@
             source: $('simSource').value,
             csv_path: $('simCsvPath').value.trim(),
             bar_size: $('simBarSize').value,
-            lookback_days: num('simLookback', 60),
+            lookback_days: num('simLookback', 10),
             n_paths: num('simPaths', 10000),
             seed: num('simSeed', 42),
             spot0: spot,

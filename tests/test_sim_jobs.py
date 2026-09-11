@@ -8,11 +8,13 @@ import sim_jobs
 from sim_config import SimRunConfig
 from sim_data import load_bars
 
-FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sim_bars_5m.csv")
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
+SPOT0 = 7718.36   # last RTH close of the 10-day fixture (2026-09-04 16:00)
 
 
 def _cfg(**kw):
-    d = dict(strategy_name="T", source="csv", csv_path=FIXTURE, n_paths=40, chunk_size=20,
+    d = dict(strategy_name="T", source="csv", csv_path=FIXTURE, bar_size="1m",
+             lookback_days=10, n_paths=40, chunk_size=20,
              equity=100_000.0, bootstrap_seqs=50, bootstrap_len=20)
     d.update(kw)
     return SimRunConfig(**d)
@@ -34,10 +36,10 @@ def test_execute_pipeline_produces_payload():
     cfg = _cfg()
     bars = load_bars(cfg)
     seen = []
-    payload = sim_jobs.execute_pipeline(cfg, bars, lambda p, m: seen.append(p), spot0=6000.0)
+    payload = sim_jobs.execute_pipeline(cfg, bars, lambda p, m: seen.append(p), spot0=SPOT0)
     assert seen and seen[-1] == 1.0
     assert payload["meta"]["strategy"] == "T"
-    assert payload["meta"]["steps_per_day"] == 78
+    assert payload["meta"]["steps_per_day"] == 390
     assert len(payload["cells"]) == 1
     cell = payload["cells"][0]
     assert cell["stats"]["n"] == 40
@@ -51,7 +53,7 @@ def test_execute_pipeline_attaches_spx_fan():
     # and attached at the result root for the UI's top graph + report export.
     cfg = _cfg()
     bars = load_bars(cfg)
-    payload = sim_jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=6000.0)
+    payload = sim_jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=SPOT0)
     sf = payload["spx_fan"]
     assert len(sf["quantiles"]) == 20
     assert len(sf["values"]) == 20
@@ -66,7 +68,7 @@ def test_execute_pipeline_sweep_grid():
     cfg = _cfg(sl_multipliers=[2.0, 6.0, float("inf")], strike_mode="dynamic_k",
                dynamic_k_values=[0.3, 0.6])
     bars = load_bars(cfg)
-    payload = sim_jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=6000.0)
+    payload = sim_jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=SPOT0)
     cells = payload["cells"]
     assert len(cells) == 6                                    # 3 SL x 2 k
     assert [c["sl_multiplier"] for c in cells] == [2.0, 2.0, 6.0, 6.0, "inf", "inf"]
@@ -81,7 +83,7 @@ def test_pipeline_honours_cancel():
     def progress(p, m):
         state["cancelled"] = p >= 0.34                        # cancel mid-grid
 
-    payload = sim_jobs.execute_pipeline(cfg, bars, progress, spot0=6000.0,
+    payload = sim_jobs.execute_pipeline(cfg, bars, progress, spot0=SPOT0,
                                         cancel_check=lambda: state["cancelled"])
     assert len(payload["cells"]) == 1                         # stopped after cell 1
 
