@@ -105,7 +105,7 @@ def test_put_prices_monotone_in_strike_with_tilt():
     m = np.log(ladder / 6000.0)
     for t, mult in [(0, 1.8), (3, 0.6)]:
         iv = smile_iv(m, DEFAULT_SMILE, np.array([[SIGMA0 * mult]]), _dyn(skew_beta=1.0), t)
-        put = bsm_put(6000.0, ladder, bar_year_frac(300) * (10 - t), R, iv)
+        put = bsm_put(6000.0, ladder, bar_year_frac(60) * (10 - t), R, iv)
         assert np.all(np.diff(put) >= -1e-12)   # put rises with strike, no butterfly flip
 
 
@@ -141,13 +141,13 @@ def test_strike_monotonicity_every_bar_at_gamma_04():
     model = CalibratedModel(
         garch=GarchParams(omega=2e-10, alpha=0.05, gamma=0.10, beta=0.85, nu=6.0,
                           converged=True),
-        ushape=np.ones(78), sigma0=SIGMA0, smile=DEFAULT_SMILE, vix0=15.0, source="test")
-    cfg = SimRunConfig(strategy_name="T", bar_size="5m", skew_beta=1.0, skew_t_gamma=0.4)
+        ushape=np.ones(390), sigma0=SIGMA0, smile=DEFAULT_SMILE, vix0=15.0, source="test")
+    cfg = SimRunConfig(strategy_name="T", bar_size="1m", skew_beta=1.0, skew_t_gamma=0.4)
     dyn = build_dynamics(model, cfg)
     ladder = np.arange(5700.0, 6300.0 + 2.5, 5.0)
     m = np.log(ladder / 6000.0)
-    barf = 300 / (252 * 6.5 * 3600.0)
-    for t in range(78):
+    barf = 60 / (252 * 6.5 * 3600.0)
+    for t in range(390):
         iv = smile_iv(m, DEFAULT_SMILE, np.array([[SIGMA0 * 1.8]]), dyn, t)
         put = bsm_put(6000.0, ladder, barf * (77 - t), R, iv)
         assert np.all(np.diff(put) >= -1e-12), f"butterfly flip at bar {t}"
@@ -180,19 +180,19 @@ def test_late_window_credits_steeper_with_gamma():
     Vol-SPIKE geometry (sigma = 1.8x SIGMA0 every bar): the smile tilt RICHENS the bought
     deep-OTM wing put more than the near-ATM short put, so the bull-put net credit FALLS.
     skew_t_gamma AMPLIFIES that tilt toward expiry (scales by (T0/T)^gamma), so the late
-    window (bars >= 47) mean credit at gamma=0.4 is BELOW gamma=0 — the brief's `>` was
+    window (bars >= 235) mean credit at gamma=0.4 is BELOW gamma=0 — the brief's `>` was
     backwards for a spike. Direction asserted below was confirmed empirically.
 
     The permissive short-delta band qualifies at the window OPEN for every path, so no
     path ever reaches the late window naturally (fixture captures are all bar 0). To make
     the last-hour credit observable we gate eligibility with run_entry's per_path_start,
-    staggering starts across bars 47..53. Both gamma cohorts share identical starts, so
+    staggering starts across bars 235..241. Both gamma cohorts share identical starts, so
     entry bars match and the fills differ only by the expiry amplification.
     """
     from sim_calibrate import CalibratedModel, GarchParams, build_dynamics
     from sim_config import SimRunConfig
     rng = np.random.default_rng(0)
-    n, steps = 60, 78
+    n, steps = 60, 390
     spots = np.full((n, steps), 6000.0) + rng.normal(0, 2.0, (n, steps)).cumsum(1) * 0.1
     spots *= np.linspace(1.0, 0.97, steps)[None, :]          # down drift
     sigmas = np.full((n, steps), SIGMA0 * 1.8)               # vol shock
@@ -202,15 +202,15 @@ def test_late_window_credits_steeper_with_gamma():
         ushape=np.ones(steps), sigma0=SIGMA0, smile=DEFAULT_SMILE, vix0=15.0,
         source="test")
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
-    starts = 47 + np.arange(n) % 7                            # force eligibility into bars 47..53
+    starts = 235 + np.arange(n) % 7                           # force eligibility into bars 235..241
     fills, minutes = {}, {}
     for tag, gamma in [("gamma0", 0.0), ("gamma04", 0.4)]:
-        cfg = SimRunConfig(strategy_name="T", bar_size="5m", skew_beta=1.0,
+        cfg = SimRunConfig(strategy_name="T", bar_size="1m", skew_beta=1.0,
                            skew_t_gamma=gamma)
         es = run_entry_sim(model, cfg, spots, sigmas, ladder, dyn=build_dynamics(model, cfg),
                            per_path_start=starts)
         fills[tag], minutes[tag] = es.fill_credit, es.entry_minute
-    late = minutes["gamma0"] >= 47                            # last hour of the 09:35-14:00 window
+    late = minutes["gamma0"] >= 235                           # last hour of the 09:35-14:00 window
     assert late.all(), "forced-late cohort did not all enter in the late window"
     print(f"late-window mean credit gamma=0: {fills['gamma0'][late].mean():.4f} "
           f"gamma=0.4: {fills['gamma04'][late].mean():.4f}")
@@ -228,13 +228,13 @@ def _budget_model(ushape):
 
 
 def _ubars(**kw):
-    """Budget dyn over a 78-bar 5-min day with the given ATM sigma path."""
+    """Budget dyn over a 390-bar 1-min day with the given ATM sigma path."""
     from sim_calibrate import build_dynamics
     from sim_config import SimRunConfig
-    u = np.interp(np.arange(78), [0, 6, 39, 72, 77], [2.0, 0.7, 0.6, 1.6, 2.4])
+    u = np.interp(np.arange(390), [0, 30, 195, 360, 385], [2.0, 0.7, 0.6, 1.6, 2.4])
     u /= u.mean()
-    model = _budget_model(u if kw.pop("u_shape", True) else np.ones(78))
-    cfg = SimRunConfig(strategy_name="T", bar_size="5m", atm_budget=True, **kw)
+    model = _budget_model(u if kw.pop("u_shape", True) else np.ones(390))
+    cfg = SimRunConfig(strategy_name="T", bar_size="1m", atm_budget=True, **kw)
     return build_dynamics(model, cfg), model
 
 
@@ -243,7 +243,7 @@ def test_budget_quiet_flat_ushape_gives_flat_atm_iv():
     dyn, model = _ubars(u_shape=False)
     ivs = np.array([smile_iv(np.array([0.0]), model.smile,
                              np.array([[np.sqrt(dyn.v_bar)]]), dyn, t)[0, 0]
-                    for t in range(77)])
+                    for t in range(389)])
     assert np.allclose(ivs, dyn.iv0, atol=1e-10)
 
 
@@ -257,9 +257,9 @@ def test_budget_quiet_ushape_early_dip_then_firms():
     lvl = lambda t: smile_iv(np.array([0.0]), model.smile,
                              np.array([[v_atm]]), dyn, t)[0, 0] - dyn.iv0
     assert lvl(0) == pytest.approx(0.0, abs=1e-12)     # L(0) == iv0 exactly anchored
-    assert lvl(6) < 0.0                                # open bucket burned off -> dip
-    assert lvl(39) > lvl(6)                            # recovery as close ramp dominates
-    assert lvl(70) > lvl(39)                           # keeps firming into the close
+    assert lvl(30) < 0.0                               # open bucket burned off -> dip
+    assert lvl(195) > lvl(30)                          # recovery as close ramp dominates
+    assert lvl(350) > lvl(195)                         # keeps firming into the close
 
 
 def test_budget_stress_rises_into_close():
@@ -267,15 +267,15 @@ def test_budget_stress_rises_into_close():
     v_stress = 2.0 * np.sqrt(dyn.v_bar)
     lvl = lambda t: smile_iv(np.array([0.0]), model.smile,
                              np.array([[v_stress]]), dyn, t)[0, 0] - dyn.iv0
-    assert lvl(39) > 0.0                               # stress lifts IV above anchor
-    assert lvl(70) > lvl(39)                           # and it rises into the close
+    assert lvl(195) > 0.0                              # stress lifts IV above anchor
+    assert lvl(350) > lvl(195)                         # and it rises into the close
 
 
 def test_budget_off_branch_bit_identical_to_legacy_expression():
     from sim_calibrate import build_dynamics
     from sim_config import SimRunConfig
-    model = _budget_model(np.ones(78))
-    cfg = SimRunConfig(strategy_name="T", bar_size="5m")
+    model = _budget_model(np.ones(390))
+    cfg = SimRunConfig(strategy_name="T", bar_size="1m")
     dyn = build_dynamics(model, cfg)
     m = np.linspace(-0.15, 0.15, 21)
     sigma = np.array([[0.0007], [0.0004]])
@@ -309,7 +309,7 @@ def test_late_window_entry_bias_report():
     from sim_config import SimRunConfig
     from sim_engine import run_entry
 
-    u = np.interp(np.arange(78), [0, 6, 39, 72, 77], [2.0, 0.7, 0.6, 1.6, 2.4])
+    u = np.interp(np.arange(390), [0, 30, 195, 360, 385], [2.0, 0.7, 0.6, 1.6, 2.4])
     u /= u.mean()
     g = GarchParams(omega=2e-10, alpha=0.05, gamma=0.10, beta=0.85, nu=6.0,
                     converged=True)
@@ -317,22 +317,22 @@ def test_late_window_entry_bias_report():
     model = CalibratedModel(garch=g, ushape=u, sigma0=float(np.sqrt(v_bar)),
                             smile=DEFAULT_SMILE, vix0=15.0, source="test")
     rng = np.random.default_rng(1)
-    spots = np.full((60, 78), 6000.0) + rng.normal(0, 2.0, (60, 78)).cumsum(1) * 0.1
-    paths = SimpleNamespace(spots=spots, sigmas=np.full((60, 78), 1.5 * np.sqrt(v_bar)))
+    spots = np.full((60, 390), 6000.0) + rng.normal(0, 2.0, (60, 390)).cumsum(1) * 0.1
+    paths = SimpleNamespace(spots=spots, sigmas=np.full((60, 390), 1.5 * np.sqrt(v_bar)))
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
-    starts = 47 + np.arange(60) % 7                  # force eligibility into late bars 47..53
+    starts = 235 + np.arange(60) % 7                 # force eligibility into late bars 235..241
     res = {}
     for tag, kw in [("legacy", {}), ("budget", {"atm_budget": True})]:
-        cfg = SimRunConfig(strategy_name="T", bar_size="5m", skew_beta=1.0, **kw)
+        cfg = SimRunConfig(strategy_name="T", bar_size="1m", skew_beta=1.0, **kw)
         es = run_entry(model, cfg, _strategy_sim(), paths, ladder,
                        per_path_start=starts, dyn=build_dynamics(model, cfg))
         res[tag] = es
     for tag in res:
-        late = (res[tag].entry_minute >= 47) & res[tag].entered
+        late = (res[tag].entry_minute >= 235) & res[tag].entered
         print(f"{tag}: late-window mean fill credit "
               f"{res[tag].fill_credit[late].mean():.4f}")
-    late_l = (res["legacy"].entry_minute >= 47) & res["legacy"].entered
-    late_b = (res["budget"].entry_minute >= 47) & res["budget"].entered
+    late_l = (res["legacy"].entry_minute >= 235) & res["legacy"].entered
+    late_b = (res["budget"].entry_minute >= 235) & res["budget"].entered
     assert late_l.any() and late_b.any()
     assert np.array_equal(res["legacy"].entry_minute[res["legacy"].entered],
                           res["budget"].entry_minute[res["budget"].entered]), \
@@ -344,7 +344,7 @@ def test_budget_high_beta_low_sigma_is_finite():
     """budget_beta>1 with sigma below the long-run floor must not emit NaN IV (final-review fix)."""
     dyn, model = _ubars(budget_beta=2.0)
     low = 0.30 * np.sqrt(dyn.v_bar)
-    for t in range(78):
+    for t in range(389):
         iv = smile_iv(np.array([0.0]), model.smile, np.array([[low]]), dyn, t)[0, 0]
         assert np.isfinite(iv), f"NaN IV at bar {t} (sig2t went negative)"
 

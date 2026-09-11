@@ -5,9 +5,10 @@ from sim_config import SimRunConfig, sweep_cells, BAR_SECONDS
 
 def test_defaults_and_steps_per_day():
     cfg = SimRunConfig(strategy_name="Main")
-    assert cfg.bar_size == "5m" and cfg.mode == "single"
-    assert cfg.steps_per_day() == 78          # 390 min / 5
-    assert BAR_SECONDS["1m"] == 60
+    assert cfg.bar_size == "1m" and cfg.mode == "single"
+    assert cfg.lookback_days == 10
+    assert cfg.steps_per_day() == 390         # 390 min / 1
+    assert BAR_SECONDS["5m"] == 300
 
 
 def test_validate_rejects_bad_inputs():

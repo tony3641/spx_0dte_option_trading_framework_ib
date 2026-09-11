@@ -11,7 +11,7 @@ from strategy_models import (Condition, ExitRules, StopLoss, Strategy, TriggerSp
 def _model():
     return CalibratedModel(
         garch=GarchParams(omega=2e-10, alpha=0.05, gamma=0.10, beta=0.85, nu=6.0, converged=True),
-        ushape=np.ones(78), sigma0=0.0005, smile=DEFAULT_SMILE, vix0=15.0, source="test")
+        ushape=np.ones(390), sigma0=0.0005, smile=DEFAULT_SMILE, vix0=15.0, source="test")
 
 
 def _parent(mult: float = 6.0):
@@ -41,19 +41,19 @@ def _child(trigger):
                     subsequent_triggers=[trigger])
 
 
-def _paths(n=6, crash_after=4):
+def _paths(n=6, crash_after=20):
     """Paths 0-1 crash to 5800 (K-g): below the parent's entry strikes (so the parent stops when
     both legs go ITM, mark=width=65 > stop_level 36.6) but still inside the ladder, so the child
     finds an OTM short with delta in [0.05,0.45] when it re-enters. Paths 2-5 stay quiet."""
     rng = np.random.default_rng(1)
-    spots = np.full((n, 78), 6000.0)
+    spots = np.full((n, 390), 6000.0)
     spots[:2, crash_after:] = 5800.0
-    spots[2:] += rng.normal(0, 1.0, (n - 2, 78)).cumsum(axis=1) * 0.1
-    return SimPaths(spots=spots, sigmas=np.full((n, 78), 0.0005))
+    spots[2:] += rng.normal(0, 1.0, (n - 2, 390)).cumsum(axis=1) * 0.1
+    return SimPaths(spots=spots, sigmas=np.full((n, 390), 0.0005))
 
 
 def test_family_reenters_after_parent_stop():
-    cfg = SimRunConfig(strategy_name="P", bar_size="5m")
+    cfg = SimRunConfig(strategy_name="P", bar_size="1m")
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
     child = _child(TriggerSpec(kind="parent_exit_reason",
                                params={"reason": "stop_loss"}))
@@ -72,7 +72,7 @@ def test_family_reenters_after_parent_stop():
 
 
 def test_family_total_pnl_sums_all_legs():
-    cfg = SimRunConfig(strategy_name="P", bar_size="5m")
+    cfg = SimRunConfig(strategy_name="P", bar_size="1m")
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
     child = _child(TriggerSpec(kind="parent_exit_reason", params={"reason": "stop_loss"}))
     results, total = run_family(_model(), cfg, _parent(), [child], _paths(), ladder)
@@ -86,7 +86,7 @@ def test_family_total_pnl_sums_all_legs():
 
 
 def test_family_unrealized_pnl_trigger():
-    cfg = SimRunConfig(strategy_name="P", bar_size="5m")
+    cfg = SimRunConfig(strategy_name="P", bar_size="1m")
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
     child = _child(TriggerSpec(kind="parent_unrealized_pnl", params={"loss_multiple": 0.05}))
     results, total = run_family(_model(), cfg, _parent(), [child], _paths(), ladder)
@@ -96,7 +96,7 @@ def test_family_unrealized_pnl_trigger():
 
 
 def test_family_all_logic_raises():
-    cfg = SimRunConfig(strategy_name="P", bar_size="5m")
+    cfg = SimRunConfig(strategy_name="P", bar_size="1m")
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
     child = _child(TriggerSpec(kind="parent_exit_reason", params={"reason": "stop_loss"}))
     child.trigger_logic = "all"
