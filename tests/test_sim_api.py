@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import server
 
-FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sim_bars_5m.csv")
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 
 
 @pytest.fixture()
@@ -31,7 +31,7 @@ def test_full_run_lifecycle_over_http(client):
     # float('inf') (allow_nan=False); SimRunConfig.from_dict decodes "inf" -> float('inf')
     # (hold-past-stop), so the string form is the wire-correct spelling of the same value.
     body = {"strategy_name": "T", "source": "csv", "csv_path": FIXTURE,
-            "n_paths": 30, "chunk_size": 15, "bar_size": "5m",
+            "n_paths": 30, "chunk_size": 15, "bar_size": "1m", "lookback_days": 10,
             "sl_multipliers": [2.0, "inf"], "equity": 100000}
     r = client.post("/api/sim/run", json=body)
     assert r.status_code == 200
@@ -55,14 +55,15 @@ def test_full_run_lifecycle_over_http(client):
 def test_result_200_when_entry_window_starts_after_first_bar(client):
     """Regression: GET /api/sim/result 500'd with 'ValueError: Out of range float values
     are not JSON compliant' whenever a fan column has no finite marks. An entry window
-    starting at 09:40 maps to bar index 1 on 5m bars (window_minutes), so minute 0 is
+    starting at 09:40 maps to bar index 9 on 1m bars (window_minutes), so minutes 0-8 are
     all-NaN across entered paths and used to reach the JSON layer as NaN."""
     import sim_jobs
 
     from tests.test_sim_engine import _strategy
     sim_jobs._STRATEGY_CACHE["T"] = _strategy(window=("09:40", "10:00"))
     body = {"strategy_name": "T", "source": "csv", "csv_path": FIXTURE,
-            "n_paths": 12, "chunk_size": 12, "bar_size": "5m", "equity": 100000}
+            "n_paths": 12, "chunk_size": 12, "bar_size": "1m", "lookback_days": 10,
+            "equity": 100000}
     r = client.post("/api/sim/run", json=body)
     assert r.status_code == 200
     job_id = r.json()["job_id"]

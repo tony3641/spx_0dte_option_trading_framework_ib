@@ -86,8 +86,9 @@ Related reproducibility notes:
 - Calibration is cached in-process per (source, path, bar_size, lookback) —
   one invocation is self-consistent; edit `config/sim_smile*.json` between
   invocations, never mid-experiment.
-- `tests/fixtures/sim_bars_5m.csv` is a hermetic 10-day synthetic for wiring
-  checks; the SPX_1min sample is real data (bigger calibration cost).
+- `tests/fixtures/SPX_1min_10d.csv` is the committed 1-minute fixture (the
+  last 10 trading days, 390 RTH bars/day) used by the sim tests and for real
+  calibration; `SPX_1min_default.csv` is the longer 13-day source it is cut from.
 - The repo's sim tests pin bit-identical baselines; `sim_tune` adds no state to
   that (it writes only into `--out`).
 

@@ -11,7 +11,7 @@ import sim_jobs
 import sim_tune
 from strategy_models import Condition, Strategy
 
-FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_default.csv")
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 CONFIG_BYTES = os.path.join(os.path.dirname(__file__), "..", "config", "strategies.json")
 
 
@@ -35,7 +35,8 @@ def _spec(**kw):
     d = dict(
         slug="test-tune",
         strategy="T",
-        dataset={"source": "csv", "csv_path": FIXTURE, "bar_size": "1m", "spot0": 7718.36},
+        dataset={"source": "csv", "csv_path": FIXTURE, "bar_size": "1m", "spot0": 7718.36,
+                 "lookback_days": 10},
         run={"n_paths": 40, "chunk_size": 20, "bootstrap_seqs": 50, "bootstrap_len": 20},
         stress={},
         variants=[
