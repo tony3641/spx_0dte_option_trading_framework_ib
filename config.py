@@ -106,6 +106,13 @@ SERVER_HOST = _get_setting("SERVER_HOST", "0.0.0.0", str)
 SERVER_PORT = _get_setting("SERVER_PORT", 8000, int)
 
 # ---------------------------------------------------------------------------
+# Simulator
+# ---------------------------------------------------------------------------
+# Worker processes for a sim run: 0 = auto (CPU count), 1 = serial.
+# Overridable per run via SimRunConfig.n_workers.
+SIM_WORKERS = _get_setting("SIM_WORKERS", 0, int)
+
+# ---------------------------------------------------------------------------
 # Chain streaming
 # ---------------------------------------------------------------------------
 CHAIN_STREAM_MAX_LINES = _get_setting("CHAIN_STREAM_MAX_LINES", 96, int)

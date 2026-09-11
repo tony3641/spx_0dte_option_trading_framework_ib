@@ -360,9 +360,11 @@
         charts(cell, currentResult.meta);
         spotFanChart(currentResult.meta);
         const m = currentResult.meta;
+        const workers = m.workers
+            ? ` · ${m.workers} worker${m.workers === 1 ? '' : 's'}` : '';
         $('simDataInfo').textContent =
             `source: ${m.source} · ${m.bar_size} · ${m.steps_per_day} bars/day · ` +
-            `garch ${m.garch.converged ? 'fitted' : 'PRESET'}\n` +
+            `garch ${m.garch.converged ? 'fitted' : 'PRESET'}${workers}\n` +
             [...(m.garch_warnings || []), ...(m.data_warnings || [])].join('\n');
         $('simExport').disabled = false;
     }
@@ -384,7 +386,7 @@
         });
         g.fields = {
             run_config: 'The exact run-form values used for this simulation (captured at run time).',
-            meta: 'Run context: strategy, data source, bar size, GARCH fit (with warnings), smile, dials, seed.',
+            meta: 'Run context: strategy, data source, bar size, GARCH fit (with warnings), smile, dials, seed, worker processes used (results are identical regardless of this count).',
             spx_fan: 'Simulated SPX price quantiles per bar: minutes are minute-of-day offsets from RTH open, quantiles are percentiles p0..p95, values[i] is the price curve for quantiles[i].',
             cells: 'One entry per (SL ×, k) sweep configuration; the webpage charts/tiles reflect the selected cell.',
             sl_multiplier: 'Stop-loss multiplier applied to the spread credit; "inf" means hold to expiry.',

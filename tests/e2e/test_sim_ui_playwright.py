@@ -6,6 +6,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 import pytest
@@ -80,15 +81,22 @@ def _ensure_hermetic_strategies() -> bool:
 def server_url():
     wrote_strat = _ensure_hermetic_strategies()
     proc = None
+    dotenv = None
     try:
         port = _free_port()
         env = dict(os.environ, SERVER_PORT=str(port), SERVER_HOST="127.0.0.1")
         # Strip Discord secrets: an ambient DISCORD_TOKEN makes the child server spend
         # ~15s on a Discord login (on top of the IB-down connect timeout), which can push
-        # boot past the 30s deadline and fail the test spuriously.
+        # boot past the deadline and fail the test spuriously.
         for k in list(env):
             if k.startswith("DISCORD_"):
                 env.pop(k, None)
+        # ...and the repo .env carries the same token back in: config.load_dotenv() reads
+        # it into os.environ at import, so popping the variables above is not enough.
+        # Point the child at an empty .env so boot stays hermetic (IB timeout only).
+        fd, dotenv = tempfile.mkstemp(suffix=".env")
+        os.close(fd)
+        env["DOTENV_PATH"] = dotenv
         # Keep the boot hermetic against a live IB gateway too: server.py gates its HTTP
         # listener behind the IB setup (connect_ib + a full chain prefetch), and in an
         # environment where IB is actually reachable that prefetch can blow the 30s deadline.
@@ -99,7 +107,7 @@ def server_url():
         proc = subprocess.Popen([sys.executable, "server.py"], cwd=ROOT, env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         url = f"http://127.0.0.1:{port}"
-        deadline = time.time() + 30
+        deadline = time.time() + 60
         import urllib.request
         while time.time() < deadline:
             try:
@@ -108,7 +116,7 @@ def server_url():
             except Exception:
                 time.sleep(0.3)
         else:
-            pytest.fail("server did not start within 30s")
+            pytest.fail("server did not start within 60s")
         yield url
     finally:
         if proc is not None:
@@ -121,6 +129,8 @@ def server_url():
                 proc.wait(10)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        if dotenv and os.path.exists(dotenv):
+            os.remove(dotenv)
         # Unconditional hermetic cleanup: always run even when boot failed before yield,
         # so a stray config/strategies.json never leaks into later runs.
         if wrote_strat and os.path.exists(STRAT_PATH):
@@ -209,6 +219,50 @@ def test_simulation_tab_runs_and_renders(server_url):
             assert page.locator("#simHist .main-svg").count() == 0
             assert page.locator("#simSpotFan .main-svg").count() == 0
             assert page.locator("#simExport[disabled]").count() == 1
+            browser.close()
+    finally:
+        if prev_policy is not None:
+            asyncio.set_event_loop_policy(prev_policy)
+
+
+def test_settings_modal_exposes_sim_workers(server_url):
+    """Gear modal: sim worker field renders, is prefilled from the server, and Apply
+    posts the value. The POST is intercepted — the live endpoint writes the repo .env,
+    which a UI test must not mutate (that contract is covered in test_settings_api.py).
+    """
+    import asyncio
+    prev_policy = None
+    if os.name == "nt":
+        prev_policy = asyncio.get_event_loop_policy()
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            posted = {}
+
+            def handle(route):
+                if route.request.method == "POST":
+                    posted.update(json.loads(route.request.post_data))
+                    route.fulfill(status=200, content_type="application/json",
+                                  body=json.dumps({"ok": True, "workers": 2,
+                                                   "cpu_count": 8, "persisted": True}))
+                else:
+                    route.continue_()
+
+            page.route("**/api/settings/sim", handle)
+            page.goto(server_url)
+            page.click("#settingsBtn")
+            page.wait_for_selector("#setSimWorkers", state="visible")
+            assert page.input_value("#setSimWorkers").isdigit()      # prefilled from server
+            assert "auto" in page.inner_text("#setSimWorkersHint").lower()
+            page.fill("#setSimWorkers", "2")
+            page.click("#setSimApplyBtn")
+            page.wait_for_function(
+                "() => document.getElementById('setSimResult').textContent.includes('Applied')",
+                timeout=10_000)
+            assert posted == {"workers": 2}
+            assert "2 process" in page.inner_text("#setSimResult")
             browser.close()
     finally:
         if prev_policy is not None:

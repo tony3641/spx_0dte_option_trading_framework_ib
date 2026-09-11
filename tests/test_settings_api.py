@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from types import SimpleNamespace
 
 import discord
@@ -245,3 +246,43 @@ def test_post_ib_reconnect_failure_no_persist(monkeypatch, ib_state):
         _run(server.post_ib_settings(server.IbSettingsIn(port=4002), _req()))
     assert ei.value.status_code == 400
     assert all("IB_PORT" not in c for c in calls)
+
+
+# ---- sim endpoints ---------------------------------------------------------
+def test_sim_settings_403_for_remote(monkeypatch):
+    _manager(monkeypatch, [])
+    for call in (
+        lambda: server.get_sim_settings(_req("10.0.0.9")),
+        lambda: server.post_sim_settings(server.SimSettingsIn(workers=2), _req("10.0.0.9")),
+    ):
+        with pytest.raises(server.HTTPException) as ei:
+            _run(call())
+        assert ei.value.status_code == 403
+
+
+def test_get_sim_settings(monkeypatch):
+    _manager(monkeypatch, [])
+    monkeypatch.setenv("SIM_WORKERS", "3")
+    resp = _run(server.get_sim_settings(_req()))
+    assert resp["workers"] == 3
+    assert resp["cpu_count"] >= 1
+
+
+def test_post_sim_persists_and_hot_applies(monkeypatch):
+    calls = []
+    _manager(monkeypatch, calls)
+    monkeypatch.setenv("SIM_WORKERS", "1")
+    resp = _run(server.post_sim_settings(server.SimSettingsIn(workers=4), _req()))
+    assert resp == {"ok": True, "workers": 4, "cpu_count": os.cpu_count() or 1,
+                    "persisted": True}
+    assert os.environ["SIM_WORKERS"] == "4"          # next run reads it — no restart
+    assert calls[-1] == {"SIM_WORKERS": "4"}
+
+
+def test_post_sim_negative_400(monkeypatch):
+    calls = []
+    _manager(monkeypatch, calls)
+    with pytest.raises(server.HTTPException) as ei:
+        _run(server.post_sim_settings(server.SimSettingsIn(workers=-1), _req()))
+    assert ei.value.status_code == 400
+    assert calls == []
