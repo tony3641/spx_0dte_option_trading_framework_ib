@@ -13,7 +13,7 @@ import pytest
 pw = pytest.importorskip("playwright.sync_api")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-FIXTURE = os.path.join(ROOT, "tests", "fixtures", "sim_bars_5m.csv")
+FIXTURE = os.path.join(ROOT, "tests", "fixtures", "SPX_1min_10d.csv")
 STRAT_PATH = os.path.join(ROOT, "config", "strategies.json")
 
 
@@ -151,7 +151,8 @@ def test_simulation_tab_runs_and_renders(server_url):
             page.select_option("#simStrategy", label=None, index=0)
             page.select_option("#simSource", "csv")
             page.fill("#simCsvPath", FIXTURE)
-            page.select_option("#simBarSize", "5m")
+            page.select_option("#simBarSize", "1m")
+            page.fill("#simLookback", "10")
             page.fill("#simPaths", "40")
             page.fill("#simSeed", "7")
             page.fill("#simEquity", "100000")

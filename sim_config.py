@@ -14,8 +14,8 @@ class SimRunConfig:
     mode: str = "single"                # "single" | "family"
     source: str = "auto"                # "csv" | "yfinance" | "ib" | "auto"
     csv_path: str = ""
-    bar_size: str = "5m"
-    lookback_days: int = 60
+    bar_size: str = "1m"
+    lookback_days: int = 10
     spot0: Optional[float] = None       # day-open spot; None = live / last close
     n_paths: int = 10000
     seed: int = 42
