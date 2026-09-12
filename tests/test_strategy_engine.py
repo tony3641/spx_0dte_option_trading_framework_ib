@@ -1,6 +1,6 @@
 import pytest
-from spx_trade_desk.strategy.strategy_models import Strategy, Condition
-from spx_trade_desk.strategy.strategy_engine import generate_candidates, evaluate_conditions
+from spx_trade_desk.strategy.models import Strategy, Condition
+from spx_trade_desk.strategy.engine import generate_candidates, evaluate_conditions
 
 
 def _rows():
@@ -48,7 +48,7 @@ def test_unbounded_max_when_min_only():
 
 
 def test_has_margin_budget_caps():
-    from spx_trade_desk.strategy.strategy_engine import _has_margin
+    from spx_trade_desk.strategy.engine import _has_margin
     state = type("S", (), {"account_summary": {"ExcessLiquidity": 100000.0}})()
     cand = type("C", (), {"margin": 5000.0})()
     assert _has_margin(state, cand, budget=10000.0) is True
@@ -56,31 +56,31 @@ def test_has_margin_budget_caps():
 
 
 def test_position_size_budget_sizing():
-    from spx_trade_desk.strategy.strategy_engine import _position_size
+    from spx_trade_desk.strategy.engine import _position_size
     state = type("S", (), {"account_summary": {"ExcessLiquidity": 100000.0}})()
     assert _position_size(state, 10000, 3000) == 3
 
 
 def test_position_size_respects_excess_liquidity():
-    from spx_trade_desk.strategy.strategy_engine import _position_size
+    from spx_trade_desk.strategy.engine import _position_size
     state = type("S", (), {"account_summary": {"ExcessLiquidity": 5000.0}})()
     assert _position_size(state, 10000, 3000) == 1
 
 
 def test_position_size_zero_when_single_exceeds_capacity():
-    from spx_trade_desk.strategy.strategy_engine import _position_size
+    from spx_trade_desk.strategy.engine import _position_size
     state = type("S", (), {"account_summary": {"ExcessLiquidity": 100000.0}})()
     assert _position_size(state, 2500, 3000) == 0
 
 
 def test_position_size_no_budget_returns_one():
-    from spx_trade_desk.strategy.strategy_engine import _position_size
+    from spx_trade_desk.strategy.engine import _position_size
     state = type("S", (), {"account_summary": {"ExcessLiquidity": 100000.0}})()
     assert _position_size(state, None, 3000) == 1
 
 
 def test_candidate_view_includes_sizing():
-    from spx_trade_desk.strategy.strategy_engine import _candidate_view, Candidate
+    from spx_trade_desk.strategy.engine import _candidate_view, Candidate
     state = type("S", (), {"account_summary": {"ExcessLiquidity": 100000.0}})()
     cand = Candidate(direction="bear_call", short_strike=5200.0, long_strike=5300.0, width_points=30.0,
                      margin=3000.0, credit_bid=0.35, credit_ask=0.45, credit_mid=0.4,
@@ -127,7 +127,7 @@ def _swe(d="bull_put"):
 
 def test_fail_window_blocker(monkeypatch):
     import datetime as dt
-    from spx_trade_desk.strategy.strategy_engine import evaluate_conditions
+    from spx_trade_desk.strategy.engine import evaluate_conditions
     now = dt.datetime(2026, 8, 21, 12, 30)
     ev = evaluate_conditions(_swe(), _state(), now=now)
     assert ev.status == "blocked"
@@ -151,7 +151,7 @@ def test_vix_blocks_before_candidates():
 
 
 import pytest, asyncio
-from spx_trade_desk.strategy.strategy_engine import place_strategy_entry, _build_entry_payload
+from spx_trade_desk.strategy.engine import place_strategy_entry, _build_entry_payload
 
 
 def _state_t8(spot=5200.0):
@@ -184,8 +184,8 @@ def test_build_entry_payload_credit_negative():
 
 def test_build_entry_payload_stop_loss_multiplier():
     import pytest
-    from spx_trade_desk.strategy.strategy_models import StopLoss, ExitRules
-    from spx_trade_desk.strategy.strategy_engine import Candidate, _build_entry_payload
+    from spx_trade_desk.strategy.models import StopLoss, ExitRules
+    from spx_trade_desk.strategy.engine import Candidate, _build_entry_payload
     strat = Strategy(
         name="t", direction="bear_call",
         conditions=[Condition(kind="short_delta", params={"min": 0.2, "max": 0.4})],
@@ -203,7 +203,7 @@ def test_build_entry_payload_stop_loss_multiplier():
 def test_build_entry_payload_includes_trading_class():
     """Legs must carry the strategy's trading_class so monthly SPX fallback
     resolves correctly; default is SPXW."""
-    from spx_trade_desk.strategy.strategy_engine import _build_entry_payload
+    from spx_trade_desk.strategy.engine import _build_entry_payload
     strat = Strategy(name="t", direction="bear_call",
                      conditions=[Condition(kind="short_delta", params={"min": 0.2, "max": 0.4})])
     cand = type("C", (), {"direction": "bear_call", "short_strike": 5200.0, "long_strike": 5300.0,
@@ -221,7 +221,7 @@ def test_build_entry_payload_includes_trading_class():
 
 
 def test_build_entry_payload_sizes_qty():
-    from spx_trade_desk.strategy.strategy_engine import _build_entry_payload
+    from spx_trade_desk.strategy.engine import _build_entry_payload
     strat = Strategy(name="t", direction="bear_call", conditions=[Condition(kind="short_delta", params={"min": 0.2, "max": 0.4})])
     cand = type("C", (), {"direction": "bear_call", "short_strike": 5200.0, "long_strike": 5300.0,
                           "credit_mid": 2.0})()
@@ -232,7 +232,7 @@ def test_build_entry_payload_sizes_qty():
 
 
 def test_build_entry_payload_gth_sets_gct_and_outside_rth():
-    from spx_trade_desk.strategy.strategy_engine import _build_entry_payload
+    from spx_trade_desk.strategy.engine import _build_entry_payload
     strat = Strategy(name="t", direction="bear_call", gth=True,
                      conditions=[Condition(kind="short_delta", params={"min": 0.2, "max": 0.4})])
     cand = type("C", (), {"direction": "bear_call", "short_strike": 5200.0, "long_strike": 5300.0,
@@ -243,7 +243,7 @@ def test_build_entry_payload_gth_sets_gct_and_outside_rth():
 
 
 def test_build_entry_payload_default_day_rth():
-    from spx_trade_desk.strategy.strategy_engine import _build_entry_payload
+    from spx_trade_desk.strategy.engine import _build_entry_payload
     strat = Strategy(name="t", direction="bear_call",
                      conditions=[Condition(kind="short_delta", params={"min": 0.2, "max": 0.4})])
     cand = type("C", (), {"direction": "bear_call", "short_strike": 5200.0, "long_strike": 5300.0,
@@ -254,7 +254,7 @@ def test_build_entry_payload_default_day_rth():
 
 
 def test_build_entry_payload_combo_ratio_is_one():
-    from spx_trade_desk.strategy.strategy_engine import _build_entry_payload
+    from spx_trade_desk.strategy.engine import _build_entry_payload
     strat = Strategy(name="t", direction="bear_call", conditions=[Condition(kind="short_delta", params={"min": 0.2, "max": 0.4})])
     cand = type("C", (), {"direction": "bear_call", "short_strike": 5200.0, "long_strike": 5300.0,
                           "credit_mid": 2.0})()
@@ -268,14 +268,14 @@ def test_build_entry_payload_combo_ratio_is_one():
 
 def test_option_contract_trading_class_default_and_override():
     """order_manager._option_contract defaults to SPXW but honors an override."""
-    from spx_trade_desk.ib.order_manager import _option_contract
+    from spx_trade_desk.ib.orders import _option_contract
     assert _option_contract("SPX", "20260821", 5200.0, "C", "CBOE").tradingClass == "SPXW"
     assert _option_contract("SPX", "20260821", 5200.0, "C", "CBOE", trading_class="SPX").tradingClass == "SPX"
 
 
 @pytest.mark.asyncio
 async def test_place_strategy_entry_via_mock(mock_ib, app_state):
-    from spx_trade_desk.strategy.strategy_engine import _build_entry_payload, place_strategy_entry, Candidate
+    from spx_trade_desk.strategy.engine import _build_entry_payload, place_strategy_entry, Candidate
     app_state.expiration = "20260821"
     strat = Strategy(name="t", direction="bear_call", conditions=[Condition(kind="short_delta", params={"min": 0.2, "max": 0.4})])
     cand = Candidate(direction="bear_call", short_strike=5200.0, long_strike=5300.0, width_points=100.0,
@@ -289,7 +289,7 @@ async def test_place_strategy_entry_via_mock(mock_ib, app_state):
 
 
 def test_has_open_position():
-    from spx_trade_desk.strategy.strategy_engine import _has_open_position
+    from spx_trade_desk.strategy.engine import _has_open_position
     state = type("S", (), {"positions": [{"contract": {"strike": 5200.0, "right": "C"}}]})()
     sig = {(5200.0, "C"), (5300.0, "C")}
     assert _has_open_position(state, sig) is True
@@ -307,8 +307,8 @@ async def test_eval_loop_skips_strategy_with_open_position(monkeypatch, mock_ib,
     loop, while an open strategy still does (positive control).
     """
     import asyncio
-    from spx_trade_desk.market.market_hours import now_et
-    from spx_trade_desk.strategy.strategy_engine import strategy_evaluation_loop, StrategyEval, Candidate
+    from spx_trade_desk.market.hours import now_et
+    from spx_trade_desk.strategy.engine import strategy_evaluation_loop, StrategyEval, Candidate
 
     app_state.connected = True
     app_state.account_summary = {"ExcessLiquidity": 100000.0}   # margin check passes
@@ -340,8 +340,8 @@ async def test_eval_loop_skips_strategy_with_open_position(monkeypatch, mock_ib,
     async def fake_broadcast(message):
         pass
 
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine.place_strategy_entry", fake_place_entry)
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine.evaluate_conditions", fake_eval)
+    monkeypatch.setattr("spx_trade_desk.strategy.engine.place_strategy_entry", fake_place_entry)
+    monkeypatch.setattr("spx_trade_desk.strategy.engine.evaluate_conditions", fake_eval)
 
     task = asyncio.create_task(strategy_evaluation_loop(mock_ib, app_state, fake_broadcast))
     await asyncio.sleep(3.5)   # one full 3s cadence
@@ -365,8 +365,8 @@ async def test_eval_loop_broadcasts_candidates_for_auto_execute(monkeypatch, moc
     even though the engine scanned and auto-placed.
     """
     import asyncio
-    from spx_trade_desk.market.market_hours import now_et
-    from spx_trade_desk.strategy.strategy_engine import strategy_evaluation_loop, StrategyEval, Candidate
+    from spx_trade_desk.market.hours import now_et
+    from spx_trade_desk.strategy.engine import strategy_evaluation_loop, StrategyEval, Candidate
 
     app_state.connected = True
     app_state.account_summary = {"ExcessLiquidity": 100000.0}   # margin check passes
@@ -395,8 +395,8 @@ async def test_eval_loop_broadcasts_candidates_for_auto_execute(monkeypatch, moc
     async def fake_broadcast(message):
         broadcasts.append(message)
 
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine.place_strategy_entry", fake_place_entry)
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine.evaluate_conditions", fake_eval)
+    monkeypatch.setattr("spx_trade_desk.strategy.engine.place_strategy_entry", fake_place_entry)
+    monkeypatch.setattr("spx_trade_desk.strategy.engine.evaluate_conditions", fake_eval)
 
     task = asyncio.create_task(strategy_evaluation_loop(mock_ib, app_state, fake_broadcast))
     await asyncio.sleep(3.5)   # one full 3s cadence
@@ -416,8 +416,8 @@ async def test_eval_loop_broadcasts_candidates_for_auto_execute(monkeypatch, moc
     assert cand_msgs[0]["data"]["candidates"][0]["size"] == 2
 
 
-from spx_trade_desk.strategy.strategy_engine import signature_for_candidate, find_strategy_positions
-from spx_trade_desk.strategy.strategy_models import Strategy, Condition
+from spx_trade_desk.strategy.engine import signature_for_candidate, find_strategy_positions
+from spx_trade_desk.strategy.models import Strategy, Condition
 
 
 def test_match_positions():
@@ -437,8 +437,8 @@ def test_match_positions():
 
 
 import asyncio, pytest
-from spx_trade_desk.strategy.strategy_engine import maybe_flatten_at_take_profit, Candidate
-from spx_trade_desk.strategy.strategy_models import TakeProfit
+from spx_trade_desk.strategy.engine import maybe_flatten_at_take_profit, Candidate
+from spx_trade_desk.strategy.models import TakeProfit
 
 # ---------------------------------------------------------------------------
 # Schedule gates: _strategy_should_run_today (day-of-week / holiday / half-day / FOMC / NFP)
@@ -455,7 +455,7 @@ def _gate_state(exps=(), monthly=()):
 
 def test_gate_skips_non_run_day():
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import _strategy_should_run_today
+    from spx_trade_desk.strategy.engine import _strategy_should_run_today
     s = Strategy(name="t", direction="bull_put", conditions=[], run_days=[0, 1, 2])  # Mon-Wed
     st = _gate_state(["20260821"])   # Friday 0DTE present
     assert _strategy_should_run_today(s, st, today=date(2026, 8, 21)) is False
@@ -463,7 +463,7 @@ def test_gate_skips_non_run_day():
 
 def test_gate_runs_on_run_day():
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import _strategy_should_run_today
+    from spx_trade_desk.strategy.engine import _strategy_should_run_today
     s = Strategy(name="t", direction="bull_put", conditions=[], run_days=[4])
     st = _gate_state(["20260821"])
     assert _strategy_should_run_today(s, st, today=date(2026, 8, 21)) is True
@@ -472,7 +472,7 @@ def test_gate_runs_on_run_day():
 def test_gate_skips_holiday_no_0dte():
     """Today has no expiring option -> holiday, no trade."""
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import _strategy_should_run_today
+    from spx_trade_desk.strategy.engine import _strategy_should_run_today
     s = Strategy(name="t", direction="bull_put", conditions=[], run_days=[4])
     st = _gate_state(["20260828"])   # today (8/21) not in list
     assert _strategy_should_run_today(s, st, today=date(2026, 8, 21)) is False
@@ -480,7 +480,7 @@ def test_gate_skips_holiday_no_0dte():
 
 def test_gate_skips_half_day_when_disabled():
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import _strategy_should_run_today
+    from spx_trade_desk.strategy.engine import _strategy_should_run_today
     s = Strategy(name="t", direction="bull_put", conditions=[], run_days=[3], short_day_enabled=False)
     st = _gate_state(["20261224"])   # 2026-12-24 is an early-close (half) session
     assert _strategy_should_run_today(s, st, today=date(2026, 12, 24)) is False
@@ -488,7 +488,7 @@ def test_gate_skips_half_day_when_disabled():
 
 def test_gate_runs_half_day_when_enabled():
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import _strategy_should_run_today
+    from spx_trade_desk.strategy.engine import _strategy_should_run_today
     s = Strategy(name="t", direction="bull_put", conditions=[], run_days=[3], short_day_enabled=True)
     st = _gate_state(["20261224"])
     assert _strategy_should_run_today(s, st, today=date(2026, 12, 24)) is True
@@ -496,7 +496,7 @@ def test_gate_runs_half_day_when_enabled():
 
 def test_gate_skips_fomc_when_disabled():
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import _strategy_should_run_today
+    from spx_trade_desk.strategy.engine import _strategy_should_run_today
     s = Strategy(name="t", direction="bull_put", conditions=[], run_days=[2], run_on_fomc=False)
     st = _gate_state(["20260128"])   # 2026-01-28 is a scheduled FOMC meeting day
     assert _strategy_should_run_today(s, st, today=date(2026, 1, 28)) is False
@@ -504,7 +504,7 @@ def test_gate_skips_fomc_when_disabled():
 
 def test_gate_skips_nfp_when_disabled():
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import _strategy_should_run_today
+    from spx_trade_desk.strategy.engine import _strategy_should_run_today
     s = Strategy(name="t", direction="bull_put", conditions=[], run_days=[4], run_on_nfp=False)
     st = _gate_state(["20260102"])   # 2026-01-02 is the first Friday (NFP)
     assert _strategy_should_run_today(s, st, today=date(2026, 1, 2)) is False
@@ -513,7 +513,7 @@ def test_gate_skips_nfp_when_disabled():
 def test_gate_permissive_when_expiration_data_unloaded():
     """No expiration data yet is not a holiday — the engine should not over-skip."""
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import _strategy_should_run_today
+    from spx_trade_desk.strategy.engine import _strategy_should_run_today
     s = Strategy(name="t", direction="bull_put", conditions=[], run_days=[4])
     st = _gate_state([], [])
     assert _strategy_should_run_today(s, st, today=date(2026, 8, 21)) is True
@@ -536,8 +536,8 @@ async def test_maybe_flatten_below_target_does_not_place(mock_ib, app_state):
 
 @pytest.mark.asyncio
 async def test_maybe_flatten_take_profit_gth_sets_gct_and_outside_rth(monkeypatch, mock_ib, app_state):
-    from spx_trade_desk.strategy.strategy_engine import maybe_flatten_at_take_profit, Candidate
-    from spx_trade_desk.strategy.strategy_models import TakeProfit
+    from spx_trade_desk.strategy.engine import maybe_flatten_at_take_profit, Candidate
+    from spx_trade_desk.strategy.models import TakeProfit
     app_state.expiration = "20260821"
     cand = Candidate(direction="bear_call", short_strike=5200.0, long_strike=5300.0, width_points=100.0,
                      margin=10000.0, credit_bid=1.8, credit_ask=2.2, credit_mid=2.0,
@@ -545,13 +545,13 @@ async def test_maybe_flatten_take_profit_gth_sets_gct_and_outside_rth(monkeypatc
     pos = [{"contract": {"strike": 5200.0, "right": "C"}, "unrealizedPNL": 0.6},
            {"contract": {"strike": 5300.0, "right": "C"}, "unrealizedPNL": 0.6}]
     tp = TakeProfit(mode="pct_credit", value=0.5)   # target 1.0; net 1.2 >= target
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine._find_row", lambda rows, strike: {"bid": 1.9, "ask": 2.1})
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine._side_field", lambda row, right, side: row.get(side))
+    monkeypatch.setattr("spx_trade_desk.strategy.engine._find_row", lambda rows, strike: {"bid": 1.9, "ask": 2.1})
+    monkeypatch.setattr("spx_trade_desk.strategy.engine._side_field", lambda row, right, side: row.get(side))
     captured = {}
     async def fake_place(ib, state, payload, ws=None, refresh_fn=None):
         captured.update(payload)
         return {"data": {"status": "Submitted"}}
-    monkeypatch.setattr("spx_trade_desk.ib.order_manager.handle_place_order", fake_place)
+    monkeypatch.setattr("spx_trade_desk.ib.orders.handle_place_order", fake_place)
     closed = await maybe_flatten_at_take_profit(mock_ib, app_state, cand, pos, tp, gth=True)
     assert closed is True
     assert captured["tif"] == "GTC"
@@ -560,8 +560,8 @@ async def test_maybe_flatten_take_profit_gth_sets_gct_and_outside_rth(monkeypatc
 
 import datetime as dt
 import time
-from spx_trade_desk.strategy.strategy_models import TriggerSpec, RuntimeState
-from spx_trade_desk.strategy.strategy_engine import get_runtime, reset_strategy_runtime, _child_is_eligible
+from spx_trade_desk.strategy.models import TriggerSpec, RuntimeState
+from spx_trade_desk.strategy.engine import get_runtime, reset_strategy_runtime, _child_is_eligible
 
 
 def _parent_rt(entered=True, done=True, credit=0.30, high=1.5, low=-2.5, close_reason="stop_loss"):
@@ -600,7 +600,7 @@ def test_get_runtime_creates_on_demand():
 
 
 def test_trigger_exit_reason_fires_when_parent_closed():
-    from spx_trade_desk.strategy.strategy_engine import _trigger_aggregate
+    from spx_trade_desk.strategy.engine import _trigger_aggregate
     st = _populate()
     assert _trigger_aggregate(st.strategies["recovery"], st) is True
 
@@ -634,7 +634,7 @@ def test_child_not_eligible_while_parent_close_legs_present():
 
 
 def test_trigger_pnl_gain_multiple():
-    from spx_trade_desk.strategy.strategy_engine import _trigger_aggregate
+    from spx_trade_desk.strategy.engine import _trigger_aggregate
     st = _populate()
     st.strategies["recovery"].subsequent_triggers = [
         TriggerSpec(kind="parent_unrealized_pnl", params={"gain_multiple": 1.0, "loss_multiple": 2.0})]
@@ -642,7 +642,7 @@ def test_trigger_pnl_gain_multiple():
 
 
 def test_trigger_time_of_day_window():
-    from spx_trade_desk.strategy.strategy_engine import _trigger_aggregate
+    from spx_trade_desk.strategy.engine import _trigger_aggregate
     st = _populate()
     st.strategies["recovery"].subsequent_triggers = [
         TriggerSpec(kind="time_of_day", params={"start": "13:00", "end": "15:00"})]
@@ -669,9 +669,9 @@ def test_reset_strategy_runtime_clears_stale_open_position():
 
 
 import asyncio
-from spx_trade_desk.strategy.strategy_engine import (classify_parent_close, _refresh_trade_credit,
+from spx_trade_desk.strategy.engine import (classify_parent_close, _refresh_trade_credit,
                              _update_parent_role, _daily_reset, fire_children)
-from spx_trade_desk.strategy.strategy_models import ExitRules, StopLoss
+from spx_trade_desk.strategy.models import ExitRules, StopLoss
 
 
 def _pos_state(positions=None, executions=None):
@@ -698,7 +698,7 @@ def test_classify_stop_loss_when_configured():
 
 def test_classify_manual_when_no_stop_and_future_expiry():
     from datetime import timedelta
-    from spx_trade_desk.market.market_hours import now_et
+    from spx_trade_desk.market.hours import now_et
     strat = Strategy(name="p", direction="bull_put", conditions=[])
     st = _pos_state()
     st.expiration = (now_et().date() + timedelta(days=1)).strftime("%Y%m%d")  # future -> not expired
@@ -707,7 +707,7 @@ def test_classify_manual_when_no_stop_and_future_expiry():
 
 def test_classify_expire_when_past_expiry():
     from datetime import timedelta
-    from spx_trade_desk.market.market_hours import now_et
+    from spx_trade_desk.market.hours import now_et
     strat = Strategy(name="p", direction="bull_put", conditions=[])
     st = _pos_state()
     st.expiration = (now_et().date() - timedelta(days=1)).strftime("%Y%m%d")  # past -> expired
@@ -727,7 +727,7 @@ def test_refresh_credit_from_executions():
 
 @pytest.mark.asyncio
 async def test_update_parent_role_marks_done_and_fires_children():
-    from spx_trade_desk.strategy.strategy_models import ExitRules, StopLoss
+    from spx_trade_desk.strategy.models import ExitRules, StopLoss
     state = type("S", (), {})()
     state.strategies = {
         "master": Strategy(name="master", direction="bull_put", conditions=[],
@@ -833,8 +833,8 @@ def test_daily_reset_clears_stale_open_position_for_closed():
 async def test_eval_loop_child_enters_once_eligible(monkeypatch):
     import asyncio
     from datetime import date
-    from spx_trade_desk.strategy.strategy_engine import strategy_evaluation_loop, StrategyEval, Candidate
-    from spx_trade_desk.strategy.strategy_models import TriggerSpec, RuntimeState
+    from spx_trade_desk.strategy.engine import strategy_evaluation_loop, StrategyEval, Candidate
+    from spx_trade_desk.strategy.models import TriggerSpec, RuntimeState
 
     state = type("S", (), {})()
     state.connected = True
@@ -880,8 +880,8 @@ async def test_eval_loop_child_enters_once_eligible(monkeypatch):
         return StrategyEval(status="ready", candidates=[cand])
     async def fake_bcast(message):
         pass
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine.place_strategy_entry", fake_place)
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine.evaluate_conditions", fake_eval)
+    monkeypatch.setattr("spx_trade_desk.strategy.engine.place_strategy_entry", fake_place)
+    monkeypatch.setattr("spx_trade_desk.strategy.engine.evaluate_conditions", fake_eval)
 
     # The master must NOT enter (already done/entered); the child must NOT be
     # double-entered after entry (one-shot). Each arm/child gate enforced in-loop.
@@ -890,8 +890,8 @@ async def test_eval_loop_child_enters_once_eligible(monkeypatch):
     # is prevented by the loop guard itself — assert only one placement.
 
     # First, suppress _strategy_should_run_today so gate is a no-op:
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine._strategy_should_run_today", lambda strat, s, today=None: True)
-    monkeypatch.setattr("spx_trade_desk.strategy.strategy_engine._daily_reset", lambda s: None)
+    monkeypatch.setattr("spx_trade_desk.strategy.engine._strategy_should_run_today", lambda strat, s, today=None: True)
+    monkeypatch.setattr("spx_trade_desk.strategy.engine._daily_reset", lambda s: None)
 
     task = asyncio.create_task(strategy_evaluation_loop(None, state, fake_bcast))
     await asyncio.sleep(3.5)
@@ -922,7 +922,7 @@ def _cand_view(**kw):
 
 
 def test_sort_candidate_views_prefers_highest_total_credit():
-    from spx_trade_desk.strategy.strategy_engine import _sort_candidate_views
+    from spx_trade_desk.strategy.engine import _sort_candidate_views
     worse = _cand_view(total_credit=1.2, size=1)
     best = _cand_view(total_credit=2.0, size=1)
     out = _sort_candidate_views([worse, best])
@@ -931,7 +931,7 @@ def test_sort_candidate_views_prefers_highest_total_credit():
 
 
 def test_sort_candidate_views_tie_fewer_spreads_first():
-    from spx_trade_desk.strategy.strategy_engine import _sort_candidate_views
+    from spx_trade_desk.strategy.engine import _sort_candidate_views
     big = _cand_view(total_credit=2.0, size=3, total_margin=30000.0)
     small = _cand_view(total_credit=2.0, size=1, total_margin=10000.0)
     out = _sort_candidate_views([big, small])
@@ -940,7 +940,7 @@ def test_sort_candidate_views_tie_fewer_spreads_first():
 
 
 def test_sort_candidate_views_tie_lower_margin_first():
-    from spx_trade_desk.strategy.strategy_engine import _sort_candidate_views
+    from spx_trade_desk.strategy.engine import _sort_candidate_views
     high = _cand_view(total_credit=2.0, size=2, total_margin=24000.0)
     low = _cand_view(total_credit=2.0, size=2, total_margin=16000.0)
     out = _sort_candidate_views([high, low])
@@ -960,7 +960,7 @@ def _rows_put():
 
 
 def test_build_candidate_views_size_and_sort():
-    from spx_trade_desk.strategy.strategy_engine import build_candidate_views
+    from spx_trade_desk.strategy.engine import build_candidate_views
     strat = Strategy(name="bp", direction="bull_put", budget=10000, conditions=[
         Condition(kind="short_delta", params={"min": 0.1, "max": 0.4}),
         Condition(kind="spread_width", params={"min": 50, "max": 200}),

@@ -8,12 +8,12 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from spx_trade_desk.sim.sim_calibrate import CalibratedModel, build_dynamics, calibrate
-from spx_trade_desk.sim.sim_config import SimRunConfig, sweep_cells
-from spx_trade_desk.sim.sim_data import BarSeries, load_bars
-from spx_trade_desk.sim.sim_parallel import chunk_payloads, compute_chunk, resolve_workers, spawn_pool
-from spx_trade_desk.sim.sim_pricing import build_ladder
-from spx_trade_desk.sim.sim_risk import build_cell_payload, spot_fan_quantiles
+from spx_trade_desk.sim.calibrate import CalibratedModel, build_dynamics, calibrate
+from spx_trade_desk.sim.config import SimRunConfig, sweep_cells
+from spx_trade_desk.sim.data import BarSeries, load_bars
+from spx_trade_desk.sim.parallel import chunk_payloads, compute_chunk, resolve_workers, spawn_pool
+from spx_trade_desk.sim.pricing import build_ladder
+from spx_trade_desk.sim.risk import build_cell_payload, spot_fan_quantiles
 
 logger = logging.getLogger(__name__)
 
@@ -119,12 +119,12 @@ def _load_bars_for(cfg: SimRunConfig) -> Optional[BarSeries]:
 
 
 def _get_strategy(cfg: SimRunConfig, state=None):
-    from spx_trade_desk.strategy.strategy_models import Strategy
+    from spx_trade_desk.strategy.models import Strategy
     if state is not None and cfg.strategy_name in getattr(state, "strategies", {}):
         return state.strategies[cfg.strategy_name]
     if cfg.strategy_name in _STRATEGY_CACHE:
         return _STRATEGY_CACHE[cfg.strategy_name]
-    from spx_trade_desk.strategy.strategy_store import load_strategies   # same file the live engine uses
+    from spx_trade_desk.strategy.store import load_strategies   # same file the live engine uses
     strategies = load_strategies()
     for s in strategies.values():
         _STRATEGY_CACHE[s.name] = s

@@ -6,7 +6,7 @@ import pytest
 
 from spx_trade_desk.core import config
 from spx_trade_desk.core.app_state import create_app_state
-from spx_trade_desk.ib.ib_connection import connect_ib
+from spx_trade_desk.ib.connection import connect_ib
 
 
 class FakeIb:

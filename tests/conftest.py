@@ -19,7 +19,7 @@ import pytest
 from spx_trade_desk.core.app_state import AppState, create_app_state
 
 # Reuse the real bridge types — never re-implement them here.
-from spx_trade_desk.ib.ib_client import (
+from spx_trade_desk.ib.client import (
     AccountValue,
     ExecutionRecord,
     Greeks,

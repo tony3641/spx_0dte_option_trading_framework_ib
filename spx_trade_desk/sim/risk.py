@@ -3,8 +3,8 @@ from typing import List
 
 import numpy as np
 
-from spx_trade_desk.sim.sim_config import SimRunConfig
-from spx_trade_desk.sim.sim_engine import TrialResult
+from spx_trade_desk.sim.config import SimRunConfig
+from spx_trade_desk.sim.engine import TrialResult
 
 
 def summarize(pnls: np.ndarray) -> dict:

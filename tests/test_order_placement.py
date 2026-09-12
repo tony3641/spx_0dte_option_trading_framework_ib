@@ -13,11 +13,11 @@ import time
 
 import pytest
 
-from spx_trade_desk.ib.order_manager import (
+from spx_trade_desk.ib.orders import (
     handle_place_order, handle_cancel_order,
     watch_and_push_status, watch_parent_and_cancel_child,
 )
-from spx_trade_desk.ib.ib_client import OrderHandle
+from spx_trade_desk.ib.client import OrderHandle
 from tests.conftest import MockContract, MockContractDetails, MockOrder
 from spx_trade_desk.core.config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
 

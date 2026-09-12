@@ -7,9 +7,9 @@ These tests exercise the bot methods with real state and a stubbed order call.
 """
 import asyncio
 
-from spx_trade_desk.ib import order_manager
+from spx_trade_desk.ib import orders
 from spx_trade_desk.core.app_state import create_app_state
-from spx_trade_desk.discord.discord_bot import make_discord_bot
+from spx_trade_desk.discord.bot import make_discord_bot
 
 
 def _bot(state):
@@ -44,7 +44,7 @@ def test_liquidate_poskey_places_close_order(monkeypatch):
         calls.append(payload)
         return _std_status()
 
-    monkeypatch.setattr(order_manager, "handle_place_order", fake_handle)
+    monkeypatch.setattr(orders, "handle_place_order", fake_handle)
 
     ok, msg = asyncio.run(bot._liquidate_poskey("SPX-OPT-20260626-7700-C"))
     assert ok is True
@@ -65,7 +65,7 @@ def test_liquidate_poskey_rejects_unknown_position(monkeypatch):
         calls.append(payload)
         return _std_status()
 
-    monkeypatch.setattr(order_manager, "handle_place_order", fake_handle)
+    monkeypatch.setattr(orders, "handle_place_order", fake_handle)
     ok, msg = asyncio.run(bot._liquidate_poskey("SPX-OPT-20260626-9999-C"))
     assert ok is False
     assert "not found" in msg.lower()
@@ -81,7 +81,7 @@ def test_liquidate_poskey_dedupes_duplicate_click(monkeypatch):
         calls.append(payload)
         return _std_status()
 
-    monkeypatch.setattr(order_manager, "handle_place_order", fake_handle)
+    monkeypatch.setattr(orders, "handle_place_order", fake_handle)
     key = "SPX-OPT-20260626-7700-C"
     asyncio.run(bot._liquidate_poskey(key))
     ok, msg = asyncio.run(bot._liquidate_poskey(key))

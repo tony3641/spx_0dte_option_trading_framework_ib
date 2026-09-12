@@ -1,6 +1,6 @@
 import os, pytest
-from spx_trade_desk.strategy.strategy_models import Strategy, Condition, ExitRules, TriggerSpec
-from spx_trade_desk.strategy.strategy_store import load_strategies, save_strategy, delete_strategy
+from spx_trade_desk.strategy.models import Strategy, Condition, ExitRules, TriggerSpec
+from spx_trade_desk.strategy.store import load_strategies, save_strategy, delete_strategy
 
 
 def _s(name="a"):
@@ -30,7 +30,7 @@ def test_malformed_file_is_safe(tmp_path):
     assert load_strategies(p) == {}
 
 
-from spx_trade_desk.strategy.strategy_store import validate_strategy_tree
+from spx_trade_desk.strategy.store import validate_strategy_tree
 
 
 def _child(name, parent, enabled=True, logic="any"):
@@ -68,7 +68,7 @@ def test_validate_drops_cycle():
 def test_load_applies_validation(tmp_path):
     # A saved child whose parent is deleted on disk should not survive load.
     p = tmp_path / "strategies.json"
-    from spx_trade_desk.strategy.strategy_store import save_strategies
+    from spx_trade_desk.strategy.store import save_strategies
     save_strategies(str(p), {
         "master": Strategy(name="master", direction="bull_put", conditions=[]),
         "orphan": _child("orphan", "gone"),

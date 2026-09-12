@@ -18,7 +18,7 @@ from typing import Callable, List, Optional
 import discord
 
 from spx_trade_desk.core import config
-from spx_trade_desk.discord.discord_bot import make_discord_bot
+from spx_trade_desk.discord.bot import make_discord_bot
 from spx_trade_desk.core.env_store import update_env
 
 logger = logging.getLogger(__name__)

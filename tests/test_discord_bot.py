@@ -1,5 +1,5 @@
 from spx_trade_desk.core.app_state import create_app_state
-from spx_trade_desk.discord.discord_bot import make_discord_bot, AlertBridge
+from spx_trade_desk.discord.bot import make_discord_bot, AlertBridge
 
 
 def test_make_discord_bot_builds_bot_and_bridge():
@@ -21,7 +21,7 @@ def test_alert_bridge_wired_to_channel():
 
 from spx_trade_desk.core import config
 from discord.app_commands import CommandNotFound
-from spx_trade_desk.discord.discord_bot import account_view
+from spx_trade_desk.discord.bot import account_view
 
 
 def test_allowlist_defaults_to_config():

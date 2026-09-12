@@ -3,8 +3,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from spx_trade_desk.sim.sim_calibrate import CalibratedModel
-from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.calibrate import CalibratedModel
+from spx_trade_desk.sim.config import SimRunConfig
 
 
 @dataclass

@@ -12,9 +12,9 @@ import sys
 # ibapi lives in the TWS install; the repo package is installed editable.
 sys.path.insert(0, r"C:\TWS API\source\pythonclient")
 
-from spx_trade_desk.ib.ib_client import IBClient          # noqa: E402
-from spx_trade_desk.ib.ib_connection import connect_ib, setup_spx_subscription  # noqa: E402
-from spx_trade_desk.market.price_bars import fetch_historical_bars, compute_annual_vol  # noqa: E402
+from spx_trade_desk.ib.client import IBClient          # noqa: E402
+from spx_trade_desk.ib.connection import connect_ib, setup_spx_subscription  # noqa: E402
+from spx_trade_desk.market.bars import fetch_historical_bars, compute_annual_vol  # noqa: E402
 from spx_trade_desk.core.app_state import AppState          # noqa: E402
 
 

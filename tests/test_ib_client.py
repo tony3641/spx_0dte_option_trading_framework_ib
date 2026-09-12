@@ -5,7 +5,7 @@ import pytest
 from unittest import mock
 from ibapi.client import EClient
 
-from spx_trade_desk.ib.ib_client import IBClient
+from spx_trade_desk.ib.client import IBClient
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_req_historical_bars_accumulates_and_converts_dates(monkeypatch):
 
 
 # Task 5: TickStream + Greeks + market-data callbacks
-from spx_trade_desk.ib.ib_client import BID, ASK, LAST, BID_SIZE, CALL_OPEN_INTEREST, TickStream
+from spx_trade_desk.ib.client import BID, ASK, LAST, BID_SIZE, CALL_OPEN_INTEREST, TickStream
 
 
 @pytest.mark.asyncio

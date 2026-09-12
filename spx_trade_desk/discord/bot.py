@@ -8,9 +8,9 @@ import logging
 from typing import List, Optional, Set
 
 from spx_trade_desk.core import config
-from spx_trade_desk.ib.account_manager import build_account_payload
-from spx_trade_desk.market.market_hours import market_status, get_expiration_display
-from spx_trade_desk.strategy.strategy_engine import (build_candidate_views, reset_strategy_runtime)
+from spx_trade_desk.ib.account import build_account_payload
+from spx_trade_desk.market.hours import market_status, get_expiration_display
+from spx_trade_desk.strategy.engine import (build_candidate_views, reset_strategy_runtime)
 
 logger = logging.getLogger(__name__)
 
@@ -508,7 +508,7 @@ class DiscordBot:
         if payload is None:
             return False, "Not a liquidatable position (OPT or STK required)."
         self._liquidating.add(poskey)
-        from spx_trade_desk.ib.order_manager import handle_place_order
+        from spx_trade_desk.ib.orders import handle_place_order
         try:
             resp = await handle_place_order(self.ib, self.state, payload)
         except Exception as e:

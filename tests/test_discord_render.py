@@ -9,7 +9,7 @@ The bind: each formatter must render the *view* dict as a readable message,
 not dump the raw structure. These tests assert the human-facing output.
 """
 
-from spx_trade_desk.discord.discord_bot import (
+from spx_trade_desk.discord.bot import (
     _table,
     _money,
     _pct,
@@ -57,7 +57,7 @@ def _empty_cand_result():
 
 
 def _strategy_result():
-    from spx_trade_desk.strategy.strategy_models import Strategy, Condition
+    from spx_trade_desk.strategy.models import Strategy, Condition
     s = Strategy(
         name="Main", direction="bull_put", budget=15000.0,
         conditions=[
