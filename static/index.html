@@ -408,14 +408,14 @@
             <span class="help" tabindex="0" aria-label="CSV path explanation">?
               <span class="tooltip" role="tooltip">Timestamped OHLC file (ET). Calibration is cached per (source, path, bar size, lookback) &mdash; if you replace the file's contents, restart the server so the new data is actually used, or the sim keeps simulating the old bars.</span>
             </span>
-            <input id="simCsvPath" placeholder="tests/fixtures/sim_bars_5m.csv"></label>
+            <input id="simCsvPath" placeholder="tests/fixtures/SPX_1min_10d.csv"></label>
           <label>Bar size
             <span class="help" tabindex="0" aria-label="Bar size explanation">?
-              <span class="tooltip" role="tooltip">Granularity of the simulated day (5m = 78 bars, 1m = 390). A CSV is read at its native timestamps, so pick the size that matches the file &mdash; a mismatch distorts both the volatility fit and time-to-expiry.</span>
+              <span class="tooltip" role="tooltip">Granularity of the simulated day (1m = 390 bars, 5m = 78). A CSV is read at its native timestamps, so pick the size that matches the file &mdash; a mismatch distorts both the volatility fit and time-to-expiry.</span>
             </span>
             <select id="simBarSize">
-              <option value="5m">5 min</option>
               <option value="1m">1 min</option>
+              <option value="5m">5 min</option>
               <option value="30s">30 sec</option>
               <option value="15s">15 sec</option>
               <option value="5s">5 sec</option>
@@ -425,7 +425,7 @@
             <span class="help" tabindex="0" aria-label="Lookback explanation">?
               <span class="tooltip" role="tooltip">Days of history used to fit the path model (GARCH vol, U-shape, VIX anchor). Note: a CSV file is loaded as-is &mdash; this field only limits yfinance/IB downloads.</span>
             </span>
-            <input id="simLookback" type="number" value="60" min="5"></label>
+            <input id="simLookback" type="number" value="10" min="5"></label>
           <label>Paths
             <span class="help" tabindex="0" aria-label="Paths explanation">?
               <span class="tooltip" role="tooltip">Monte Carlo paths per sweep cell. More paths = smoother percentile charts and tighter tail estimates, at linear runtime cost.</span>
@@ -642,6 +642,20 @@
                 <div class="order-modal-footer">
                     <button class="order-modal-cancel" onclick="closeSettings()">Cancel</button>
                     <button class="order-modal-confirm" id="setIbApplyBtn" onclick="applyIbSettings()">Apply Port</button>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <div class="settings-section-title">Simulator</div>
+                <label class="settings-field">
+                    <span>Worker processes</span>
+                    <input type="number" id="setSimWorkers" min="0" max="256">
+                </label>
+                <div class="settings-status off" id="setSimWorkersHint">-</div>
+                <div class="settings-result" id="setSimResult"></div>
+                <div class="order-modal-footer">
+                    <button class="order-modal-cancel" onclick="closeSettings()">Cancel</button>
+                    <button class="order-modal-confirm" id="setSimApplyBtn" onclick="applySimSettings()">Apply Workers</button>
                 </div>
             </div>
         </div>

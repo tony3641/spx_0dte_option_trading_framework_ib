@@ -4,6 +4,81 @@ All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboa
 
 ---
 
+## Session: September 10, 2026 - Parallel sim execution (process pool)
+
+- Added `sim_parallel.py`: the sim's `(sweep cell, chunk)` work now runs on a
+  spawn-context process pool instead of one core. Processes, not threads — the
+  exit scan is a per-path Python loop, which the GIL serializes. `compute_chunk`
+  is shared by both the serial and parallel paths, so the parallel result is
+  bit-identical to the serial one (RNG keyed by `(seed, cell, chunk)`, results
+  reassembled by index, never by completion order).
+- `sim_jobs.execute_pipeline`: per-cell aggregation as a cell's chunks land
+  (raw trials freed immediately, so peak memory does not grow with the sweep
+  size); cancel terminates the pool and drops cells whose chunks did not all
+  finish, matching the previous semantics. `meta.workers` records the pool size.
+- Worker policy (`sim_parallel.resolve_workers`): `cfg.n_workers` → `SIM_WORKERS`
+  env/.env → auto. Auto = CPU count, capped by the task count and by run size
+  (one worker per 250 paths), so smoke runs (< ~1000 paths) stay in-process where
+  pool startup would dominate. Explicit settings always win.
+- Measured (8-core box, 2000 paths, 5m bars, fixture): 31.2s serial → 10.7s with
+  4 workers → 9.1s with 8 workers; day-PnL mean identical across all three.
+- Settings UI: new "Simulator" section in the gear modal (top-right) with a
+  worker-process field and apply, plus `GET/POST /api/settings/sim` (localhost
+  only, like the Discord/IB sections). The POST writes `os.environ` first so the
+  next run picks it up without a restart, then persists `SIM_WORKERS` to `.env`.
+- `config.py`: `SIM_WORKERS` (default 0 = auto). `SimRunConfig.n_workers` (0 =
+  auto, 1 = serial), validated `>= 0`.
+- Tests: `tests/test_sim_parallel.py` (13) — serial/parallel bit-equality incl.
+  sweep grids, worker resolution + size floor, pool cancel, chunk determinism;
+  `tests/test_settings_api.py` +4 for the new endpoints; e2e
+  `test_settings_modal_exposes_sim_workers` (Playwright, POST intercepted so the
+  repo `.env` is never written by a test).
+- E2E harness fix: the child server now boots with an empty `DOTENV_PATH` — the
+  repo `.env` carries `DISCORD_TOKEN`, which the fixture's env-var strip did not
+  cover, so boot spent ~15s on a Discord login and blew the 30s deadline (the
+  pre-existing "e2e server-start error"). Deadline raised to 60s.
+- Docs: README "Parallel execution" subsection, `SIM_WORKERS` in the config
+  table, known-limitations entry updated.
+- Full suite: 565 passed; the 8 failures are all pre-existing on pristine HEAD
+  (6 sim_regression baseline drift, chain_fetcher GEX tolerance, FOMC date) —
+  verified by stashing this change and re-running.
+
+---
+
+## Session: September 7, 2026 - Strategy-tuning skill + sim_tune.py runner
+
+- Added `sim_tune.py` (repo root): deterministic variant runner for agent-driven
+  strategy tuning. Takes a `variants.json` spec (global dataset/run/stress blocks +
+  named knob variants), injects overridden `Strategy` objects in memory via the
+  `state` stub (never writes `config/strategies.json`), runs one `execute_pipeline`
+  call per variant, and writes `results.csv` / `results.json` into an experiment
+  folder. Always runs the live config as the `baseline` control first; validates the
+  knob whitelist up front and refuses sim-unsupported gates (trend, atm_iv,
+  non-bull_put) before any compute; warns if `spx_fan` differs across variants
+  (common-random-numbers check).
+- Added project skill `.claude/skills/strategy-tuning/` (SKILL.md + references):
+  a five-phase methodology — scope/freeze, baseline + noise floor, diagnose from
+  the exit-reason breakdown, one-knob-at-a-time rounds with keep/revert decision
+  log, multi-seed robustness gate, then a propose-only JSON diff report. Judgment
+  over brute force: the agent picks the binding knob per round; the runner just
+  executes deterministically. Includes the knob taxonomy (sim-consumed subset,
+  effect directions, quantization traps) and the future family-mode extension
+  design.
+- Reproducibility property relied on by the methodology: for identical
+  (seed, dataset, n_paths, single sweep cell) the sim replays bit-identical spot
+  paths across strategy-knob variants (`SeedSequence(entropy=cfg.seed,
+  spawn_key=(ci, ch))`; no RNG in the strategy engine), so per-round deltas are
+  attributable to knobs alone.
+- Tests: `tests/test_sim_tune.py` (10 tests) — knob whitelist/unset semantics,
+  fail-fast on unsupported strategies, CRN `spx_fan` equality, byte-identical
+  results across invocations, config-file-untouched guarantee, CSV/JSON schemas,
+  multi-seed rows, CLI smoke end-to-end. Full suite: 551 passed; the 2 pre-existing
+  failures (chain_fetcher GEX tolerance, FOMC date) and the e2e server-start error
+  are unrelated to this change.
+- README: new "Strategy tuning (agent workflow)" subsection under Simulation.
+
+---
+
 ## Session: April 10, 2026 - Current update
 
 - Added a broad backend refactor and new core service modules: `account_manager.py`, `app_state.py`, `chain_manager.py`, `config.py`, `ib_connection.py`, `order_manager.py`, `price_bars.py`, `risk_free.py`, `ws_handler.py`.

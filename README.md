@@ -87,6 +87,24 @@ Here's what the report it produces looks like:
 ![Day PnL distribution and spread mark-to-market through the day](docs/simulation2.png)
 ![Bootstrap max-drawdown histogram over 60-day sequences](docs/simulation3.png)
 
+### Parallel execution
+
+A run is split into `(sweep cell, chunk)` tasks and executed on a **process pool**
+(`sim_parallel.py`), so a full-size run uses every CPU core. Processes rather than
+threads: the exit scan is a per-path Python loop, which the GIL would serialize.
+
+- **Workers**: set in the gear menu (Settings → Simulator → *Worker processes*), or
+  `SIM_WORKERS` in `.env`. `0` = auto = CPU count; `1` = serial.
+- **Auto stays serial for small runs** (< ~1000 paths): spawning workers costs more
+  than the run itself. Explicit `n_workers`/`SIM_WORKERS` overrides that.
+- **Results are identical either way** — the RNG stream is keyed by
+  `(seed, cell, chunk)` and results are reassembled by index, never by completion
+  order, so parallel and serial runs are bit-for-bit the same.
+- **Cancel** stops submitting new chunks and kills the in-flight ones; cells whose
+  chunks did not all finish are dropped, as before.
+- First-run cost on Windows: each worker re-imports the app (~1–3 s per worker) when
+  the pool is created. The pool is per run — no idle worker processes between runs.
+
 ### Known limitations
 
 - **Family mode** uses placeholder per-path stats (`mtm=None`) and does **not** support
@@ -100,8 +118,9 @@ Here's what the report it produces looks like:
   mis-simulated with bull-put geometry.
 - **Single-mode day-PnL stats count entered days only**; family-mode totals include zero-PnL
   days for never-entered children paths (a definition mismatch between the two modes).
-- **Engine-mode exit scans are per-path Python loops**; "~10k paths in seconds" is optimistic
-  for large sweeps with many cells.
+- **Engine-mode exit scans are per-path Python loops** — the reason runs are CPU-bound.
+  They are parallelized across processes (see "Parallel execution"), so wall-clock scales
+  with cores, but a single huge sweep still takes minutes.
 - **Sweep cells use independent RNG streams** (no common random numbers), so cross-cell
   differences include sampling noise — an experiment-quality tradeoff, not a paired A/B.
 - **Bars and the fitted model are cached per `(source, csv_path, bar size, lookback)`** —
@@ -115,12 +134,39 @@ Here's what the report it produces looks like:
 
 - Every contract is a **0DTE put** expiring at the 16:00 close; time-to-expiry decays bar
   by bar (`bar_seconds / (252 × 6.5h)` per bar).
-- **IV** = quadratic smile in log-moneyness, loaded from the captured smile snapshot
-  (`config/sim_smile.json`; else `sim_smile_default.json`, ATM IV 20%), plus a small
-  vol-level link term.
+- **IV** = SVI smile in log-moneyness, loaded from the captured smile snapshot
+  (`config/sim_smile.json`; else `sim_smile_default.json`, ATM IV ~20%), plus a small
+  vol-level link term. The SVI shape keeps far-OTM put IV bounded (the legacy
+  quadratic fit exploded to >100% IV and produced arbitrage-invalid credits).
 - **Spread mark** = Black-Scholes put mid difference; the **entry fill** is the
   tick-floored conservative side (never better than the natural); **expiry settles at
   intrinsic value**. Stops trigger at mark ≥ multiplier × collected credit (+ slippage).
+
+### Intraday smile dynamics (sim)
+
+Each phase is independently validated over the constant-level/constant-tilt gates and
+a pinned bit-identical regression chain before the next is stacked; all dials default
+to legacy (bit-identical), so `skew_beta=skew_t_gamma=0` and `atm_budget=false`
+reproduce prior behavior exactly (fan-vs-market methodology, spec §3).
+
+The simulated smile now responds to the path's own volatility state. With
+`skew_beta = 0` (default) behavior is unchanged. `skew_beta > 0` tilts the IV curve
+when a path's GARCH sigma deviates from its calibrated mean: put wings get richer,
+call wings cheaper, ATM unchanged (`iv_t(m) += -skew_beta * clamp(sigma_t/sigma0 - 1,
+-1, +3) * (T0/T)^gamma * m`). The response is closed-form — the SVI is never refit at runtime.
+`skew_t_gamma` (0..1, literature anchor ~0.4) scales this tilt by `(T0/T)^gamma`, steepening wings toward expiry.
+
+`atm_budget = true` replaces the flat ATM level with a variance-budget anchor:
+ATM IV is re-anchored each bar to the model's annualized remaining expected variance
+(closed-form GJR conditional expectation weighted by the intraday U-shape), normalized
+so the first bar matches the captured snapshot exactly. Quiet paths now show the
+model's intraday IV profile — early burn-off and progressive firm-up into the close
+(the trough's depth/timing follows the close-bucket weight) — instead of a flat level.
+Note the anchor's state sensitivity is materially stronger than the legacy linear
+`vol_beta` link (it is the theory value: remaining variance scales with the persistent
+GARCH state); treat `budget_beta` as the A/B dial for that channel. The variance-risk-
+premium burn-off that makes real quiet-day late IV lower than the model's expectation
+is an accepted residual (spec §7).
 
 ### Reading results: win-rate sanity
 
@@ -174,6 +220,24 @@ guidance.
   size, GARCH fit + warnings, smile, dials), all per-cell stats and plotted series
   (histograms, MTM fan, bootstrap DDs, SPX fan), and a glossary reusing the UI's "?"
   explanations.
+
+### Strategy tuning (agent workflow)
+
+`sim_tune.py` executes **named knob variants** of one live strategy from
+`config/strategies.json` through the simulator — deterministically, without ever
+writing the config file. It backs the agent-driven tuning methodology in
+`.claude/skills/strategy-tuning/` (baseline → diagnose → one-knob-at-a-time
+rounds → multi-seed robustness gate → propose-only JSON diff), where the agent
+picks which knob to probe by judgment rather than sweeping grids. Variant specs
+and results land in `docs/experiments/<slug>/` (`variants.json`, `results.csv`,
+`results.json`, `report.md`). All variants in a spec share the same seed,
+dataset, and `n_paths`, so the simulator replays identical spot paths per variant
+(common random numbers) and metric deltas are attributable to the knobs alone.
+
+```
+python sim_tune.py --strategy Experiment_1 --spec docs/experiments/<slug>/variants.json --smoke  # wiring check
+python sim_tune.py --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
+```
 
 ## Charts
 
@@ -269,6 +333,7 @@ Settings are resolved in order: **environment variable → repo-root `.env` → 
 | `MONTHLY_CACHE_TTL` | `600` | Monthly chain cache TTL (seconds) |
 | `SGOV_TICKER` | `SGOV` | Ticker used for risk-free rate |
 | `DEFAULT_RISK_FREE_RATE` | `0.043` | Fallback risk-free rate |
+| `SIM_WORKERS` | `0` | Sim worker processes: `0` = auto (CPU count), `1` = serial |
 | `RTH_OPEN` / `RTH_CLOSE` | `09:30` / `16:15` | Regular trading hours window (ET) |
 | `FOMC_DATES` | `[]` | FOMC meeting dates (via `params.yaml`) |
 

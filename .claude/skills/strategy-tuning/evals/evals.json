@@ -1,0 +1,53 @@
+{
+  "skill_name": "strategy-tuning",
+  "evals": [
+    {
+      "id": 0,
+      "eval_name": "stop-loss-risk",
+      "prompt": "My Experiment_1 strategy (the bull put in config/strategies.json) keeps getting stopped out and it's eating my returns. Work out what's actually binding and check whether a different stop multiplier would help. This is just an exploration - do NOT change any of my config, show me what you find. Keep compute light (n_paths around 800 max) and use the hermetic bars at tests/fixtures/sim_bars_5m.csv with spot0 6000 so it runs fast.",
+      "expected_output": "A baseline run followed by a diagnosis (stop-heavy breakdown) and a one-knob bracketing round on exit.stop_multiplier, an experiment record (experiment.md, variants.json, results.csv/json), and a propose-only report with an exact JSON diff for the stop multiplier - config/strategies.json untouched.",
+      "files": [],
+      "assertions": [
+        "Baseline control: the live Experiment_1 config is run unchanged (as a baseline row/run) before any knob variant is evaluated",
+        "Deterministic variant execution: variants are executed via the repo's sim_tune.py runner with a persisted variants.json spec (spec + results files exist in the outputs dir), not via throwaway one-off simulation code",
+        "Single knob per round: within the main round, the variant set varies ONLY exit.stop_multiplier (no other knob changed at the same time)",
+        "Evidence-based diagnosis: the diagnosis cites the exit-reason breakdown (stop vs expired vs never counts) or win-rate/tail stats from a run BEFORE recommending a knob change",
+        "Propose-only: config/strategies.json is not modified (repo diff clean for that file) and the final report contains an exact before/after JSON fragment for any proposed change",
+        "Artifact set present in the outputs dir: experiment notes/decision log, variants spec, results.csv or equivalent results file, and a report/answer with the recommendation",
+        "Seed discipline: either the finalist is validated on additional seeds, or the report explicitly states the single-seed caveat and that seed validation is the next step"
+      ]
+    },
+    {
+      "id": 1,
+      "eval_name": "delta-band-robust",
+      "prompt": "I've been wondering if widening Experiment_1's short-delta band (currently 0.03-0.042) would improve its risk-adjusted results. Can you test that properly with the simulator - and make sure any improvement isn't just seed luck before you recommend it. Don't touch my config; give me a proposal if it holds up. Keep runs small (n_paths <= 800) and use tests/fixtures/sim_bars_5m.csv, spot0 6000, seed 42 to start.",
+      "expected_output": "A one-knob round on short_delta.min/max plus an explicit multi-seed robustness check of the finalist (fresh seeds beyond the working seed), honest reporting if the effect does not survive, artifacts in the experiment folder, propose-only report with exact diff.",
+      "files": [],
+      "assertions": [
+        "Robustness gate: the finalist (or the headline claim) is validated on at least 2 seeds total (working seed + fresh seeds) BEFORE any adoption recommendation, with per-seed results visible",
+        "Honest verdict: if the delta-band effect fails the seed check, the report recommends NOT adopting (and vice versa - an adopted recommendation cites the seed evidence)",
+        "Single knob per round: the main round varies ONLY short_delta.min / short_delta.max (no other knob changed at the same time)",
+        "Baseline control: the live config is run unchanged as the comparison baseline",
+        "Deterministic variant execution: variants executed via sim_tune.py with a persisted variants.json spec (spec + results files exist in the outputs dir)",
+        "Propose-only: config/strategies.json not modified and the report contains an exact before/after JSON fragment for any proposal",
+        "Artifact set present: experiment notes/decision log, variants spec, results file(s), and a report/answer with the recommendation"
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "window-credit-diagnosis",
+      "prompt": "Sometimes Experiment_1 barely trades and I can't tell why. Diagnose it with the simulator and see whether tuning the entry window or the credit band can lift mean PnL without wrecking the tail risk. No config edits - report + proposal please. Be economical with compute (n_paths <= 800), use tests/fixtures/sim_bars_5m.csv, spot0 6000.",
+      "expected_output": "Diagnosis referencing never_entered_pct / breakdown, a single-knob round (entry window OR credit band, not both at once), tail metrics (cvar5/ruin_prob) checked before recommending, experiment artifacts, propose-only report.",
+      "files": [],
+      "assertions": [
+        "Diagnosis grounded in metrics: the 'barely trades' question is answered with run evidence (never_entered_pct and/or exit-reason breakdown, entry counts) rather than speculation",
+        "Single knob per round: the main round tunes EITHER the entry window OR the credit band - not both simultaneously in one variant set",
+        "Tail risk checked: cvar5 and/or ruin_prob (and worst_day) are examined before recommending, and the recommendation explicitly addresses whether tails worsened",
+        "Baseline control: the live config is run unchanged as the comparison baseline",
+        "Deterministic variant execution: variants executed via sim_tune.py with a persisted variants.json spec (spec + results files exist in the outputs dir)",
+        "Propose-only: config/strategies.json not modified and the report contains an exact before/after JSON fragment for any proposal",
+        "Artifact set present: experiment notes/decision log, variants spec, results file(s), and a report/answer with the recommendation"
+      ]
+    }
+  ]
+}

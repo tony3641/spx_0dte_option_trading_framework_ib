@@ -5,9 +5,10 @@ from sim_config import SimRunConfig, sweep_cells, BAR_SECONDS
 
 def test_defaults_and_steps_per_day():
     cfg = SimRunConfig(strategy_name="Main")
-    assert cfg.bar_size == "5m" and cfg.mode == "single"
-    assert cfg.steps_per_day() == 78          # 390 min / 5
-    assert BAR_SECONDS["1m"] == 60
+    assert cfg.bar_size == "1m" and cfg.mode == "single"
+    assert cfg.lookback_days == 10
+    assert cfg.steps_per_day() == 390         # 390 min / 1
+    assert BAR_SECONDS["5m"] == 300
 
 
 def test_validate_rejects_bad_inputs():
@@ -74,3 +75,40 @@ def test_sweep_cells_product():
 
 def test_sweep_cells_defaults():
     assert sweep_cells(SimRunConfig(strategy_name="M")) == [{"sl_multiplier": None, "k": None}]
+
+
+def _cfg(**kw):
+    return SimRunConfig(strategy_name="T", **kw)
+
+
+def test_skew_beta_default_is_neutral():
+    assert _cfg().skew_beta == 0.0
+
+
+def test_negative_skew_beta_rejected():
+    with pytest.raises(ValueError, match="skew_beta"):
+        _cfg(skew_beta=-0.1).validate()
+
+
+def test_positive_skew_beta_accepted():
+    _cfg(skew_beta=1.0).validate()   # must not raise
+
+
+def test_t_gamma_default_is_neutral():
+    assert _cfg().skew_t_gamma == 0.0
+
+
+def test_t_gamma_out_of_range_rejected():
+    with pytest.raises(ValueError, match="skew_t_gamma"):
+        _cfg(skew_t_gamma=1.5).validate()
+
+
+def test_budget_dials_default_neutral():
+    c = _cfg()
+    assert c.atm_budget is False
+    assert c.budget_beta == 1.0
+
+
+def test_negative_budget_beta_rejected():
+    with pytest.raises(ValueError, match="budget_beta"):
+        _cfg(budget_beta=-1.0).validate()

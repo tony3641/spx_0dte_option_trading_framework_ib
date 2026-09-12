@@ -14,12 +14,16 @@
 
     async function loadSettings() {
         try {
-            const [discord, ib] = await Promise.all([
+            const [discord, ib, sim] = await Promise.all([
                 fetch('/api/settings/discord').then(r => {
                     if (!r.ok) throw new Error(r.statusText);
                     return r.json();
                 }),
                 fetch('/api/settings/ib').then(r => {
+                    if (!r.ok) throw new Error(r.statusText);
+                    return r.json();
+                }),
+                fetch('/api/settings/sim').then(r => {
                     if (!r.ok) throw new Error(r.statusText);
                     return r.json();
                 }),
@@ -39,8 +43,14 @@
                 : (discord.token_set ? '○ Stopped' : '○ Disabled (no token)');
             status.className = 'settings-status ' + (discord.running ? 'ok' : 'off');
             document.getElementById('setIbPort').value = ib.port;
+            document.getElementById('setSimWorkers').value = sim.workers;
+            document.getElementById('setSimWorkersHint').textContent =
+                sim.workers > 0
+                    ? `Fixed at ${sim.workers} process${sim.workers === 1 ? '' : 'es'}`
+                    : `0 = auto (all ${sim.cpu_count} CPU cores; small runs stay serial)`;
             document.getElementById('setDiscordResult').textContent = '';
             document.getElementById('setIbResult').textContent = '';
+            document.getElementById('setSimResult').textContent = '';
             settingsLoaded = true;
         } catch (e) {
             document.getElementById('setDiscordResult').textContent =
@@ -117,5 +127,37 @@
         } finally {
             document.getElementById('loadingOverlay').classList.add('hidden');
             btn.disabled = false;
+        }
+    }
+
+    async function applySimSettings() {
+        const workers = parseInt(document.getElementById('setSimWorkers').value, 10);
+        if (!Number.isInteger(workers) || workers < 0) {
+            setSettingsResult('setSimResult',
+                'Worker processes must be an integer >= 0 (0 = auto).', false);
+            return;
+        }
+        const btn = document.getElementById('setSimApplyBtn');
+        btn.disabled = true;
+        btn.textContent = 'Applying...';
+        try {
+            const r = await fetch('/api/settings/sim', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workers }),
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.detail || r.statusText || 'Apply failed');
+            let msg = workers > 0
+                ? `Applied — next sim run uses ${workers} process${workers === 1 ? '' : 'es'}.`
+                : `Applied — next sim run uses up to ${data.cpu_count} processes.`;
+            if (data.persisted === false) msg += ' Warning: could not write .env — setting lost on restart.';
+            setSettingsResult('setSimResult', msg, true);
+            settingsLoaded = false;              // reload the hint on next open
+        } catch (e) {
+            setSettingsResult('setSimResult', 'Apply failed: ' + e.message, false);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Apply Workers';
         }
     }

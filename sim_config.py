@@ -14,8 +14,8 @@ class SimRunConfig:
     mode: str = "single"                # "single" | "family"
     source: str = "auto"                # "csv" | "yfinance" | "ib" | "auto"
     csv_path: str = ""
-    bar_size: str = "5m"
-    lookback_days: int = 60
+    bar_size: str = "1m"
+    lookback_days: int = 10
     spot0: Optional[float] = None       # day-open spot; None = live / last close
     n_paths: int = 10000
     seed: int = 42
@@ -37,6 +37,11 @@ class SimRunConfig:
     stop_extra: float = 0.10            # market-order stop: trigger + this
     tick_size: float = 0.05
     ladder_range_pct: float = 0.15
+    skew_beta: float = 0.0              # smile tilt per unit vol-shock (>=0); 0 = legacy
+    skew_t_gamma: float = 0.0           # expiry amplification exponent (0..1); 0 = Phase-A-only tilt
+    atm_budget: bool = False            # variance-budget ATM anchor (spec §7); False = legacy level shift
+    budget_beta: float = 1.0            # budget state-sensitivity scale (1.0 = theory)
+    n_workers: int = 0                  # worker processes; 0 = auto (SIM_WORKERS env, else CPU count)
 
     def steps_per_day(self) -> int:
         return (390 * 60) // BAR_SECONDS[self.bar_size]
@@ -60,6 +65,8 @@ class SimRunConfig:
             raise ValueError("n_paths must be > 0")
         if self.chunk_size <= 0:
             raise ValueError("chunk_size must be > 0")
+        if self.n_workers < 0:
+            raise ValueError("n_workers must be >= 0 (0 = auto, 1 = serial)")
         if self.equity <= 0:
             raise ValueError("equity must be > 0")
         if not (0 < self.ruin_threshold_pct <= 1):
@@ -72,6 +79,12 @@ class SimRunConfig:
                 raise ValueError(f"{name} must be > 2.0 (Student-t needs finite variance)")
         if self.gamma_mult <= 0 or self.vol_beta < 0:
             raise ValueError("gamma_mult must be > 0 and vol_beta >= 0")
+        if self.skew_beta < 0:
+            raise ValueError("skew_beta must be >= 0")
+        if not (0 <= self.skew_t_gamma <= 1):
+            raise ValueError("skew_t_gamma must be in [0, 1]")
+        if self.budget_beta < 0:
+            raise ValueError("budget_beta must be >= 0")
         if self.vol_cap_mult <= 0:
             raise ValueError("vol_cap_mult must be > 0")
         if self.atm_iv is not None and not (0 < self.atm_iv < 5.0):
