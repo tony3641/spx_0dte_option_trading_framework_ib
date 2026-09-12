@@ -10,9 +10,9 @@ import math
 import logging
 from datetime import datetime
 
-from config import PRICE_PUSH_INTERVAL
-from market_hours import now_et, is_within_rth, last_trading_date, ET
-from ib_connection import update_spx_es_prices
+from spx_trade_desk.core.config import PRICE_PUSH_INTERVAL
+from spx_trade_desk.market.market_hours import now_et, is_within_rth, last_trading_date, ET
+from spx_trade_desk.ib.ib_connection import update_spx_es_prices
 
 logger = logging.getLogger(__name__)
 

@@ -1,10 +1,10 @@
 from unittest.mock import MagicMock, patch
 
-from risk_free import fetch_sgov_no_risk_yield, get_risk_free_rate
+from spx_trade_desk.core.risk_free import fetch_sgov_no_risk_yield, get_risk_free_rate
 
 
 def test_fetch_sgov_no_risk_yield_uses_yfinance_yield_plus_expense_ratio():
-    with patch("risk_free.yf") as mock_yf:
+    with patch("spx_trade_desk.core.risk_free.yf") as mock_yf:
         mock_ticker = MagicMock()
         mock_ticker.info = {
             "yield": 0.0399,
@@ -18,7 +18,7 @@ def test_fetch_sgov_no_risk_yield_uses_yfinance_yield_plus_expense_ratio():
 
 
 def test_fetch_sgov_no_risk_yield_requires_yield():
-    with patch("risk_free.yf") as mock_yf:
+    with patch("spx_trade_desk.core.risk_free.yf") as mock_yf:
         mock_ticker = MagicMock()
         mock_ticker.info = {
             "netExpenseRatio": 0.09,
@@ -33,7 +33,7 @@ def test_fetch_sgov_no_risk_yield_requires_yield():
 
 
 def test_fetch_sgov_no_risk_yield_requires_expense_ratio():
-    with patch("risk_free.yf") as mock_yf:
+    with patch("spx_trade_desk.core.risk_free.yf") as mock_yf:
         mock_ticker = MagicMock()
         mock_ticker.info = {
             "yield": 0.0399,
@@ -49,7 +49,7 @@ def test_fetch_sgov_no_risk_yield_requires_expense_ratio():
 
 
 def test_get_risk_free_rate_falls_back_to_default_when_fetch_fails():
-    with patch("risk_free.fetch_sgov_no_risk_yield", side_effect=Exception("network error")):
+    with patch("spx_trade_desk.core.risk_free.fetch_sgov_no_risk_yield", side_effect=Exception("network error")):
         result = get_risk_free_rate(default=0.0123)
 
     assert result == 0.0123

@@ -1,11 +1,11 @@
 # tests/test_sim_family.py
 import numpy as np
 
-from sim_calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
-from sim_config import SimRunConfig
-from sim_engine import run_family
-from sim_paths import SimPaths
-from strategy_models import (Condition, ExitRules, StopLoss, Strategy, TriggerSpec)
+from spx_trade_desk.sim.sim_calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_engine import run_family
+from spx_trade_desk.sim.sim_paths import SimPaths
+from spx_trade_desk.strategy.strategy_models import (Condition, ExitRules, StopLoss, Strategy, TriggerSpec)
 
 
 def _model():

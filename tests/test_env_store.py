@@ -1,5 +1,5 @@
 # tests/test_env_store.py
-from env_store import read_env, update_env
+from spx_trade_desk.core.env_store import read_env, update_env
 
 
 def test_update_creates_file(tmp_path):

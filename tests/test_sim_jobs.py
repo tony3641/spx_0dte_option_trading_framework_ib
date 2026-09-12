@@ -4,9 +4,9 @@ import os
 import numpy as np
 import pytest
 
-import sim_jobs
-from sim_config import SimRunConfig
-from sim_data import load_bars
+from spx_trade_desk.sim import sim_jobs
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_data import load_bars
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 SPOT0 = 7718.36   # last RTH close of the 10-day fixture (2026-09-04 16:00)

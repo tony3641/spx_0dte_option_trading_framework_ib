@@ -11,13 +11,16 @@ import asyncio
 import os
 import sys
 
+# `tests.conftest` lives at the repo root, which is not on sys.path when this
+# file is run directly (python tests/spikes/smoke_bridge_mock.py). The editable
+# install exposes spx_trade_desk, not the repo root, so this insert stays.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from tests.conftest import MockIBClient, MockContract, MockContractDetails
 from ibapi.contract import Contract
-from ib_client import TickStream
-from app_state import AppState
-import ib_connection as conn
+from spx_trade_desk.ib.ib_client import TickStream
+from spx_trade_desk.core.app_state import AppState
+from spx_trade_desk.ib import ib_connection as conn
 
 CHECKS = []
 FAILURES = []

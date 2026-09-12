@@ -1,5 +1,5 @@
 import pytest
-from strategy_models import Strategy, Condition, ExitRules, TakeProfit, StopLoss
+from spx_trade_desk.strategy.strategy_models import Strategy, Condition, ExitRules, TakeProfit, StopLoss
 
 
 def test_strategy_roundtrips():
@@ -120,7 +120,7 @@ def test_run_days_invalid_rejected():
         Strategy.from_dict(_base_dict(run_days=["a"]))
 
 
-from strategy_models import TriggerSpec, RuntimeState, TRIGGER_KINDS, TRIGGER_LOGIC
+from spx_trade_desk.strategy.strategy_models import TriggerSpec, RuntimeState, TRIGGER_KINDS, TRIGGER_LOGIC
 
 
 def test_trigger_spec_roundtrips():

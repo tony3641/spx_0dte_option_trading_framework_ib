@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from condition_helpers import combo_credit
-from sim_calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
-from sim_config import SimRunConfig
-from sim_engine import run_entry
-from sim_paths import SimPaths
-from strategy_engine import generate_candidates
+from spx_trade_desk.strategy.condition_helpers import combo_credit
+from spx_trade_desk.sim.sim_calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_engine import run_entry
+from spx_trade_desk.sim.sim_paths import SimPaths
+from spx_trade_desk.strategy.strategy_engine import generate_candidates
 from tests.test_sim_engine import _model, _strategy
 
 
@@ -36,7 +36,7 @@ def test_vectorized_entry_matches_generate_candidates():
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
     es = run_entry(model, cfg, strat, paths, ladder)
 
-    from sim_pricing import bsm_put, bsm_put_delta, bar_year_frac, half_spread
+    from spx_trade_desk.sim.sim_pricing import bsm_put, bsm_put_delta, bar_year_frac, half_spread
     checked = 0
     for p in range(n):
         if not es.entered[p]:

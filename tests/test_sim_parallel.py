@@ -9,10 +9,10 @@ import os
 
 import pytest
 
-import sim_jobs
-import sim_parallel
-from sim_config import SimRunConfig
-from sim_data import load_bars
+from spx_trade_desk.sim import sim_jobs
+from spx_trade_desk.sim import sim_parallel
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_data import load_bars
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 SPOT0 = 7718.36   # last RTH close of the 10-day fixture (2026-09-04 16:00)
@@ -115,7 +115,7 @@ def test_parallel_family_mode_matches_serial():
     # the child Strategy objects must survive pickling).
     from types import SimpleNamespace
 
-    from strategy_models import TriggerSpec
+    from spx_trade_desk.strategy.strategy_models import TriggerSpec
     from tests.test_sim_family import _child, _parent
 
     parent = _parent()
@@ -192,7 +192,7 @@ def test_compute_chunk_is_deterministic():
     cfg = _cfg()
     bars = load_bars(cfg)
     model = sim_jobs.calibrate(bars, cfg)
-    from strategy_models import Strategy
+    from spx_trade_desk.strategy.strategy_models import Strategy
     strat = sim_jobs._STRATEGY_CACHE["T"]
     ladder = sim_jobs.build_ladder(SPOT0, cfg.ladder_range_pct)
     dyn = sim_jobs.build_dynamics(model, cfg)

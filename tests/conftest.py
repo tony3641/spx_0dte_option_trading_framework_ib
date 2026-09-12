@@ -9,8 +9,6 @@ returns a real ``TickStream``, and account data uses the real
 ``AccountValue``/``PortfolioItem``/``ExecutionRecord`` records.
 """
 
-import sys
-import os
 import json
 import logging
 from dataclasses import dataclass, field
@@ -18,13 +16,10 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-# Ensure project root is on sys.path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from app_state import AppState, create_app_state
+from spx_trade_desk.core.app_state import AppState, create_app_state
 
 # Reuse the real bridge types — never re-implement them here.
-from ib_client import (  # noqa: E402  (sys.path insert above)
+from spx_trade_desk.ib.ib_client import (
     AccountValue,
     ExecutionRecord,
     Greeks,

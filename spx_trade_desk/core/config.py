@@ -13,6 +13,8 @@ from datetime import time
 from pathlib import Path
 from typing import Any, Callable, Dict
 
+from spx_trade_desk.resources import CONFIG_DIR, ENV_PATH
+
 try:
     import yaml
 except Exception:  # pragma: no cover
@@ -24,9 +26,13 @@ except Exception:  # pragma: no cover
     load_dotenv = None
 
 
-PARAMS_YAML_PATH = Path(__file__).parent / "config" / "params.yaml"
+PARAMS_YAML_PATH = CONFIG_DIR / "params.yaml"
 
-DOTENV_PATH = Path(os.getenv("DOTENV_PATH", Path(__file__).parent / ".env"))
+# The override is re-read here, not taken from resources.ENV_PATH alone: ENV_PATH
+# is resolved once, when resources is first imported, so a later DOTENV_PATH change
+# plus importlib.reload(config) would not be picked up. Reading it at config import
+# time preserves the pre-refactor behaviour exactly.
+DOTENV_PATH = Path(os.getenv("DOTENV_PATH", ENV_PATH))
 
 # Repo-root .env fills the gap between real env vars and params.yaml.
 # override=False (the default): an explicitly-set env var still wins.

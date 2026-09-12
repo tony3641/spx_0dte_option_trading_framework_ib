@@ -18,12 +18,12 @@ from typing import List
 
 import numpy as np
 
-import config
-from sim_calibrate import CalibratedModel, SmileDynamics
-from sim_config import SimRunConfig
-from sim_engine import TrialResult, run_cell, run_family
-from sim_paths import simulate_chunk
-from strategy_models import Strategy
+from spx_trade_desk.core import config
+from spx_trade_desk.sim.sim_calibrate import CalibratedModel, SmileDynamics
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_engine import TrialResult, run_cell, run_family
+from spx_trade_desk.sim.sim_paths import simulate_chunk
+from spx_trade_desk.strategy.strategy_models import Strategy
 
 
 # Auto mode grants one worker per this many paths. A 250-path chunk is ~4s of

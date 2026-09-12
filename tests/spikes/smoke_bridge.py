@@ -7,17 +7,15 @@ Run:  python tests/spikes/smoke_bridge.py
 Requires: TWS/paper running on 127.0.0.1:7497 (default IB_CLIENT_ID).
 """
 import asyncio
-import os
 import sys
 
-# ibapi lives in the TWS install; the repo modules live in the project root.
+# ibapi lives in the TWS install; the repo package is installed editable.
 sys.path.insert(0, r"C:\TWS API\source\pythonclient")
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from ib_client import IBClient          # noqa: E402
-from ib_connection import connect_ib, setup_spx_subscription  # noqa: E402
-from price_bars import fetch_historical_bars, compute_annual_vol  # noqa: E402
-from app_state import AppState          # noqa: E402
+from spx_trade_desk.ib.ib_client import IBClient          # noqa: E402
+from spx_trade_desk.ib.ib_connection import connect_ib, setup_spx_subscription  # noqa: E402
+from spx_trade_desk.market.price_bars import fetch_historical_bars, compute_annual_vol  # noqa: E402
+from spx_trade_desk.core.app_state import AppState          # noqa: E402
 
 
 async def main():

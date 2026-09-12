@@ -13,15 +13,15 @@ from datetime import datetime
 
 from ibapi.contract import Contract
 
-from config import IB_HOST, IB_PORT, IB_CLIENT_ID
-from market_hours import (
+from spx_trade_desk.core.config import IB_HOST, IB_PORT, IB_CLIENT_ID
+from spx_trade_desk.market.market_hours import (
     now_et,
     is_within_rth,
     last_trading_date,
     find_next_expiration,
     get_expiration_display,
 )
-from chain_fetcher import (
+from spx_trade_desk.market.chain_fetcher import (
     get_chain_params,
     get_monthly_chain_params,
     find_monthly_expiration,

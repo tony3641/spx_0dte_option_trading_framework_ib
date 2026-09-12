@@ -7,9 +7,9 @@ These tests exercise the bot methods with real state and a stubbed order call.
 """
 import asyncio
 
-import order_manager
-from app_state import create_app_state
-from discord_bot import make_discord_bot
+from spx_trade_desk.ib import order_manager
+from spx_trade_desk.core.app_state import create_app_state
+from spx_trade_desk.discord.discord_bot import make_discord_bot
 
 
 def _bot(state):

@@ -1,5 +1,5 @@
 import importlib
-import config
+from spx_trade_desk.core import config
 import pytest
 
 

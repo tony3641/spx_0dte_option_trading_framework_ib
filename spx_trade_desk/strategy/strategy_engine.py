@@ -6,12 +6,12 @@ import time
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional
 
-from condition_helpers import (
+from spx_trade_desk.strategy.condition_helpers import (
     spread_width, spread_margin, combo_credit, nearest_row,
     wilder_rsi, percent_change, atm_iv,
 )
-from strategy_models import Strategy, Condition, TriggerSpec, RuntimeState, ExitRules, StopLoss
-from market_hours import (
+from spx_trade_desk.strategy.strategy_models import Strategy, Condition, TriggerSpec, RuntimeState, ExitRules, StopLoss
+from spx_trade_desk.market.market_hours import (
     now_et, is_short_trading_day, is_nfp_day, is_fomc_day, is_pm_settle,
     resolve_trading_expiration,
 )
@@ -448,7 +448,7 @@ def _sort_candidate_views(views: list) -> list:
 
 
 def _build_entry_payload(strategy: Strategy, candidate: Candidate, state, qty=1) -> dict:
-    from config import spx_tick_for_price, round_signed_to_tick
+    from spx_trade_desk.core.config import spx_tick_for_price, round_signed_to_tick
     rows = chain_rows(state)
     short_row = _find_row(rows, candidate.short_strike)
     long_row = _find_row(rows, candidate.long_strike)
@@ -496,8 +496,8 @@ def _build_entry_payload(strategy: Strategy, candidate: Candidate, state, qty=1)
 
 
 async def place_strategy_entry(ib, state, strategy, candidate, qty=1) -> dict:
-    from order_manager import handle_place_order
-    from account_manager import refresh_account_state
+    from spx_trade_desk.ib.order_manager import handle_place_order
+    from spx_trade_desk.ib.account_manager import refresh_account_state
     # PM-settle guard: never place a trade on an AM-settled (open) contract.
     trading_class = getattr(state, "trading_class", "SPXW")
     if not is_pm_settle(trading_class):
@@ -765,9 +765,9 @@ async def maybe_flatten_at_take_profit(ib, state, candidate, positions, tp, gth=
     # Marketable close: BUY back the short at ask, SELL the long at bid. The
     # framework needs a real per-leg limit (LMT validation in handle_place_order);
     # _place_multi_leg recomputes the signed BAG limit from per-leg prices.
-    from order_manager import handle_place_order
-    from account_manager import refresh_account_state
-    from config import spx_tick_for_price, round_signed_to_tick
+    from spx_trade_desk.ib.order_manager import handle_place_order
+    from spx_trade_desk.ib.account_manager import refresh_account_state
+    from spx_trade_desk.core.config import spx_tick_for_price, round_signed_to_tick
     right = short_right_for(candidate.direction)
     rows = chain_rows(state)
     short_row = _find_row(rows, candidate.short_strike)

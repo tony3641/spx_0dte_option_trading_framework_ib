@@ -8,12 +8,12 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from sim_calibrate import CalibratedModel, build_dynamics, calibrate
-from sim_config import SimRunConfig, sweep_cells
-from sim_data import BarSeries, load_bars
-from sim_parallel import chunk_payloads, compute_chunk, resolve_workers, spawn_pool
-from sim_pricing import build_ladder
-from sim_risk import build_cell_payload, spot_fan_quantiles
+from spx_trade_desk.sim.sim_calibrate import CalibratedModel, build_dynamics, calibrate
+from spx_trade_desk.sim.sim_config import SimRunConfig, sweep_cells
+from spx_trade_desk.sim.sim_data import BarSeries, load_bars
+from spx_trade_desk.sim.sim_parallel import chunk_payloads, compute_chunk, resolve_workers, spawn_pool
+from spx_trade_desk.sim.sim_pricing import build_ladder
+from spx_trade_desk.sim.sim_risk import build_cell_payload, spot_fan_quantiles
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def start_run(cfg_dict: dict, state=None, ib=None) -> dict:
         loop = asyncio.get_running_loop()
         job["loop"] = loop
         try:
-            from server import broadcast_fn   # module-level bound WS coroutine (Conflict N-b)
+            from spx_trade_desk.server import broadcast_fn   # module-level bound WS coroutine (Conflict N-b)
             job["broadcast_fn"] = broadcast_fn
         except Exception:
             job["broadcast_fn"] = None
@@ -119,12 +119,12 @@ def _load_bars_for(cfg: SimRunConfig) -> Optional[BarSeries]:
 
 
 def _get_strategy(cfg: SimRunConfig, state=None):
-    from strategy_models import Strategy
+    from spx_trade_desk.strategy.strategy_models import Strategy
     if state is not None and cfg.strategy_name in getattr(state, "strategies", {}):
         return state.strategies[cfg.strategy_name]
     if cfg.strategy_name in _STRATEGY_CACHE:
         return _STRATEGY_CACHE[cfg.strategy_name]
-    from strategy_store import load_strategies   # same file the live engine uses
+    from spx_trade_desk.strategy.strategy_store import load_strategies   # same file the live engine uses
     strategies = load_strategies()
     for s in strategies.values():
         _STRATEGY_CACHE[s.name] = s

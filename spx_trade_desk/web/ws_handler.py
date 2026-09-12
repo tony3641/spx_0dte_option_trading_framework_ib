@@ -14,16 +14,16 @@ from typing import Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from config import VIEWPORT_CENTER_MIN_INTERVAL
-from market_hours import now_et, market_status, get_expiration_display, is_within_rth
-from chain_fetcher import clear_qualification_cache
-from chain_manager import monthly_gex_fetch
-from account_manager import refresh_account_state, build_account_payload
-from order_manager import handle_place_order, handle_cancel_order
-from ib_connection import update_vix
-from strategy_engine import reset_strategy_runtime
-from strategy_store import load_strategies, save_strategy, delete_strategy
-from strategy_models import Strategy
+from spx_trade_desk.core.config import VIEWPORT_CENTER_MIN_INTERVAL
+from spx_trade_desk.market.market_hours import now_et, market_status, get_expiration_display, is_within_rth
+from spx_trade_desk.market.chain_fetcher import clear_qualification_cache
+from spx_trade_desk.market.chain_manager import monthly_gex_fetch
+from spx_trade_desk.ib.account_manager import refresh_account_state, build_account_payload
+from spx_trade_desk.ib.order_manager import handle_place_order, handle_cancel_order
+from spx_trade_desk.ib.ib_connection import update_vix
+from spx_trade_desk.strategy.strategy_engine import reset_strategy_runtime
+from spx_trade_desk.strategy.strategy_store import load_strategies, save_strategy, delete_strategy
+from spx_trade_desk.strategy.strategy_models import Strategy
 
 logger = logging.getLogger(__name__)
 

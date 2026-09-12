@@ -11,11 +11,11 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from sim_calibrate import CalibratedModel, SmileDynamics, build_dynamics
-from sim_config import SimRunConfig
-from sim_pricing import (RISK_FREE_RATE, bar_year_frac, bsm_put, bsm_put_delta,
+from spx_trade_desk.sim.sim_calibrate import CalibratedModel, SmileDynamics, build_dynamics
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_pricing import (RISK_FREE_RATE, bar_year_frac, bsm_put, bsm_put_delta,
                          build_ladder, combo_fill_credit, half_spread, smile_iv, tick_floor)
-from strategy_models import Condition, Strategy
+from spx_trade_desk.strategy.strategy_models import Condition, Strategy
 
 RTH_START_MIN = 570          # 09:30
 # Live-engine default entry window end is 15:30 = 360 MINUTES after 09:30. window_minutes
@@ -212,7 +212,7 @@ def run_entry(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
         short_ok = (adelta >= cond["dmin"]) & (adelta <= cond["dmax"])
         if cond["vix"] is not None:
             v = vix_map(model, paths.sigmas[:, t])
-            from strategy_engine import _passes_bucket, _bucket_params   # same bucket semantics
+            from spx_trade_desk.strategy.strategy_engine import _passes_bucket, _bucket_params   # same bucket semantics
             op, lo, hi = _bucket_params(cond["vix"], "vix")
             vok = _passes_bucket(v, op, lo, hi)
         else:
@@ -264,7 +264,7 @@ def run_entry(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
 
 
 def BAR_SECONDS_GET(cfg: SimRunConfig) -> int:
-    from sim_config import BAR_SECONDS
+    from spx_trade_desk.sim.sim_config import BAR_SECONDS
     return BAR_SECONDS[cfg.bar_size]
 
 

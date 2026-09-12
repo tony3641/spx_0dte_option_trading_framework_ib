@@ -2,11 +2,11 @@
 import numpy as np
 import pytest
 
-from sim_calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams, calibrate
-from sim_config import SimRunConfig
-from sim_engine import EntryState, extract_conditions, run_entry, window_minutes
-from sim_paths import SimPaths
-from strategy_models import Condition, ExitRules, StopLoss, Strategy
+from spx_trade_desk.sim.sim_calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams, calibrate
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_engine import EntryState, extract_conditions, run_entry, window_minutes
+from spx_trade_desk.sim.sim_paths import SimPaths
+from spx_trade_desk.strategy.strategy_models import Condition, ExitRules, StopLoss, Strategy, TakeProfit
 
 
 def _strategy(window=("09:35", "10:00")):
@@ -165,7 +165,7 @@ def test_run_entry_engine_mode_budget_gates_qty():
     assert (es.qty == 0).all()                                 # no qty==0 "entered" records
 
 
-from sim_engine import EntryState, run_cell, run_exits
+from spx_trade_desk.sim.sim_engine import EntryState, run_cell, run_exits
 
 
 def _entry_state(paths, short_i, long_i, fill=0.30, entry_min=0):
@@ -215,7 +215,7 @@ def test_expiry_settles_intrinsic():
 
 def test_take_profit_fills_at_limit():
     strat = _strategy()
-    strat.exit_rules.take_profit = __import__("strategy_models").TakeProfit(mode="pct_credit", value=0.5)
+    strat.exit_rules.take_profit = TakeProfit(mode="pct_credit", value=0.5)
     cfg = SimRunConfig(strategy_name="T", bar_size="1m")
     model = _model()
     paths = _paths(n=2)
@@ -260,8 +260,8 @@ def test_run_cell_end_to_end_small():
 
 
 def test_explicit_dyn_matches_lazy_build():
-    from sim_calibrate import build_dynamics
-    from sim_data import parse_csv
+    from spx_trade_desk.sim.sim_calibrate import build_dynamics
+    from spx_trade_desk.sim.sim_data import parse_csv
     import os
     cfg = SimRunConfig(strategy_name="T", source="csv",
                        csv_path=os.path.join("tests", "fixtures", "SPX_1min_10d.csv"),
@@ -286,7 +286,7 @@ def test_skew_tilt_moves_put_credits_with_sigma_state():
     credit RISES monotonically; at sigma_t == sigma0 the tilt is identically zero
     and the fills are bit-identical. Same down-drift paths, only skew_beta toggles.
     """
-    from sim_calibrate import DEFAULT_SMILE, CalibratedModel, GarchParams
+    from spx_trade_desk.sim.sim_calibrate import DEFAULT_SMILE, CalibratedModel, GarchParams
     model = CalibratedModel(
         garch=GarchParams(omega=2e-10, alpha=0.05, gamma=0.10, beta=0.85, nu=6.0,
                           converged=True),

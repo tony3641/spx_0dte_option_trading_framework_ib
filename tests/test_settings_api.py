@@ -7,8 +7,8 @@ import discord
 import pytest
 from starlette.requests import Request
 
-import server
-from discord_settings import DiscordSettings, DiscordSettingsManager
+from spx_trade_desk import server
+from spx_trade_desk.discord.discord_settings import DiscordSettings, DiscordSettingsManager
 
 
 def _req(host="127.0.0.1"):

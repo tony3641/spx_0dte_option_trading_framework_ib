@@ -6,7 +6,7 @@ Handles trading-hour vs off-hour logic and finds the next available 0DTE expirat
 from datetime import datetime, date, timedelta, time
 from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo
-from config import RTH_OPEN, RTH_CLOSE, SPXW_CEASE, SPX_OPT_GAP_START, SPX_OPT_GAP_END, FOMC_DATES
+from spx_trade_desk.core.config import RTH_OPEN, RTH_CLOSE, SPXW_CEASE, SPX_OPT_GAP_START, SPX_OPT_GAP_END, FOMC_DATES
 
 ET = ZoneInfo("US/Eastern")
 

@@ -9,21 +9,17 @@ All tests use MockIB (from conftest) — no live IB connection required.
 
 import asyncio
 import copy
-import sys
-import os
 import time
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from order_manager import (
+from spx_trade_desk.ib.order_manager import (
     handle_place_order, handle_cancel_order,
     watch_and_push_status, watch_parent_and_cancel_child,
 )
-from ib_client import OrderHandle
+from spx_trade_desk.ib.ib_client import OrderHandle
 from tests.conftest import MockContract, MockContractDetails, MockOrder
-from config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
+from spx_trade_desk.core.config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
 
 
 # ---------------------------------------------------------------------------

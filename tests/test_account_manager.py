@@ -6,17 +6,13 @@ Uses the real native records (``AccountValue``/``PortfolioItem``/
 serializers are tested against exactly the objects ``IBClient`` produces.
 """
 
-import sys
-import os
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-import account_manager
-from account_manager import (
+from spx_trade_desk.ib import account_manager
+from spx_trade_desk.ib.account_manager import (
     serialize_account_values,
     serialize_portfolio_item,
     serialize_order_handle,
@@ -26,9 +22,9 @@ from account_manager import (
     refresh_account_state,
     build_account_payload,
 )
-from ib_client import AccountValue, ExecutionRecord, OrderHandle, PortfolioItem
+from spx_trade_desk.ib.ib_client import AccountValue, ExecutionRecord, OrderHandle, PortfolioItem
 from tests.conftest import MockContract, MockIBClient, MockOrder
-from market_hours import ET, now_et
+from spx_trade_desk.market.market_hours import ET, now_et
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +360,7 @@ class TestExecutionTimeParsing:
     def test_parse_time_only_rolls_to_previous_day_if_future(self, monkeypatch):
         # If a plain time-only string occurs before market open, assume it belongs
         # to the previous session when the resulting datetime would otherwise be in the future.
-        monkeypatch.setattr('account_manager.now_et', lambda: datetime(2026, 4, 10, 5, 38, 0, tzinfo=ET))
+        monkeypatch.setattr('spx_trade_desk.ib.account_manager.now_et', lambda: datetime(2026, 4, 10, 5, 38, 0, tzinfo=ET))
         parsed = parse_execution_time('12:37:50')
         assert parsed is not None
         assert parsed.date() == datetime(2026, 4, 9, tzinfo=ET).date()

@@ -2,12 +2,7 @@
 Config module unit tests — tick rounding helpers (pure functions).
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from config import (
+from spx_trade_desk.core.config import (
     spx_tick_for_price,
     round_abs_to_tick,
     round_signed_to_tick,

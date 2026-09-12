@@ -35,13 +35,12 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
-from sim_config import SimRunConfig
-from sim_data import load_bars
-from sim_engine import _reject_unsupported_strategy
-from sim_jobs import execute_pipeline
-from strategy_models import Condition, StopLoss, Strategy, TakeProfit
-
-ROOT = os.path.dirname(os.path.abspath(__file__))
+from spx_trade_desk.resources import EXPERIMENTS_DIR
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_data import load_bars
+from spx_trade_desk.sim.sim_engine import _reject_unsupported_strategy
+from spx_trade_desk.sim.sim_jobs import execute_pipeline
+from spx_trade_desk.strategy.strategy_models import Condition, StopLoss, Strategy, TakeProfit
 
 # Dotted knob paths the runner knows how to apply. Deliberately a subset of what
 # the sim consumes: trend / atm_iv gates and non-pct take-profit modes are NOT
@@ -263,7 +262,7 @@ def run_experiment(spec: dict, out_dir: str,
     defaults to strategy_store.load_strategies().
     """
     if strategies is None:
-        from strategy_store import load_strategies
+        from spx_trade_desk.strategy.strategy_store import load_strategies
         strategies = load_strategies()
     spec = validate_spec(spec)
     name = spec["strategy"]
@@ -393,9 +392,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.seed is not None:
         seeds = [args.seed]
 
-    out_dir = args.out or os.path.join(
-        ROOT, "docs", "experiments",
-        spec.get("slug") or spec["strategy"].lower().replace(" ", "-"))
+    out_dir = args.out or str(
+        EXPERIMENTS_DIR / (spec.get("slug") or spec["strategy"].lower().replace(" ", "-")))
     try:
         run_experiment(spec, out_dir, seeds=seeds, n_paths=args.n_paths,
                        smoke=args.smoke)

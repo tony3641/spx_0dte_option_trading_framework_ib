@@ -3,8 +3,8 @@ import os
 import numpy as np
 import pytest
 
-from sim_config import SimRunConfig
-from sim_data import BarSeries, load_bars, parse_csv
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_data import BarSeries, load_bars, parse_csv
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 

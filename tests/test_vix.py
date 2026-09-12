@@ -1,5 +1,5 @@
 import asyncio
-from ib_connection import setup_vix_subscription, update_vix
+from spx_trade_desk.ib.ib_connection import setup_vix_subscription, update_vix
 import pytest
 
 

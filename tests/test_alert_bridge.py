@@ -1,4 +1,4 @@
-from discord_bot import AlertBridge
+from spx_trade_desk.discord.discord_bot import AlertBridge
 
 
 def _bridge():
