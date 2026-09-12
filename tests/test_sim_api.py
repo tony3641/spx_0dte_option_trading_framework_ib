@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import server
 
-FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sim_bars_5m.csv")
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 
 
 @pytest.fixture()
@@ -31,7 +31,7 @@ def test_full_run_lifecycle_over_http(client):
     # float('inf') (allow_nan=False); SimRunConfig.from_dict decodes "inf" -> float('inf')
     # (hold-past-stop), so the string form is the wire-correct spelling of the same value.
     body = {"strategy_name": "T", "source": "csv", "csv_path": FIXTURE,
-            "n_paths": 30, "chunk_size": 15, "bar_size": "5m",
+            "n_paths": 30, "chunk_size": 15, "bar_size": "1m", "lookback_days": 10,
             "sl_multipliers": [2.0, "inf"], "equity": 100000}
     r = client.post("/api/sim/run", json=body)
     assert r.status_code == 200
@@ -55,14 +55,15 @@ def test_full_run_lifecycle_over_http(client):
 def test_result_200_when_entry_window_starts_after_first_bar(client):
     """Regression: GET /api/sim/result 500'd with 'ValueError: Out of range float values
     are not JSON compliant' whenever a fan column has no finite marks. An entry window
-    starting at 09:40 maps to bar index 1 on 5m bars (window_minutes), so minute 0 is
+    starting at 09:40 maps to bar index 9 on 1m bars (window_minutes), so minutes 0-8 are
     all-NaN across entered paths and used to reach the JSON layer as NaN."""
     import sim_jobs
 
     from tests.test_sim_engine import _strategy
     sim_jobs._STRATEGY_CACHE["T"] = _strategy(window=("09:40", "10:00"))
     body = {"strategy_name": "T", "source": "csv", "csv_path": FIXTURE,
-            "n_paths": 12, "chunk_size": 12, "bar_size": "5m", "equity": 100000}
+            "n_paths": 12, "chunk_size": 12, "bar_size": "1m", "lookback_days": 10,
+            "equity": 100000}
     r = client.post("/api/sim/run", json=body)
     assert r.status_code == 200
     job_id = r.json()["job_id"]
@@ -122,7 +123,7 @@ def test_smile_endpoint_reports_source(client):
     r = client.get("/api/sim/smile")
     assert r.status_code == 200
     assert r.json()["source"] in ("captured", "default", "builtin")
-    assert {"a", "b", "c", "half_spread_atm"} <= set(r.json()["smile"])
+    assert {"a", "b", "rho", "m0", "sigma", "half_spread_atm"} <= set(r.json()["smile"])
 
 
 def test_result_returns_409_when_job_not_finished(client, monkeypatch):
@@ -163,8 +164,11 @@ def test_smile_capture_succeeds_when_chain_seeded(client, monkeypatch, tmp_path)
     old_spot = server.state.spx_price
     monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
     # chain rows mirror chain_manager.build_chain_quotes: strike + put_iv in percent.
-    strikes = [{"strike": float(s), "put_iv": 20.0} for s in (5700, 5800, 5900, 5950,
-                                                               6000, 6050, 6100)]
+    # A real put skew (IV falls from the far wing to ATM); a flat chain is rejected by
+    # the no-skew guard and falls back — see test_fit_smile_flat_degenerate_is_rejected.
+    strikes = [{"strike": float(s), "put_iv": p} for s, p in (
+        (5700, 40.0), (5800, 32.0), (5900, 26.0), (5950, 22.0),
+        (6000, 20.0), (6050, 19.0), (6100, 18.5))]
     server.state.chain_quotes_cache = {"strikes": strikes}
     server.state.spx_price = 6000.0
     try:
@@ -173,7 +177,114 @@ def test_smile_capture_succeeds_when_chain_seeded(client, monkeypatch, tmp_path)
         body = r.json()
         assert body["source"] == "captured"
         assert body["points"] >= 5
-        assert {"a", "b", "c", "half_spread_atm"} <= set(body["smile"])
+        assert {"a", "b", "rho", "m0", "sigma", "half_spread_atm"} <= set(body["smile"])
+    finally:
+        server.state.chain_quotes_cache = old_cache
+        server.state.spx_price = old_spot
+
+
+def test_smile_capture_skewed_chain_bounded(client, monkeypatch, tmp_path):
+    """A skewed put chain that only spans ~6% OTM must still fit/extrapolate a smile
+    that is finite and < 100% IV at the sim's +/-15% ladder edge."""
+    import sim_calibrate
+    from sim_calibrate import SmileParams
+    old_cache = server.state.chain_quotes_cache
+    old_spot = server.state.spx_price
+    monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
+    strikes = [{"strike": float(s), "put_iv": p} for s, p in (
+        (5650, 45.0), (5700, 40.0), (5800, 32.0), (5900, 26.0),
+        (5950, 22.0), (6000, 20.0), (6050, 19.0))]
+    server.state.chain_quotes_cache = {"strikes": strikes}
+    server.state.spx_price = 6000.0
+    try:
+        r = client.post("/api/sim/smile/capture")
+        assert r.status_code == 200, r.text
+        smile = SmileParams.from_dict(r.json()["smile"])
+        for m in (-0.15, 0.0, 0.15):
+            v = float(smile.iv(np.array([m]))[0])
+            assert np.isfinite(v) and 0.0 < v < 1.0
+    finally:
+        server.state.chain_quotes_cache = old_cache
+        server.state.spx_price = old_spot
+
+
+def test_smile_capture_stray_outlier_409(client, monkeypatch, tmp_path):
+    """A degenerate far-OTM put IV outlier must fail the guards and return 409."""
+    import sim_calibrate
+    old_cache = server.state.chain_quotes_cache
+    old_spot = server.state.spx_price
+    monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
+    strikes = [{"strike": float(s), "put_iv": p} for s, p in (
+        (5700, 180.0), (5800, 32.0), (5900, 26.0), (5950, 22.0),
+        (6000, 20.0), (6050, 19.0))]
+    server.state.chain_quotes_cache = {"strikes": strikes}
+    server.state.spx_price = 6000.0
+    try:
+        r = client.post("/api/sim/smile/capture")
+        assert r.status_code == 409, r.text
+    finally:
+        server.state.chain_quotes_cache = old_cache
+        server.state.spx_price = old_spot
+
+
+# Live SPX 0DTE chain slice, 2026-09-09 12:05 ET (spot 7638.21). Carries the three
+# vega-less quote pathologies a real chain always has: no-bid far-OTM puts (ask 0.05),
+# a tick-floor plateau pinned at mid 0.075, and deep-ITM puts whose IV is pure noise.
+_LIVE_0DTE_ROWS = [
+    # (strike, put_iv %, bid, ask, oi, delta)
+    (7210, 53.04, None, 0.05, 81, -0.0),      # no bid -> IV is a tick artifact
+    (7250, 52.88, None, 0.05, 422, -0.0),
+    (7280, 53.11, None, 0.05, 594, -0.0),
+    (7350, 55.01, 0.05, 0.10, 1156, -0.0005),  # mid stuck on the 0.05 tick -> fake hump
+    (7400, 52.85, 0.05, 0.10, 4570, -0.0024),
+    (7435, 46.09, 0.05, 0.10, 8646, -0.0035),
+    (7470, 40.37, 0.05, 0.10, 401, -0.0045),
+    (7490, 36.01, 0.10, 0.15, 2942, -0.005),   # informative put wing
+    (7500, 33.82, 0.10, 0.15, 6300, -0.0053),
+    (7520, 30.13, 0.10, 0.15, 1179, -0.0072),
+    (7540, 26.85, 0.15, 0.20, 1737, -0.0113),
+    (7560, 22.62, 0.20, 0.25, 1316, -0.0161),
+    (7580, 19.65, 0.40, 0.45, 2646, -0.0342),
+    (7600, 16.56, 0.90, 0.95, 5151, -0.0766),
+    (7620, 14.11, 2.75, 2.80, 3866, -0.2216),
+    (7635, 12.77, 6.80, 6.90, 2167, -0.4446),
+    (7650, 12.05, 15.30, 15.40, 3219, -0.7328),
+    (7660, 12.31, 23.30, 23.50, 1866, -0.8664),  # deep ITM -> IV ~ noise
+    (7700, 18.49, 61.80, 62.60, 2998, -0.9843),
+    (7750, 28.05, 111.10, 112.30, 1088, -0.994),
+    (7790, 36.93, 148.80, 155.80, 48, -0.9976),
+]
+
+
+def test_smile_capture_live_0dte_chain_succeeds(client, monkeypatch, tmp_path):
+    """A real 0DTE chain used to 409 ('SVI fit failed guards') because the vega-less
+    rows above drag the unconstrained fit onto the b-bound. Capture must drop them and
+    return a bounded, put-skewed smile that tracks the informative strikes."""
+    import sim_calibrate
+    from sim_calibrate import SmileParams
+    old_cache = server.state.chain_quotes_cache
+    old_spot = server.state.spx_price
+    monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
+    strikes = [{"strike": float(k), "put_iv": iv, "put_bid": b, "put_ask": a,
+                "put_oi": oi, "put_delta": d}
+               for k, iv, b, a, oi, d in _LIVE_0DTE_ROWS]
+    # spot deliberately differs from the cache's own snapshot price, as it does live
+    server.state.chain_quotes_cache = {"strikes": strikes, "spot_price": 7638.21}
+    server.state.spx_price = 7637.85
+    try:
+        r = client.post("/api/sim/smile/capture")
+        assert r.status_code == 200, r.text
+        smile = SmileParams.from_dict(r.json()["smile"])
+        assert 0.0 < smile.iv(-0.15) < 1.0 and 0.0 < smile.iv(0.15) < 1.0
+        assert smile.iv(-0.15) > smile.iv(0.0)          # put skew survives
+        assert 0.08 < smile.iv(0.0) < 0.25              # ATM IV near the observed ~12%
+        m = np.log(np.array([7490, 7500, 7520, 7540, 7560, 7580,
+                             7600, 7620, 7635], float) / 7638.21)
+        iv = np.array([36.01, 33.82, 30.13, 26.85, 22.62, 19.65,
+                       16.56, 14.11, 12.77]) / 100.0
+        rmse = float(np.sqrt(np.mean((smile.iv(m) - iv) ** 2)))
+        flat_rmse = float(np.sqrt(np.mean((iv - iv.mean()) ** 2)))
+        assert rmse < flat_rmse                         # not dragged by the junk rows
     finally:
         server.state.chain_quotes_cache = old_cache
         server.state.spx_price = old_spot

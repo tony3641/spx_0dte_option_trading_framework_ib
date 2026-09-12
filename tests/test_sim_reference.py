@@ -27,10 +27,10 @@ def _synthetic_rows(ladder, put_mid, hs, put_delta):
 
 
 def test_vectorized_entry_matches_generate_candidates():
-    cfg = SimRunConfig(strategy_name="T", bar_size="5m")
+    cfg = SimRunConfig(strategy_name="T", bar_size="1m")
     strat, model = _strategy(), _model()
     rng = np.random.default_rng(9)
-    n, steps = 12, 78
+    n, steps = 12, 390
     spots = np.full((n, steps), 6000.0) + rng.normal(0, 3.0, (n, steps)).cumsum(axis=1) * 0.2
     paths = SimPaths(spots=spots, sigmas=np.full((n, steps), 0.0005))
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
@@ -43,8 +43,8 @@ def test_vectorized_entry_matches_generate_candidates():
             continue
         t = int(es.entry_minute[p])
         spot = float(spots[p, t])
-        m = (ladder - spot) / spot
-        T = (steps - 1 - t) * bar_year_frac(300)
+        m = np.log(ladder / spot)
+        T = (steps - 1 - t) * bar_year_frac(60)
         # same smile as the engine; vol-link term is 0 because path sigma == sigma0 here
         iv = DEFAULT_SMILE.iv(m)
         put_mid = bsm_put(spot, ladder, T, 0.043, iv)

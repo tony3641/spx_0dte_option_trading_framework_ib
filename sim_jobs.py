@@ -4,15 +4,14 @@ import logging
 import threading
 import time
 import uuid
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from sim_calibrate import CalibratedModel, calibrate
+from sim_calibrate import CalibratedModel, build_dynamics, calibrate
 from sim_config import SimRunConfig, sweep_cells
 from sim_data import BarSeries, load_bars
-from sim_engine import run_cell, run_family
-from sim_paths import simulate_chunk
+from sim_parallel import chunk_payloads, compute_chunk, resolve_workers, spawn_pool
 from sim_pricing import build_ladder
 from sim_risk import build_cell_payload, spot_fan_quantiles
 
@@ -137,7 +136,12 @@ def _get_strategy(cfg: SimRunConfig, state=None):
 def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
                      spot0: float, cancel_check: Optional[Callable[[], bool]] = None,
                      state=None) -> dict:
-    """Full pipeline over all sweep cells. Deterministic per (cfg, bars, spot0)."""
+    """Full pipeline over all sweep cells. Deterministic per (cfg, bars, spot0).
+
+    Chunks run on a process pool when the resolved worker count allows; both
+    paths share ``sim_parallel.compute_chunk`` and reassemble strictly by
+    (cell, chunk) index, so a parallel run is bit-identical to the serial one.
+    """
     cancelled = False
     if cancel_check is None:
         cancel_check = lambda: False   # noqa: E731
@@ -152,41 +156,66 @@ def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
     if cfg.mode == "family" and state is not None:
         children = [s for s in state.strategies.values() if s.parent_name == strat.name]
     ladder = build_ladder(spot0, cfg.ladder_range_pct)
+    dyn = build_dynamics(model, cfg)   # per-run dials; NOT cached with the model
     cells = sweep_cells(cfg)
-    results = []
-    spx_chunks = []     # first cell's market paths -> SPX fan (see note below the loop)
     n_chunks = (cfg.n_paths + cfg.chunk_size - 1) // cfg.chunk_size
-    for ci, cell in enumerate(cells):
-        pnls_all, trials_all, mtms_all = [], [], []
-        for ch in range(n_chunks):
+    payloads = chunk_payloads(cfg, model, strat, children, ladder, dyn, cells,
+                              n_chunks, spot0)
+    workers = resolve_workers(cfg, len(payloads))
+
+    # Index-keyed aggregation: a cell's payload is built only once every one of
+    # its chunks is in, in chunk order — completion order never reaches a result.
+    results: List[Optional[dict]] = [None] * len(cells)
+    spx_chunks: List[Optional[np.ndarray]] = [None] * n_chunks
+    cell_trials: Dict[int, List[Optional[list]]] = {
+        ci: [None] * n_chunks for ci in range(len(cells))}
+    pending = [n_chunks] * len(cells)
+    done = 0
+
+    def consume(res: dict) -> None:
+        nonlocal done
+        ci, ch = res["ci"], res["ch"]
+        # Land each chunk's trials at its chunk index. imap_unordered completes
+        # chunks in arbitrary order, so extending on arrival would make a cell's
+        # trial order (and its bootstrap/DD stats) depend on worker timing.
+        cell_trials[ci][ch] = res["trials"]
+        if res["spots"] is not None:
+            spx_chunks[ch] = res["spots"]
+        pending[ci] -= 1
+        done += 1
+        if pending[ci] == 0:
+            trials = [t for chunk in cell_trials.pop(ci) for t in chunk]
+            results[ci] = build_cell_payload(
+                trials, cfg,
+                sl_multiplier=cells[ci]["sl_multiplier"], k=cells[ci]["k"])
+        progress_cb(done / len(payloads),
+                    f"cell {ci + 1}/{len(cells)} chunk {ch + 1}/{n_chunks}")
+
+    if workers <= 1:
+        for payload in payloads:
             if cancel_check():
                 cancelled = True
                 break
-            n_here = min(cfg.chunk_size, cfg.n_paths - ch * cfg.chunk_size)
-            seed_seq = np.random.SeedSequence(entropy=cfg.seed, spawn_key=(ci, ch))
-            paths = simulate_chunk(model, cfg, spot0, n_here, seed_seq)
-            if ci == 0:
-                spx_chunks.append(paths.spots)
-            if cfg.mode == "family" and children:
-                _, total = run_family(model, cfg, strat, children, paths, ladder)
-                from sim_engine import TrialResult
-                trials = [TrialResult(entered=True, entry_minute=-1, exit_minute=-1,
-                                      exit_reason="expired", short_strike=0, long_strike=0,
-                                      width=0, qty=1, fill_credit=0, exit_debit=0,
-                                      pnl=float(total[p])) for p in range(n_here)]
+            consume(compute_chunk(payload))
+    else:
+        pool = spawn_pool(workers)
+        clean = False
+        try:
+            for res in pool.imap_unordered(compute_chunk, payloads, chunksize=1):
+                consume(res)
+                if cancel_check():
+                    cancelled = True
+                    break
+            clean = not cancelled
+        finally:
+            # Cancel or a worker crash kills the in-flight chunks (they are pure
+            # compute, nothing to unwind); a completed run drains instead. Either way,
+            # a cell with an unfinished chunk stays None and is dropped below.
+            if clean:
+                pool.close()
             else:
-                trials = run_cell(model, cfg, strat, paths, ladder,
-                                  sl_multiplier=cell["sl_multiplier"], k=cell["k"])
-            pnls_all += [t.pnl for t in trials]
-            trials_all += trials
-            mtms_all += [t.mtm for t in trials if t.mtm is not None]
-            done = (ci * n_chunks + ch + 1) / (len(cells) * n_chunks)
-            progress_cb(done, f"cell {ci + 1}/{len(cells)} chunk {ch + 1}/{n_chunks}")
-        if cancelled:
-            break
-        payload = build_cell_payload(trials_all, cfg,
-                                     sl_multiplier=cell["sl_multiplier"], k=cell["k"])
-        results.append(payload)
+                pool.terminate()
+            pool.join()
     meta = dict(strategy=cfg.strategy_name, mode=cfg.mode, source=bars.source,
                 bar_size=cfg.bar_size, steps_per_day=cfg.steps_per_day(),
                 n_paths=cfg.n_paths, seed=cfg.seed, spot0=spot0,
@@ -196,14 +225,20 @@ def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
                                                     gamma_mult=cfg.gamma_mult,
                                                     vol_beta=cfg.vol_beta, flat_iv=cfg.flat_iv,
                                                     atm_iv=cfg.atm_iv,
-                                                    vol_cap_mult=cfg.vol_cap_mult),
-                cancelled=cancelled)
+                                                    vol_cap_mult=cfg.vol_cap_mult,
+                                                    skew_beta=cfg.skew_beta,
+                                                    skew_t_gamma=cfg.skew_t_gamma,
+                                                    atm_budget=cfg.atm_budget,
+                                                    budget_beta=cfg.budget_beta),
+                workers=workers, cancelled=cancelled)
     # SPX path fan: a property of the market simulation, not of any sweep cell (spot
     # dynamics ignore SL/k), so the first cell's full path set represents the run. A
     # cancelled run keeps whatever chunks completed before the cancel.
-    spx_mat = np.vstack(spx_chunks) if spx_chunks else np.zeros((0, 0))
+    have = [c for c in spx_chunks if c is not None]
+    spx_mat = np.vstack(have) if have else np.zeros((0, 0))
     progress_cb(1.0, "done" if not cancelled else "cancelled")
-    return dict(meta=meta, cells=results, spx_fan=spot_fan_quantiles(spx_mat))
+    return dict(meta=meta, cells=[r for r in results if r is not None],
+                spx_fan=spot_fan_quantiles(spx_mat))
 
 
 def _execute(job_id: str, state, ib=None) -> None:

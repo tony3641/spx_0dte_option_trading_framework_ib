@@ -40,3 +40,11 @@ docs/superpowers/
 # Superpowers SDD workspace (scratch)
 .superpowers/
 config/sim_smile.json
+
+# Claude Code local scratch (skill eval workspaces, worktrees, locks)
+.claude/skills/*-workspace/
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# Local experiment runs (sim_tune.py output; kept local, never published)
+docs/experiments/
