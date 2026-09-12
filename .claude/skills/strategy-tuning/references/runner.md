@@ -1,6 +1,6 @@
-# runner.md — sim_tune.py reference
+# runner.md — spx_trade_desk.sim.tune reference
 
-`sim_tune.py` (repo root) executes named knob variants of ONE live strategy
+`spx_trade_desk.sim.tune` executes named knob variants of ONE live strategy
 through the MC simulator, deterministically, without touching
 `config/strategies.json`. It exists so the methodology's rounds are
 reproducible: identical spec + identical data ⇒ identical numbers, every time.
@@ -8,7 +8,7 @@ reproducible: identical spec + identical data ⇒ identical numbers, every time.
 ## CLI
 
 ```
-python sim_tune.py --strategy Experiment_1 --spec docs/experiments/<slug>/variants.json \
+python -m spx_trade_desk.sim.tune --strategy Experiment_1 --spec docs/experiments/<slug>/variants.json \
     --out docs/experiments/<slug> [--seed 42 | --seeds 42,43,44] [--n-paths 10000] \
     [--csv PATH | --yfinance] [--bar-size 5m] [--spot0 6000.0] [--smoke]
 ```

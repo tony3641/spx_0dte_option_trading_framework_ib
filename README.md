@@ -28,21 +28,43 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
 
 ## Quick Start
 
-1. Open IB TWS / Gateway and enable API access on port 7497.
-2. Install dependencies:
-   - The native broker API client (`ibapi`), from your local TWS API source:
-     ```
-     pip install -e "C:\TWS API\source\pythonclient"
-     ```
-   - Python dependencies:
-     ```
-     pip install -r requirements.txt
-     ```
-3. Start the server:
+1. **Install the Interactive Brokers TWS API.** The native broker client (`ibapi`) is
+   not on PyPI — it ships with the TWS API distribution. Download and install it from
+   IBKR first:
+
    ```
-   python server.py
+   pip install -e "C:\TWS API\source\pythonclient"
    ```
-4. Open `http://localhost:8000` in a browser.
+
+   The path above is machine-specific. Edit it to match your local TWS API installation.
+
+2. **Install the Python dependencies.**
+
+   ```
+   pip install -r requirements.txt
+   ```
+
+   Do this *after* step 1. `requirements.txt` contains an editable install pointing at
+   the same local TWS API path, so it fails if the TWS API is not present.
+
+3. **Install this project in editable mode.**
+
+   ```
+   pip install -e . --no-deps
+   ```
+
+   `--no-deps` is correct here: dependencies are already installed by step 2, and the
+   project declares none of its own.
+
+4. **Open IB TWS / Gateway** and enable API access on port 7497.
+
+5. **Start the server.**
+
+   ```
+   python -m spx_trade_desk.server
+   ```
+
+6. Open `http://localhost:8000` in a browser.
 
 ### Tests
 
@@ -223,7 +245,7 @@ guidance.
 
 ### Strategy tuning (agent workflow)
 
-`sim_tune.py` executes **named knob variants** of one live strategy from
+`spx_trade_desk.sim.tune` executes **named knob variants** of one live strategy from
 `config/strategies.json` through the simulator — deterministically, without ever
 writing the config file. It backs the agent-driven tuning methodology in
 `.claude/skills/strategy-tuning/` (baseline → diagnose → one-knob-at-a-time
@@ -235,8 +257,8 @@ dataset, and `n_paths`, so the simulator replays identical spot paths per varian
 (common random numbers) and metric deltas are attributable to the knobs alone.
 
 ```
-python sim_tune.py --strategy Experiment_1 --spec docs/experiments/<slug>/variants.json --smoke  # wiring check
-python sim_tune.py --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
+python -m spx_trade_desk.sim.tune --strategy Experiment_1 --spec docs/experiments/<slug>/variants.json --smoke  # wiring check
+python -m spx_trade_desk.sim.tune --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
 ```
 
 ## Charts
@@ -285,32 +307,37 @@ Key strike prices and conditions:
 
 ## Files
 
+All application modules live in the installable `spx_trade_desk` package, grouped by
+domain. `config/`, `static/` and `tests/` stay at the repository root as data and tests.
+
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI app, IB connection, state management, WebSocket endpoint |
-| `ws_handler.py` | WebSocket message routing (tabs, GEX mode, strategies, orders, viewport sync) |
-| `ib_client.py` / `ib_connection.py` | Native `ibapi` wrapper: contract resolution, streaming quotes, connection lifecycle |
-| `chain_fetcher.py` | Batched SPXW option chain fetcher (streaming mode, ±8σ strike filter) |
-| `chain_manager.py` | Chain caching, qualification, streaming state, monthly/0DTE coordination |
-| `gex_calculator.py` | GEX computation: Call/Put Wall, Gamma Flip, Max Pain, Net GEX, MM regime |
-| `market_hours.py` | Market-hours helpers, ET timezone, expiration, FOMC/NFP day utilities |
-| `price_bars.py` / `risk_free.py` | Historical bars and risk-free-rate (SGOV) helpers |
-| `order_manager.py` | Order placement, take-profit close loop, stop-loss handling |
-| `account_manager.py` | Account values, portfolio positions, executions serialization |
-| `strategy_models.py` | Strategy/Condition/Trigger/TakeProfit/StopLoss/RuntimeState dataclasses |
-| `strategy_engine.py` | Candidate generation, condition eval, sizing, entry payloads, triggers, parent/child logic |
-| `strategy_store.py` | Strategy persistence to `config/strategies.json` |
-| `app_state.py` | Shared AppState runtime, day key, kill switch |
-| `log_buffer.py` | Ring-buffer framework log for the Log tab |
-| `config.py` | Centralized settings: env var → repo-root `.env` → `config/params.yaml` → defaults |
-| `sim_config.py` | Simulation run config: validation, JSON round-trip, sweep cells |
-| `sim_data.py` | Layered intraday bar loaders: CSV → yfinance → IB |
-| `sim_calibrate.py` | GJR-GARCH(1,1)-t MLE, U-shape profile, smile snapshot, VIX mapping |
-| `sim_paths.py` | Chunked vectorized path generation (stress dials: ν, γ×; ATM-IV anchored per-bar sigma cap) |
-| `sim_pricing.py` | Vectorized BSM, vol-linked smile, spreads, tick fill rules |
-| `sim_engine.py` | Entry/exit scans, single + family simulation, experiment modes |
-| `sim_risk.py` | CVaR/exit breakdown/max-DD/bootstrap ruin metrics, SPX path fan |
-| `sim_jobs.py` | Background job registry, progress, cancel, memoized calibration |
+| `spx_trade_desk/server.py` | FastAPI app, IB connection, state management, WebSocket endpoint |
+| `spx_trade_desk/web/ws.py` | WebSocket message routing (tabs, GEX mode, strategies, orders, viewport sync) |
+| `spx_trade_desk/ib/client.py` / `ib/connection.py` | Native `ibapi` wrapper: contract resolution, streaming quotes, connection lifecycle |
+| `spx_trade_desk/market/chain_fetcher.py` | Batched SPXW option chain fetcher (streaming mode, ±8σ strike filter) |
+| `spx_trade_desk/market/chain_manager.py` | Chain caching, qualification, streaming state, monthly/0DTE coordination |
+| `spx_trade_desk/market/gex.py` | GEX computation: Call/Put Wall, Gamma Flip, Max Pain, Net GEX, MM regime |
+| `spx_trade_desk/market/hours.py` | Market-hours helpers, ET timezone, expiration, FOMC/NFP day utilities |
+| `spx_trade_desk/market/bars.py` / `core/rates.py` | Historical bars and risk-free-rate (SGOV) helpers |
+| `spx_trade_desk/ib/orders.py` | Order placement, take-profit close loop, stop-loss handling |
+| `spx_trade_desk/ib/account.py` | Account values, portfolio positions, executions serialization |
+| `spx_trade_desk/strategy/models.py` | Strategy/Condition/Trigger/TakeProfit/StopLoss/RuntimeState dataclasses |
+| `spx_trade_desk/strategy/engine.py` | Candidate generation, condition eval, sizing, entry payloads, triggers, parent/child logic |
+| `spx_trade_desk/strategy/store.py` | Strategy persistence to `config/strategies.json` |
+| `spx_trade_desk/core/app_state.py` | Shared AppState runtime, day key, kill switch |
+| `spx_trade_desk/core/log_buffer.py` | Ring-buffer framework log for the Log tab |
+| `spx_trade_desk/core/config.py` | Centralized settings: env var → repo-root `.env` → `config/params.yaml` → defaults |
+| `spx_trade_desk/resources.py` | Repository-relative path anchors (`config/`, `static/`, `.env`, `docs/experiments`) |
+| `spx_trade_desk/sim/config.py` | Simulation run config: validation, JSON round-trip, sweep cells |
+| `spx_trade_desk/sim/data.py` | Layered intraday bar loaders: CSV → yfinance → IB |
+| `spx_trade_desk/sim/calibrate.py` | GJR-GARCH(1,1)-t MLE, U-shape profile, smile snapshot, VIX mapping |
+| `spx_trade_desk/sim/paths.py` | Chunked vectorized path generation (stress dials: ν, γ×; ATM-IV anchored per-bar sigma cap) |
+| `spx_trade_desk/sim/pricing.py` | Vectorized BSM, vol-linked smile, spreads, tick fill rules |
+| `spx_trade_desk/sim/engine.py` | Entry/exit scans, single + family simulation, experiment modes |
+| `spx_trade_desk/sim/risk.py` | CVaR/exit breakdown/max-DD/bootstrap ruin metrics, SPX path fan |
+| `spx_trade_desk/sim/jobs.py` | Background job registry, progress, cancel, memoized calibration |
+| `spx_trade_desk/sim/tune.py` | Offline knob-tuning runner (`python -m spx_trade_desk.sim.tune`) |
 | `static/` | Browser app: `index.html`, `css/`, `js/` (charts, chain table, order entry, strategy UI, tabs, WS) |
 | `tests/` | Pytest suite + `run_tests.py` structured runner |
 

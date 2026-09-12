@@ -46,7 +46,7 @@ mode: `run_days`, FOMC/NFP flags, `short_day_enabled`, child triggers.
 
 ## Phase 1 — Baseline and the noise floor
 
-1. `python sim_tune.py --spec <spec> --smoke` — wiring check only; never decide
+1. `python -m spx_trade_desk.sim.tune --spec <spec> --smoke` — wiring check only; never decide
    from smoke numbers.
 2. Full-n_paths baseline run (the runner always includes a `baseline` variant).
 3. Re-run baseline on a second seed (e.g. `--seed 43`). For the unchanged

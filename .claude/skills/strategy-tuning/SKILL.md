@@ -2,7 +2,7 @@
 name: strategy-tuning
 description: >
   Systematic, reproducible workflow for tuning ONE trading strategy's knobs
-  against this repo's Monte Carlo stress simulator using sim_tune.py. Use this
+  against this repo's Monte Carlo stress simulator using spx_trade_desk.sim.tune. Use this
   skill whenever the user wants to improve, optimize, or tune a strategy from
   config/strategies.json — better win rate, risk profile, stop-loss multiplier,
   delta/width/credit bands, entry window, take profit — or asks why a strategy
@@ -18,7 +18,7 @@ Tuning here means: a judgment-driven, one-knob-at-a-time experiment loop run
 through the deterministic MC simulator, producing an auditable experiment
 record and a propose-only config diff. It is NOT a brute-force grid sweep —
 the agent's judgment decides which knob is worth probing and by how much;
-`sim_tune.py` only executes the chosen variants deterministically.
+`spx_trade_desk.sim.tune` only executes the chosen variants deterministically.
 
 ## Why the hard rules exist
 

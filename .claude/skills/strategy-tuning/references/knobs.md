@@ -7,7 +7,7 @@ each knob does mechanically — so diagnosis in Phase 2 starts from evidence,
 not guesswork. Current values below are Experiment_1's live config
 (`config/strategies.json`); re-check the file at experiment time.
 
-## Sim-consumed strategy knobs (tunable via sim_tune.py)
+## Sim-consumed strategy knobs (tunable via spx_trade_desk.sim.tune)
 
 | Knob (dotted path) | Exp_1 now | Mechanism | Expected effect of moving it | Traps |
 |---|---|---|---|---|

@@ -9,7 +9,7 @@
       "files": [],
       "assertions": [
         "Baseline control: the live Experiment_1 config is run unchanged (as a baseline row/run) before any knob variant is evaluated",
-        "Deterministic variant execution: variants are executed via the repo's sim_tune.py runner with a persisted variants.json spec (spec + results files exist in the outputs dir), not via throwaway one-off simulation code",
+        "Deterministic variant execution: variants are executed via the repo's spx_trade_desk.sim.tune runner with a persisted variants.json spec (spec + results files exist in the outputs dir), not via throwaway one-off simulation code",
         "Single knob per round: within the main round, the variant set varies ONLY exit.stop_multiplier (no other knob changed at the same time)",
         "Evidence-based diagnosis: the diagnosis cites the exit-reason breakdown (stop vs expired vs never counts) or win-rate/tail stats from a run BEFORE recommending a knob change",
         "Propose-only: config/strategies.json is not modified (repo diff clean for that file) and the final report contains an exact before/after JSON fragment for any proposed change",
@@ -28,7 +28,7 @@
         "Honest verdict: if the delta-band effect fails the seed check, the report recommends NOT adopting (and vice versa - an adopted recommendation cites the seed evidence)",
         "Single knob per round: the main round varies ONLY short_delta.min / short_delta.max (no other knob changed at the same time)",
         "Baseline control: the live config is run unchanged as the comparison baseline",
-        "Deterministic variant execution: variants executed via sim_tune.py with a persisted variants.json spec (spec + results files exist in the outputs dir)",
+        "Deterministic variant execution: variants executed via spx_trade_desk.sim.tune with a persisted variants.json spec (spec + results files exist in the outputs dir)",
         "Propose-only: config/strategies.json not modified and the report contains an exact before/after JSON fragment for any proposal",
         "Artifact set present: experiment notes/decision log, variants spec, results file(s), and a report/answer with the recommendation"
       ]
@@ -44,7 +44,7 @@
         "Single knob per round: the main round tunes EITHER the entry window OR the credit band - not both simultaneously in one variant set",
         "Tail risk checked: cvar5 and/or ruin_prob (and worst_day) are examined before recommending, and the recommendation explicitly addresses whether tails worsened",
         "Baseline control: the live config is run unchanged as the comparison baseline",
-        "Deterministic variant execution: variants executed via sim_tune.py with a persisted variants.json spec (spec + results files exist in the outputs dir)",
+        "Deterministic variant execution: variants executed via spx_trade_desk.sim.tune with a persisted variants.json spec (spec + results files exist in the outputs dir)",
         "Propose-only: config/strategies.json not modified and the report contains an exact before/after JSON fragment for any proposal",
         "Artifact set present: experiment notes/decision log, variants spec, results file(s), and a report/answer with the recommendation"
       ]
