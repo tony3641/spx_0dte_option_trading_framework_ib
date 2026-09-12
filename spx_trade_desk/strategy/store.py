@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from spx_trade_desk.resources import CONFIG_DIR
-from spx_trade_desk.strategy.strategy_models import Strategy
+from spx_trade_desk.strategy.models import Strategy
 
 logger = logging.getLogger(__name__)
 

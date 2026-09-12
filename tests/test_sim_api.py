@@ -14,15 +14,15 @@ FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv"
 
 @pytest.fixture()
 def client(monkeypatch):
-    from spx_trade_desk.sim import sim_jobs
-    sim_jobs.reset_registry()
+    from spx_trade_desk.sim import jobs
+    jobs.reset_registry()
     # keep the suite hermetic: never let the API path touch yfinance/IB
-    monkeypatch.setattr("spx_trade_desk.sim.sim_data.load_bars_yfinance",
+    monkeypatch.setattr("spx_trade_desk.sim.data.load_bars_yfinance",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disabled in tests")))
     # (brief Step 5 note) the synthetic "T" strategy lives only in tests; config/strategies.json
     # is absent, so _get_strategy would raise unknown-strategy. Seed the cache like test_sim_jobs.
     from tests.test_sim_engine import _strategy
-    sim_jobs._STRATEGY_CACHE["T"] = _strategy()
+    jobs._STRATEGY_CACHE["T"] = _strategy()
     return TestClient(server.app)
 
 
@@ -57,10 +57,10 @@ def test_result_200_when_entry_window_starts_after_first_bar(client):
     are not JSON compliant' whenever a fan column has no finite marks. An entry window
     starting at 09:40 maps to bar index 9 on 1m bars (window_minutes), so minutes 0-8 are
     all-NaN across entered paths and used to reach the JSON layer as NaN."""
-    from spx_trade_desk.sim import sim_jobs
+    from spx_trade_desk.sim import jobs
 
     from tests.test_sim_engine import _strategy
-    sim_jobs._STRATEGY_CACHE["T"] = _strategy(window=("09:40", "10:00"))
+    jobs._STRATEGY_CACHE["T"] = _strategy(window=("09:40", "10:00"))
     body = {"strategy_name": "T", "source": "csv", "csv_path": FIXTURE,
             "n_paths": 12, "chunk_size": 12, "bar_size": "1m", "lookback_days": 10,
             "equity": 100000}
@@ -93,7 +93,7 @@ def test_run_second_job_while_busy_conflicts(client, monkeypatch):
     """Deterministic: hold the first job open on an Event so the second POST must 409."""
     import threading
 
-    from spx_trade_desk.sim import sim_jobs
+    from spx_trade_desk.sim import jobs
 
     release, started = threading.Event(), threading.Event()
 
@@ -102,7 +102,7 @@ def test_run_second_job_while_busy_conflicts(client, monkeypatch):
         release.wait(10)
         return {"meta": {"strategy": cfg.strategy_name}, "cells": []}
 
-    monkeypatch.setattr(sim_jobs, "execute_pipeline", slow_pipeline)
+    monkeypatch.setattr(jobs, "execute_pipeline", slow_pipeline)
     body = {"strategy_name": "T", "source": "csv", "csv_path": FIXTURE, "n_paths": 10}
     r1 = client.post("/api/sim/run", json=body)
     assert r1.status_code == 200
@@ -130,7 +130,7 @@ def test_result_returns_409_when_job_not_finished(client, monkeypatch):
     """GET /api/sim/result/{id} must 409 (not 200/500) while the job is still running."""
     import threading
 
-    from spx_trade_desk.sim import sim_jobs
+    from spx_trade_desk.sim import jobs
 
     release, started = threading.Event(), threading.Event()
 
@@ -139,7 +139,7 @@ def test_result_returns_409_when_job_not_finished(client, monkeypatch):
         release.wait(10)
         return {"meta": {"strategy": cfg.strategy_name}, "cells": []}
 
-    monkeypatch.setattr(sim_jobs, "execute_pipeline", slow_pipeline)
+    monkeypatch.setattr(jobs, "execute_pipeline", slow_pipeline)
     body = {"strategy_name": "T", "source": "csv", "csv_path": FIXTURE, "n_paths": 10}
     r = client.post("/api/sim/run", json=body)
     assert r.status_code == 200
@@ -159,10 +159,10 @@ def test_result_returns_409_when_job_not_finished(client, monkeypatch):
 
 def test_smile_capture_succeeds_when_chain_seeded(client, monkeypatch, tmp_path):
     """POST /api/sim/smile/capture fits + saves a smile when a live chain is present."""
-    from spx_trade_desk.sim import sim_calibrate
+    from spx_trade_desk.sim import calibrate
     old_cache = server.state.chain_quotes_cache
     old_spot = server.state.spx_price
-    monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
+    monkeypatch.setattr(calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
     # chain rows mirror chain_manager.build_chain_quotes: strike + put_iv in percent.
     # A real put skew (IV falls from the far wing to ATM); a flat chain is rejected by
     # the no-skew guard and falls back — see test_fit_smile_flat_degenerate_is_rejected.
@@ -186,11 +186,11 @@ def test_smile_capture_succeeds_when_chain_seeded(client, monkeypatch, tmp_path)
 def test_smile_capture_skewed_chain_bounded(client, monkeypatch, tmp_path):
     """A skewed put chain that only spans ~6% OTM must still fit/extrapolate a smile
     that is finite and < 100% IV at the sim's +/-15% ladder edge."""
-    from spx_trade_desk.sim import sim_calibrate
-    from spx_trade_desk.sim.sim_calibrate import SmileParams
+    from spx_trade_desk.sim import calibrate
+    from spx_trade_desk.sim.calibrate import SmileParams
     old_cache = server.state.chain_quotes_cache
     old_spot = server.state.spx_price
-    monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
+    monkeypatch.setattr(calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
     strikes = [{"strike": float(s), "put_iv": p} for s, p in (
         (5650, 45.0), (5700, 40.0), (5800, 32.0), (5900, 26.0),
         (5950, 22.0), (6000, 20.0), (6050, 19.0))]
@@ -210,10 +210,10 @@ def test_smile_capture_skewed_chain_bounded(client, monkeypatch, tmp_path):
 
 def test_smile_capture_stray_outlier_409(client, monkeypatch, tmp_path):
     """A degenerate far-OTM put IV outlier must fail the guards and return 409."""
-    from spx_trade_desk.sim import sim_calibrate
+    from spx_trade_desk.sim import calibrate
     old_cache = server.state.chain_quotes_cache
     old_spot = server.state.spx_price
-    monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
+    monkeypatch.setattr(calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
     strikes = [{"strike": float(s), "put_iv": p} for s, p in (
         (5700, 180.0), (5800, 32.0), (5900, 26.0), (5950, 22.0),
         (6000, 20.0), (6050, 19.0))]
@@ -260,11 +260,11 @@ def test_smile_capture_live_0dte_chain_succeeds(client, monkeypatch, tmp_path):
     """A real 0DTE chain used to 409 ('SVI fit failed guards') because the vega-less
     rows above drag the unconstrained fit onto the b-bound. Capture must drop them and
     return a bounded, put-skewed smile that tracks the informative strikes."""
-    from spx_trade_desk.sim import sim_calibrate
-    from spx_trade_desk.sim.sim_calibrate import SmileParams
+    from spx_trade_desk.sim import calibrate
+    from spx_trade_desk.sim.calibrate import SmileParams
     old_cache = server.state.chain_quotes_cache
     old_spot = server.state.spx_price
-    monkeypatch.setattr(sim_calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
+    monkeypatch.setattr(calibrate, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
     strikes = [{"strike": float(k), "put_iv": iv, "put_bid": b, "put_ask": a,
                 "put_oi": oi, "put_delta": d}
                for k, iv, b, a, oi, d in _LIVE_0DTE_ROWS]

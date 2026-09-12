@@ -14,7 +14,7 @@ from datetime import datetime
 from ibapi.contract import Contract
 
 from spx_trade_desk.core.config import IB_HOST, IB_PORT, IB_CLIENT_ID
-from spx_trade_desk.market.market_hours import (
+from spx_trade_desk.market.hours import (
     now_et,
     is_within_rth,
     last_trading_date,

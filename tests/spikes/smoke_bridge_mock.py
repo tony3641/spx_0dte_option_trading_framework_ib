@@ -18,9 +18,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from tests.conftest import MockIBClient, MockContract, MockContractDetails
 from ibapi.contract import Contract
-from spx_trade_desk.ib.ib_client import TickStream
+from spx_trade_desk.ib.client import TickStream
 from spx_trade_desk.core.app_state import AppState
-from spx_trade_desk.ib import ib_connection as conn
+from spx_trade_desk.ib import connection as conn
 
 CHECKS = []
 FAILURES = []

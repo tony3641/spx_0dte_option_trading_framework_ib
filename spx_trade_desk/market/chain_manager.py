@@ -11,21 +11,21 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-from spx_trade_desk.ib.order_manager import _option_contract
+from spx_trade_desk.ib.orders import _option_contract
 
 from spx_trade_desk.core.config import (
     CHAIN_STREAM_MAX_LINES, CHAIN_STREAM_UPDATE_INTERVAL,
     CHAIN_STREAM_UNKNOWN_RETRY_SECS,
     SNAPSHOT_REFRESH_SECONDS, MONTHLY_CACHE_TTL,
 )
-from spx_trade_desk.market.market_hours import (
+from spx_trade_desk.market.hours import (
     now_et, is_within_rth, is_cboe_options_open, ET,
     find_next_expiration, get_expiration_display,
     resolve_trading_expiration,
 )
 from spx_trade_desk.market.chain_fetcher import fetch_option_chain, clear_qualification_cache
-from spx_trade_desk.market.gex_calculator import compute_gex, gex_result_to_dict, GEXResult, OptionData
-from spx_trade_desk.market.price_bars import compute_annual_vol, fetch_historical_bars
+from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict, GEXResult, OptionData
+from spx_trade_desk.market.bars import compute_annual_vol, fetch_historical_bars
 
 logger = logging.getLogger(__name__)
 

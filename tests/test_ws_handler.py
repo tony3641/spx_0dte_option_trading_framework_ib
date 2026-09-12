@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from spx_trade_desk.ib.ib_client import OrderHandle
-from spx_trade_desk.web.ws_handler import make_ib_error_handler
+from spx_trade_desk.ib.client import OrderHandle
+from spx_trade_desk.web.ws import make_ib_error_handler
 
 
 @pytest.mark.asyncio

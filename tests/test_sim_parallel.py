@@ -9,10 +9,10 @@ import os
 
 import pytest
 
-from spx_trade_desk.sim import sim_jobs
-from spx_trade_desk.sim import sim_parallel
-from spx_trade_desk.sim.sim_config import SimRunConfig
-from spx_trade_desk.sim.sim_data import load_bars
+from spx_trade_desk.sim import jobs
+from spx_trade_desk.sim import parallel
+from spx_trade_desk.sim.config import SimRunConfig
+from spx_trade_desk.sim.data import load_bars
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 SPOT0 = 7718.36   # last RTH close of the 10-day fixture (2026-09-04 16:00)
@@ -28,66 +28,66 @@ def _cfg(**kw):
 
 @pytest.fixture(autouse=True)
 def _clean():
-    sim_jobs.reset_registry()
+    jobs.reset_registry()
     from tests.test_sim_engine import _strategy
-    sim_jobs._STRATEGY_CACHE["T"] = _strategy()
+    jobs._STRATEGY_CACHE["T"] = _strategy()
     yield
-    sim_jobs.reset_registry()
+    jobs.reset_registry()
 
 
 def _payload(**kw):
     cfg = _cfg(**kw)
     bars = load_bars(cfg)
-    return sim_jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=SPOT0)
+    return jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=SPOT0)
 
 
 # ---- worker-count resolution ----------------------------------------------
 def test_resolve_workers_explicit_value():
-    assert sim_parallel.resolve_workers(SimRunConfig(strategy_name="T", n_workers=3), 10) == 3
-    assert sim_parallel.resolve_workers(SimRunConfig(strategy_name="T", n_workers=1), 10) == 1
+    assert parallel.resolve_workers(SimRunConfig(strategy_name="T", n_workers=3), 10) == 3
+    assert parallel.resolve_workers(SimRunConfig(strategy_name="T", n_workers=1), 10) == 1
 
 
 def test_resolve_workers_capped_by_task_count():
-    assert sim_parallel.resolve_workers(SimRunConfig(strategy_name="T", n_workers=8), 2) == 2
+    assert parallel.resolve_workers(SimRunConfig(strategy_name="T", n_workers=8), 2) == 2
 
 
 def test_resolve_workers_auto_reads_env(monkeypatch):
     monkeypatch.setenv("SIM_WORKERS", "2")
-    assert sim_parallel.resolve_workers(SimRunConfig(strategy_name="T", n_paths=40), 10) == 2
+    assert parallel.resolve_workers(SimRunConfig(strategy_name="T", n_paths=40), 10) == 2
 
 
 def test_resolve_workers_auto_defaults_to_cpu_count(monkeypatch):
     monkeypatch.delenv("SIM_WORKERS", raising=False)
-    monkeypatch.setattr(sim_parallel.config, "SIM_WORKERS", 0)
+    monkeypatch.setattr(parallel.config, "SIM_WORKERS", 0)
     cfg = SimRunConfig(strategy_name="T", n_paths=10_000)
-    assert sim_parallel.resolve_workers(cfg, 100) == os.cpu_count()
+    assert parallel.resolve_workers(cfg, 100) == os.cpu_count()
 
 
 def test_resolve_workers_auto_stays_serial_for_tiny_runs(monkeypatch):
     # Spawning a pool for a few hundred paths costs more than the run itself.
     monkeypatch.delenv("SIM_WORKERS", raising=False)
-    monkeypatch.setattr(sim_parallel.config, "SIM_WORKERS", 0)
+    monkeypatch.setattr(parallel.config, "SIM_WORKERS", 0)
     cfg = SimRunConfig(strategy_name="T", n_paths=400, chunk_size=100)
-    assert sim_parallel.resolve_workers(cfg, 4) == 1
+    assert parallel.resolve_workers(cfg, 4) == 1
 
 
 def test_resolve_workers_auto_parallelizes_at_a_few_thousand_paths(monkeypatch):
     # Measured break-even: a worker's 250-path chunk (~4 s) dwarfs pool startup,
     # so 1000+ paths should already fan out.
     monkeypatch.delenv("SIM_WORKERS", raising=False)
-    monkeypatch.setattr(sim_parallel.config, "SIM_WORKERS", 0)
+    monkeypatch.setattr(parallel.config, "SIM_WORKERS", 0)
     cfg = SimRunConfig(strategy_name="T", n_paths=2000, chunk_size=250)
-    assert sim_parallel.resolve_workers(cfg, 8) == min(8, os.cpu_count() or 1)
+    assert parallel.resolve_workers(cfg, 8) == min(8, os.cpu_count() or 1)
 
 
 def test_configured_workers_reads_env_then_config(monkeypatch):
     monkeypatch.setenv("SIM_WORKERS", "3")
-    monkeypatch.setattr(sim_parallel.config, "SIM_WORKERS", 5)
-    assert sim_parallel.configured_workers() == 3          # live env wins
+    monkeypatch.setattr(parallel.config, "SIM_WORKERS", 5)
+    assert parallel.configured_workers() == 3          # live env wins
     monkeypatch.delenv("SIM_WORKERS", raising=False)
-    assert sim_parallel.configured_workers() == 5          # .env-backed fallback
-    monkeypatch.setattr(sim_parallel.config, "SIM_WORKERS", 0)
-    assert sim_parallel.configured_workers() == 0          # 0 = auto
+    assert parallel.configured_workers() == 5          # .env-backed fallback
+    monkeypatch.setattr(parallel.config, "SIM_WORKERS", 0)
+    assert parallel.configured_workers() == 0          # 0 = auto
 
 
 def test_n_workers_negative_rejected():
@@ -98,7 +98,7 @@ def test_n_workers_negative_rejected():
 # ---- parallel == serial ----------------------------------------------------
 def test_auto_workers_stay_serial_for_tiny_runs(monkeypatch):
     monkeypatch.delenv("SIM_WORKERS", raising=False)
-    monkeypatch.setattr(sim_parallel.config, "SIM_WORKERS", 0)
+    monkeypatch.setattr(parallel.config, "SIM_WORKERS", 0)
     assert _payload()["meta"]["workers"] == 1      # 40 paths -> not worth a pool
 
 
@@ -115,7 +115,7 @@ def test_parallel_family_mode_matches_serial():
     # the child Strategy objects must survive pickling).
     from types import SimpleNamespace
 
-    from spx_trade_desk.strategy.strategy_models import TriggerSpec
+    from spx_trade_desk.strategy.models import TriggerSpec
     from tests.test_sim_family import _child, _parent
 
     parent = _parent()
@@ -124,7 +124,7 @@ def test_parallel_family_mode_matches_serial():
 
     def run(**kw):
         cfg = _cfg(strategy_name="P", mode="family", **kw)
-        return sim_jobs.execute_pipeline(cfg, load_bars(cfg), lambda p, m: None,
+        return jobs.execute_pipeline(cfg, load_bars(cfg), lambda p, m: None,
                                          spot0=SPOT0, state=state)
 
     serial, par = run(n_workers=1), run(n_workers=2)
@@ -154,7 +154,7 @@ def test_parallel_honours_cancel():
     def progress(p, m):
         state["cancelled"] = p >= 0.34
 
-    payload = sim_jobs.execute_pipeline(cfg, bars, progress, spot0=SPOT0,
+    payload = jobs.execute_pipeline(cfg, bars, progress, spot0=SPOT0,
                                         cancel_check=lambda: state["cancelled"])
     assert len(payload["cells"]) == 1
 
@@ -181,9 +181,9 @@ def test_pool_is_terminated_when_a_worker_fails(monkeypatch):
             pass
 
     pool = BoomPool()
-    monkeypatch.setattr(sim_jobs, "spawn_pool", lambda n: pool)
+    monkeypatch.setattr(jobs, "spawn_pool", lambda n: pool)
     with pytest.raises(RuntimeError, match="worker died"):
-        sim_jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=SPOT0)
+        jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=SPOT0)
     assert pool.terminated
 
 
@@ -191,13 +191,13 @@ def test_pool_is_terminated_when_a_worker_fails(monkeypatch):
 def test_compute_chunk_is_deterministic():
     cfg = _cfg()
     bars = load_bars(cfg)
-    model = sim_jobs.calibrate(bars, cfg)
-    from spx_trade_desk.strategy.strategy_models import Strategy
-    strat = sim_jobs._STRATEGY_CACHE["T"]
-    ladder = sim_jobs.build_ladder(SPOT0, cfg.ladder_range_pct)
-    dyn = sim_jobs.build_dynamics(model, cfg)
+    model = jobs.calibrate(bars, cfg)
+    from spx_trade_desk.strategy.models import Strategy
+    strat = jobs._STRATEGY_CACHE["T"]
+    ladder = jobs.build_ladder(SPOT0, cfg.ladder_range_pct)
+    dyn = jobs.build_dynamics(model, cfg)
     cell = {"sl_multiplier": None, "k": None}
-    a = sim_parallel.compute_chunk((cfg, model, strat, [], ladder, dyn, cell, 0, 0, 20, SPOT0))
-    b = sim_parallel.compute_chunk((cfg, model, strat, [], ladder, dyn, cell, 0, 0, 20, SPOT0))
+    a = parallel.compute_chunk((cfg, model, strat, [], ladder, dyn, cell, 0, 0, 20, SPOT0))
+    b = parallel.compute_chunk((cfg, model, strat, [], ladder, dyn, cell, 0, 0, 20, SPOT0))
     assert [t.pnl for t in a["trials"]] == [t.pnl for t in b["trials"]]
     assert (a["spots"] == b["spots"]).all()

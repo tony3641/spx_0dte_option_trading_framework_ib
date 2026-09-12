@@ -3,9 +3,9 @@ import json
 
 import numpy as np
 
-from spx_trade_desk.sim.sim_config import SimRunConfig
-from spx_trade_desk.sim.sim_engine import TrialResult
-from spx_trade_desk.sim.sim_risk import (bootstrap_ruin, breakdown, build_cell_payload, histogram,
+from spx_trade_desk.sim.config import SimRunConfig
+from spx_trade_desk.sim.engine import TrialResult
+from spx_trade_desk.sim.risk import (bootstrap_ruin, breakdown, build_cell_payload, histogram,
                       intraday_max_dd, spot_fan_quantiles, summarize)
 
 

@@ -14,7 +14,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from spx_trade_desk.sim.sim_config import BAR_SECONDS, SimRunConfig
+from spx_trade_desk.sim.config import BAR_SECONDS, SimRunConfig
 
 logger = logging.getLogger(__name__)
 RTH_START_MIN = 9 * 60 + 30     # 09:30 ET
@@ -88,7 +88,7 @@ def load_bars_yfinance(bar_seconds: int, lookback_days: int) -> BarSeries:
 
 
 async def _load_bars_ib(ib, bar_seconds: int, lookback_days: int) -> BarSeries:
-    from spx_trade_desk.market.market_hours import last_trading_date
+    from spx_trade_desk.market.hours import last_trading_date
 
     size = {5: "5 secs", 15: "15 secs", 30: "30 secs", 60: "1 min", 300: "5 mins"}[bar_seconds]
     days = max(1, min(lookback_days, {5: 1, 15: 2, 30: 4, 60: 7, 300: 60}[bar_seconds]))

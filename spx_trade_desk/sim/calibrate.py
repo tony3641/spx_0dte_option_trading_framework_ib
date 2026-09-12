@@ -106,8 +106,8 @@ import os
 from dataclasses import dataclass, field
 
 from spx_trade_desk.resources import CONFIG_DIR
-from spx_trade_desk.sim.sim_config import BAR_SECONDS, SimRunConfig
-from spx_trade_desk.sim.sim_data import BarSeries
+from spx_trade_desk.sim.config import BAR_SECONDS, SimRunConfig
+from spx_trade_desk.sim.data import BarSeries
 
 SMILE_CAPTURE_PATH = str(CONFIG_DIR / "sim_smile.json")
 SMILE_DEFAULT_PATH = str(CONFIG_DIR / "sim_smile_default.json")

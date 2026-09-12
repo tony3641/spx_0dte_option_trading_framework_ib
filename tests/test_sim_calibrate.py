@@ -4,7 +4,7 @@ import json
 import numpy as np
 import pytest
 
-from spx_trade_desk.sim.sim_calibrate import fit_gjr_t, gjr_variance_path
+from spx_trade_desk.sim.calibrate import fit_gjr_t, gjr_variance_path
 
 
 def _simulate_gjr(n=8000, omega=2e-10, alpha=0.05, gamma=0.10, beta=0.85, nu=6.0, seed=3):
@@ -44,12 +44,12 @@ def test_fit_degenerate_returns_preset():
     assert p.alpha > 0 and p.beta < 1.0    # preset values, variance-targeted omega
 
 
-from spx_trade_desk.sim.sim_calibrate import (CalibratedModel, DEFAULT_SMILE, SmileParams,
+from spx_trade_desk.sim.calibrate import (CalibratedModel, DEFAULT_SMILE, SmileParams,
                            calibrate, fit_smile, fit_ushape, load_smile_snapshot)
 
 
 def _make_bars(n_days=6, bars=390, seed=11):
-    from spx_trade_desk.sim.sim_data import BarSeries
+    from spx_trade_desk.sim.data import BarSeries
     rng = np.random.default_rng(seed)
     # morning + afternoon active, midday quiet -> U-shape
     ushape = np.interp(np.arange(bars), [0, 30, 195, 360, 385], [2.0, 0.7, 0.6, 1.6, 2.4])
@@ -94,7 +94,7 @@ def test_fit_smile_insufficient_points_falls_back():
 
 
 def test_snapshot_round_trip(tmp_path, monkeypatch):
-    from spx_trade_desk.sim import sim_calibrate as sc
+    from spx_trade_desk.sim import calibrate as sc
     monkeypatch.setattr(sc, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
     monkeypatch.setattr(sc, "SMILE_DEFAULT_PATH", str(tmp_path / "sim_smile_default.json"))
     sc.save_smile_snapshot(SmileParams(a=0.05, b=2.0, rho=-0.60, m0=0.02, sigma=0.07,
@@ -109,7 +109,7 @@ def test_snapshot_round_trip(tmp_path, monkeypatch):
 
 
 def test_legacy_quadratic_snapshot_is_skipped(tmp_path, monkeypatch):
-    from spx_trade_desk.sim import sim_calibrate as sc
+    from spx_trade_desk.sim import calibrate as sc
     with pytest.raises(ValueError):
         sc.SmileParams.from_dict({"a": 0.2, "b": -0.35, "c": 1.2, "half_spread_atm": 0.05})
     monkeypatch.setattr(sc, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
@@ -147,7 +147,7 @@ def test_default_smile_bounded():
 
 
 def _two_day_series_with_overnight_gap():
-    from spx_trade_desk.sim.sim_data import BarSeries
+    from spx_trade_desk.sim.data import BarSeries
     rng = np.random.default_rng(21)
     bars = 390
     mods = 570 + (np.arange(bars) + 1)                    # 571..960 = one RTH day at 1m
@@ -162,8 +162,8 @@ def _two_day_series_with_overnight_gap():
 
 
 def test_calibrate_excludes_overnight_cross_day_return():
-    from spx_trade_desk.sim.sim_calibrate import calibrate
-    from spx_trade_desk.sim.sim_config import SimRunConfig
+    from spx_trade_desk.sim.calibrate import calibrate
+    from spx_trade_desk.sim.config import SimRunConfig
     bars = _two_day_series_with_overnight_gap()
     model = calibrate(bars, SimRunConfig(strategy_name="Main"))
     # The overnight log-diff (~0.405) would land in the opening minute bucket and blow it out
@@ -173,8 +173,8 @@ def test_calibrate_excludes_overnight_cross_day_return():
 
 
 def test_calibrate_end_to_end():
-    from spx_trade_desk.sim.sim_config import SimRunConfig
-    from spx_trade_desk.sim.sim_calibrate import calibrate
+    from spx_trade_desk.sim.config import SimRunConfig
+    from spx_trade_desk.sim.calibrate import calibrate
     bars = _make_bars(n_days=8)
     model = calibrate(bars, SimRunConfig(strategy_name="Main"))
     assert model.garch.converged or model.warnings
@@ -186,8 +186,8 @@ def test_calibrate_end_to_end():
 
 
 def test_build_dynamics_neutral_fields():
-    from spx_trade_desk.sim.sim_calibrate import build_dynamics
-    from spx_trade_desk.sim.sim_config import SimRunConfig
+    from spx_trade_desk.sim.calibrate import build_dynamics
+    from spx_trade_desk.sim.config import SimRunConfig
     bars = _make_bars()
     cfg = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
     model = calibrate(bars, cfg)
@@ -205,8 +205,8 @@ def test_build_dynamics_neutral_fields():
 
 
 def test_build_dynamics_t_scale_table():
-    from spx_trade_desk.sim.sim_calibrate import build_dynamics
-    from spx_trade_desk.sim.sim_config import SimRunConfig
+    from spx_trade_desk.sim.calibrate import build_dynamics
+    from spx_trade_desk.sim.config import SimRunConfig
     model = calibrate(_make_bars(), SimRunConfig(strategy_name="T", source="csv",
                                                  bar_size="1m"))
     cfg0 = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
@@ -221,13 +221,13 @@ def test_build_dynamics_t_scale_table():
 
 
 def _budget_cfg(**kw):
-    from spx_trade_desk.sim.sim_config import SimRunConfig
+    from spx_trade_desk.sim.config import SimRunConfig
     return SimRunConfig(strategy_name="T", source="csv", bar_size="1m",
                         atm_budget=True, **kw)
 
 
 def test_budget_tables_match_direct_summation():
-    from spx_trade_desk.sim.sim_calibrate import build_dynamics
+    from spx_trade_desk.sim.calibrate import build_dynamics
     bars = _make_bars()
     cfg = _budget_cfg()
     model = calibrate(bars, cfg)
@@ -251,7 +251,7 @@ def test_budget_tables_match_direct_summation():
 
 def test_conditional_expectation_closed_form():
     """E[sigma^2_{t+k}] = v_bar + p^k (sigma^2 - v_bar): iterate the exact E-map."""
-    from spx_trade_desk.sim.sim_config import SimRunConfig
+    from spx_trade_desk.sim.config import SimRunConfig
     bars = _make_bars()
     cfg = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
     model = calibrate(bars, cfg)
@@ -299,8 +299,8 @@ def test_fit_smile_flat_degenerate_is_rejected():
 
 
 def test_budget_off_leaves_tables_empty():
-    from spx_trade_desk.sim.sim_calibrate import build_dynamics
-    from spx_trade_desk.sim.sim_config import SimRunConfig
+    from spx_trade_desk.sim.calibrate import build_dynamics
+    from spx_trade_desk.sim.config import SimRunConfig
     cfg = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
     model = calibrate(_make_bars(), cfg)
     dyn = build_dynamics(model, cfg)

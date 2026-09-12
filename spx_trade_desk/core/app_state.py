@@ -10,8 +10,8 @@ from collections import deque
 from typing import Dict, List, Optional, Set
 
 from spx_trade_desk.core import config
-from spx_trade_desk.market.gex_calculator import GEXResult, OptionData
-from spx_trade_desk.strategy.strategy_models import RuntimeState
+from spx_trade_desk.market.gex import GEXResult, OptionData
+from spx_trade_desk.strategy.models import RuntimeState
 
 
 class AppState:

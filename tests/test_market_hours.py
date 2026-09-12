@@ -6,7 +6,7 @@ from datetime import datetime, date, time
 
 import pytest
 
-from spx_trade_desk.market.market_hours import (
+from spx_trade_desk.market.hours import (
     ET,
     is_within_rth,
     market_status,

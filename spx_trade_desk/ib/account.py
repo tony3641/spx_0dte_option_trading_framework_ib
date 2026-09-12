@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from spx_trade_desk.core.config import FORCE_REFRESH_INTERVAL
-from spx_trade_desk.market.market_hours import now_et, ET
+from spx_trade_desk.market.hours import now_et, ET
 
 logger = logging.getLogger(__name__)
 

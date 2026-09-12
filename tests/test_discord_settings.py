@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import discord
 import pytest
 
-from spx_trade_desk.discord import discord_settings
-from spx_trade_desk.discord.discord_settings import DiscordSettings, DiscordSettingsManager
+from spx_trade_desk.discord import settings
+from spx_trade_desk.discord.settings import DiscordSettings, DiscordSettingsManager
 
 
 async def _ready():
@@ -109,7 +109,7 @@ def test_apply_bad_token_rolls_back():
 
 
 def test_apply_timeout_rolls_back(monkeypatch):
-    monkeypatch.setattr(discord_settings, "READY_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(settings, "READY_TIMEOUT_S", 0.05)
     m, made, calls, state = _manager_seq(["ok", "hang"])
     assert asyncio.run(m.apply(DiscordSettings(token="good")))["ok"] is True
     result = asyncio.run(m.apply(DiscordSettings(token="slow")))

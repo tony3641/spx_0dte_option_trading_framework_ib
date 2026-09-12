@@ -1,6 +1,6 @@
 from spx_trade_desk.core.app_state import create_app_state
-from spx_trade_desk.strategy.strategy_models import Strategy, Condition
-from spx_trade_desk.discord.discord_bot import (
+from spx_trade_desk.strategy.models import Strategy, Condition
+from spx_trade_desk.discord.bot import (
     is_authorized, account_view, positions_view, orders_view, status_view,
     strategies_view, candidates_view, arm_strategy, disarm_strategy,
     set_kill_switch, place_refusal,
@@ -90,7 +90,7 @@ def test_strategies_view_single_and_all():
 
 def test_candidates_view_returns_sized_rows():
     state, strat = _cand_state()
-    from spx_trade_desk.strategy.strategy_engine import build_candidate_views
+    from spx_trade_desk.strategy.engine import build_candidate_views
     state.strategy_candidates["bp"] = build_candidate_views(strat, state)
     view = candidates_view(state, "bp")
     assert view["ok"] is True and view["count"] > 0

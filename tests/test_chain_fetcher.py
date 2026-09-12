@@ -16,8 +16,8 @@ from spx_trade_desk.market.chain_fetcher import (
     get_chain_params,
     get_monthly_chain_params,
 )
-from spx_trade_desk.market.gex_calculator import compute_gex, OptionData, _bsm_gamma
-from spx_trade_desk.ib.ib_client import Greeks, TickStream
+from spx_trade_desk.market.gex import compute_gex, OptionData, _bsm_gamma
+from spx_trade_desk.ib.client import Greeks, TickStream
 from tests.conftest import MockContract, MockIBClient
 
 
