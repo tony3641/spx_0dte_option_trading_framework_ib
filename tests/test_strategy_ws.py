@@ -12,11 +12,11 @@ import json
 import pytest
 from fastapi import WebSocketDisconnect
 
-import strategy_store as store
-import ws_handler
-from app_state import create_app_state
-from strategy_models import Strategy
-from ws_handler import status_push_loop, websocket_endpoint
+from spx_trade_desk.strategy import strategy_store as store
+from spx_trade_desk.web import ws_handler
+from spx_trade_desk.core.app_state import create_app_state
+from spx_trade_desk.strategy.strategy_models import Strategy
+from spx_trade_desk.web.ws_handler import status_push_loop, websocket_endpoint
 
 
 class FakeWS:
@@ -261,7 +261,7 @@ async def test_status_push_loop_broadcasts_vix_update(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_strategy_arm_resets_runtime(app_state):
-    from strategy_engine import get_runtime
+    from spx_trade_desk.strategy.strategy_engine import get_runtime
     app_state.strategies["a"] = Strategy(name="a", direction="bull_put", conditions=[])
     rt = get_runtime(app_state, "a")
     rt.entered = True

@@ -7,9 +7,9 @@ import os
 
 import pytest
 
-import sim_jobs
-import sim_tune
-from strategy_models import Condition, Strategy
+from spx_trade_desk.sim import sim_jobs
+from spx_trade_desk.sim import sim_tune
+from spx_trade_desk.strategy.strategy_models import Condition, Strategy
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 CONFIG_BYTES = os.path.join(os.path.dirname(__file__), "..", "config", "strategies.json")
@@ -182,7 +182,7 @@ def test_runner_multi_seed_rows(tmp_path):
 def test_main_cli_smoke_end_to_end(tmp_path, monkeypatch):
     # Hermetic store: main() reads the live store, so patch it (run_experiment
     # imports load_strategies at call time).
-    monkeypatch.setattr("strategy_store.load_strategies",
+    monkeypatch.setattr("spx_trade_desk.strategy.strategy_store.load_strategies",
                         lambda path=None: {"T": _strategy()})
     spec_path = tmp_path / "variants.json"
     spec_path.write_text(json.dumps(_spec()), encoding="utf-8")

@@ -8,9 +8,9 @@ import logging
 import pytest
 from fastapi import WebSocketDisconnect
 
-from app_state import create_app_state
-from log_buffer import LogStoreHandler, log_push_loop
-from ws_handler import websocket_endpoint
+from spx_trade_desk.core.app_state import create_app_state
+from spx_trade_desk.core.log_buffer import LogStoreHandler, log_push_loop
+from spx_trade_desk.web.ws_handler import websocket_endpoint
 
 
 class FakeWS:

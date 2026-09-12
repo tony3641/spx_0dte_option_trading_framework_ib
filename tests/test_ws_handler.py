@@ -1,16 +1,12 @@
 """Focused tests for websocket-side IB error forwarding."""
 
 import asyncio
-import sys
-import os
 from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from ib_client import OrderHandle
-from ws_handler import make_ib_error_handler
+from spx_trade_desk.ib.ib_client import OrderHandle
+from spx_trade_desk.web.ws_handler import make_ib_error_handler
 
 
 @pytest.mark.asyncio

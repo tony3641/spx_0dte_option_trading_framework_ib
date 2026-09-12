@@ -3,8 +3,9 @@ import json
 
 import numpy as np
 
-from sim_engine import TrialResult
-from sim_risk import (bootstrap_ruin, breakdown, build_cell_payload, histogram,
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_engine import TrialResult
+from spx_trade_desk.sim.sim_risk import (bootstrap_ruin, breakdown, build_cell_payload, histogram,
                       intraday_max_dd, spot_fan_quantiles, summarize)
 
 
@@ -53,7 +54,7 @@ def test_build_cell_payload_shape():
                            mtm=np.array([np.nan, 0.0, pnl]))
     payload = build_cell_payload([r("expired", 30.0)] * 10 + [r("stop", -180.0)] * 5
                                  + [r("never", 0.0)] * 5,
-                                 __import__("sim_config").SimRunConfig(strategy_name="T"))
+                                 SimRunConfig(strategy_name="T"))
     assert payload["sl_multiplier"] is None and payload["k"] is None
     assert payload["stats"]["n"] == 20 and payload["stats"]["entered"] == 15
     assert payload["breakdown"]["stop"] == 5
@@ -76,7 +77,7 @@ def test_fan_gaps_are_null_not_nan_json_compliant():
                            width=50, qty=1, fill_credit=0.3, exit_debit=0, pnl=-5.0,
                            mtm=mtm)
     payload = build_cell_payload([r(2, 3)] * 4,
-                                 __import__("sim_config").SimRunConfig(strategy_name="T"))
+                                 SimRunConfig(strategy_name="T"))
     json.dumps(payload, allow_nan=False)              # must not raise
     assert payload["fan"]["q50"][0] is None           # leading gap (no entry yet)
     assert payload["fan"]["q50"][1] is None

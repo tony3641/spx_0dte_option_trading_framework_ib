@@ -1,9 +1,9 @@
 # tests/test_sim_paths.py
 import numpy as np
 
-from sim_calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
-from sim_config import SimRunConfig
-from sim_paths import simulate_chunk
+from spx_trade_desk.sim.sim_calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_paths import simulate_chunk
 
 
 def _model(nu=6.0, gamma=0.10):

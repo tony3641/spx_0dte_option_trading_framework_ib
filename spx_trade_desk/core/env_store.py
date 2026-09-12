@@ -8,7 +8,9 @@ included) are preserved verbatim. Writes are atomic (temp file + os.replace).
 import os
 from pathlib import Path
 
-DOTENV_PATH = Path(__file__).parent / ".env"
+from spx_trade_desk.resources import ENV_PATH
+
+DOTENV_PATH = ENV_PATH
 
 
 def read_env(path: Path = None) -> dict:

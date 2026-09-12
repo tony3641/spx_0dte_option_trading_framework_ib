@@ -14,7 +14,6 @@ import logging
 import os
 import signal
 import sys
-from pathlib import Path
 from typing import Optional
 
 # Must be BEFORE any event-loop creation
@@ -28,37 +27,38 @@ from fastapi import Body, FastAPI, WebSocket, HTTPException, Request
 from pydantic import BaseModel
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from ib_client import IBClient
+from spx_trade_desk.ib.ib_client import IBClient
 
-import config
-from app_state import AppState
-from ib_connection import (
+from spx_trade_desk.core import config
+from spx_trade_desk.resources import STATIC_DIR
+from spx_trade_desk.core.app_state import AppState
+from spx_trade_desk.ib.ib_connection import (
     connect_ib, setup_spx_subscription, setup_chain_info,
     setup_es_subscription, fetch_es_baseline,
     setup_monthly_chain_info,
 )
-from account_manager import (
+from spx_trade_desk.ib.account_manager import (
     refresh_account_state, build_account_payload,
     setup_account_subscription, account_push_loop,
 )
-from price_bars import fetch_historical_bars, price_push_loop
-from chain_manager import chain_fetch_loop, chain_stream_loop
-from ws_handler import (
+from spx_trade_desk.market.price_bars import fetch_historical_bars, price_push_loop
+from spx_trade_desk.market.chain_manager import chain_fetch_loop, chain_stream_loop
+from spx_trade_desk.web.ws_handler import (
     broadcast, make_broadcast_fn, make_ib_error_handler, status_push_loop,
     websocket_endpoint as ws_endpoint,
 )
-from market_hours import is_within_rth, market_status, get_expiration_display
-from risk_free import get_risk_free_rate
-from strategy_store import load_strategies
-from strategy_engine import strategy_evaluation_loop, take_profit_loop
-from ib_connection import setup_vix_subscription
-from log_buffer import LogStoreHandler, log_push_loop
-from discord_settings import (
+from spx_trade_desk.market.market_hours import is_within_rth, market_status, get_expiration_display
+from spx_trade_desk.core.risk_free import get_risk_free_rate
+from spx_trade_desk.strategy.strategy_store import load_strategies
+from spx_trade_desk.strategy.strategy_engine import strategy_evaluation_loop, take_profit_loop
+from spx_trade_desk.ib.ib_connection import setup_vix_subscription
+from spx_trade_desk.core.log_buffer import LogStoreHandler, log_push_loop
+from spx_trade_desk.discord.discord_settings import (
     DiscordSettings, DiscordSettingsManager, load_initial_settings,
 )
-from env_store import update_env
-import sim_jobs
-import sim_parallel
+from spx_trade_desk.core.env_store import update_env
+from spx_trade_desk.sim import sim_jobs
+from spx_trade_desk.sim import sim_parallel
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -204,8 +204,6 @@ async def lifespan(_app):
 # Create app & HTTP routes
 # ---------------------------------------------------------------------------
 app = FastAPI(title="SPX 0DTE Option Dashboard", lifespan=lifespan)
-
-STATIC_DIR = Path(__file__).parent / "static"
 
 
 @app.get("/")
@@ -497,7 +495,7 @@ async def api_sim_cancel(job_id: str):
 
 @app.get("/api/sim/smile")
 async def api_sim_smile():
-    from sim_calibrate import load_smile_snapshot
+    from spx_trade_desk.sim.sim_calibrate import load_smile_snapshot
     smile, src = load_smile_snapshot()
     return {"smile": smile.to_dict(), "source": src}
 
@@ -509,7 +507,7 @@ async def api_sim_smile_capture():
     # The IVs were computed against the snapshot's own spot; map moneyness with that same
     # spot so m and IV describe the same instant (the live state.spx_price has moved on).
     spot = float(rows.get("spot_price") or getattr(state, "spx_price", 0) or 0)
-    from sim_calibrate import (DEFAULT_SMILE, fit_smile, save_smile_snapshot,
+    from spx_trade_desk.sim.sim_calibrate import (DEFAULT_SMILE, fit_smile, save_smile_snapshot,
                                smile_capture_points)
     pts_m, pts_iv = smile_capture_points(strikes, spot)
     if len(pts_m) < 5:

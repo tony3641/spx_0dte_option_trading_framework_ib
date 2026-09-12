@@ -28,10 +28,6 @@ import os
 import sys
 import time
 
-# Ensure project root is on sys.path
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
-
 import pytest
 
 

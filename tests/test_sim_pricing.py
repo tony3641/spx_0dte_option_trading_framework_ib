@@ -5,10 +5,10 @@ import math
 import numpy as np
 import pytest
 
-from gex_calculator import _bsm_delta
-from sim_pricing import (bsm_put, bsm_put_delta, bar_year_frac, build_ladder,
+from spx_trade_desk.market.gex_calculator import _bsm_delta
+from spx_trade_desk.sim.sim_pricing import (bsm_put, bsm_put_delta, bar_year_frac, build_ladder,
                          combo_fill_credit, half_spread, smile_iv, tick_floor)
-from sim_calibrate import DEFAULT_SMILE, CalibratedModel, GarchParams, SmileDynamics
+from spx_trade_desk.sim.sim_calibrate import DEFAULT_SMILE, CalibratedModel, GarchParams, SmileDynamics
 
 SIGMA0 = 0.0005
 R = 0.043
@@ -136,8 +136,8 @@ def test_build_ladder():
 
 
 def test_strike_monotonicity_every_bar_at_gamma_04():
-    from sim_calibrate import CalibratedModel, GarchParams, build_dynamics
-    from sim_config import SimRunConfig
+    from spx_trade_desk.sim.sim_calibrate import CalibratedModel, GarchParams, build_dynamics
+    from spx_trade_desk.sim.sim_config import SimRunConfig
     model = CalibratedModel(
         garch=GarchParams(omega=2e-10, alpha=0.05, gamma=0.10, beta=0.85, nu=6.0,
                           converged=True),
@@ -156,13 +156,13 @@ def test_strike_monotonicity_every_bar_at_gamma_04():
 def run_entry_sim(model, cfg, spots, sigmas, ladder, dyn=None, per_path_start=None):
     """Thin stand-in for sim_engine.run_entry on prebuilt paths (avoids the import)."""
     from types import SimpleNamespace
-    from sim_engine import run_entry
+    from spx_trade_desk.sim.sim_engine import run_entry
     return run_entry(model, cfg, _strategy_sim(), SimpleNamespace(spots=spots, sigmas=sigmas),
                      ladder, per_path_start=per_path_start, dyn=dyn)
 
 
 def _strategy_sim():
-    from strategy_models import Condition, ExitRules, StopLoss, Strategy
+    from spx_trade_desk.strategy.strategy_models import Condition, ExitRules, StopLoss, Strategy
     return Strategy(
         name="T", direction="bull_put",
         conditions=[
@@ -189,8 +189,8 @@ def test_late_window_credits_steeper_with_gamma():
     staggering starts across bars 235..241. Both gamma cohorts share identical starts, so
     entry bars match and the fills differ only by the expiry amplification.
     """
-    from sim_calibrate import CalibratedModel, GarchParams, build_dynamics
-    from sim_config import SimRunConfig
+    from spx_trade_desk.sim.sim_calibrate import CalibratedModel, GarchParams, build_dynamics
+    from spx_trade_desk.sim.sim_config import SimRunConfig
     rng = np.random.default_rng(0)
     n, steps = 60, 390
     spots = np.full((n, steps), 6000.0) + rng.normal(0, 2.0, (n, steps)).cumsum(1) * 0.1
@@ -229,8 +229,8 @@ def _budget_model(ushape):
 
 def _ubars(**kw):
     """Budget dyn over a 390-bar 1-min day with the given ATM sigma path."""
-    from sim_calibrate import build_dynamics
-    from sim_config import SimRunConfig
+    from spx_trade_desk.sim.sim_calibrate import build_dynamics
+    from spx_trade_desk.sim.sim_config import SimRunConfig
     u = np.interp(np.arange(390), [0, 30, 195, 360, 385], [2.0, 0.7, 0.6, 1.6, 2.4])
     u /= u.mean()
     model = _budget_model(u if kw.pop("u_shape", True) else np.ones(390))
@@ -272,8 +272,8 @@ def test_budget_stress_rises_into_close():
 
 
 def test_budget_off_branch_bit_identical_to_legacy_expression():
-    from sim_calibrate import build_dynamics
-    from sim_config import SimRunConfig
+    from spx_trade_desk.sim.sim_calibrate import build_dynamics
+    from spx_trade_desk.sim.sim_config import SimRunConfig
     model = _budget_model(np.ones(390))
     cfg = SimRunConfig(strategy_name="T", bar_size="1m")
     dyn = build_dynamics(model, cfg)
@@ -305,9 +305,9 @@ def test_late_window_entry_bias_report():
     """
     from types import SimpleNamespace
 
-    from sim_calibrate import build_dynamics
-    from sim_config import SimRunConfig
-    from sim_engine import run_entry
+    from spx_trade_desk.sim.sim_calibrate import build_dynamics
+    from spx_trade_desk.sim.sim_config import SimRunConfig
+    from spx_trade_desk.sim.sim_engine import run_entry
 
     u = np.interp(np.arange(390), [0, 30, 195, 360, 385], [2.0, 0.7, 0.6, 1.6, 2.4])
     u /= u.mean()

@@ -1,6 +1,6 @@
 # tests/test_sim_config.py
 import pytest
-from sim_config import SimRunConfig, sweep_cells, BAR_SECONDS
+from spx_trade_desk.sim.sim_config import SimRunConfig, sweep_cells, BAR_SECONDS
 
 
 def test_defaults_and_steps_per_day():

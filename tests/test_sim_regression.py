@@ -10,13 +10,13 @@ import os
 
 import numpy as np
 
-from sim_calibrate import calibrate
-from sim_config import SimRunConfig
-from sim_data import load_bars
-from sim_engine import run_entry, run_exits
-from sim_paths import simulate_chunk
-from sim_pricing import build_ladder
-from strategy_models import Condition, ExitRules, StopLoss, Strategy
+from spx_trade_desk.sim.sim_calibrate import calibrate
+from spx_trade_desk.sim.sim_config import SimRunConfig
+from spx_trade_desk.sim.sim_data import load_bars
+from spx_trade_desk.sim.sim_engine import run_entry, run_exits
+from spx_trade_desk.sim.sim_paths import simulate_chunk
+from spx_trade_desk.sim.sim_pricing import build_ladder
+from spx_trade_desk.strategy.strategy_models import Condition, ExitRules, StopLoss, Strategy
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "SPX_1min_10d.csv")
 

@@ -1,6 +1,6 @@
 """Tests for chain_manager stream-recovery helpers (pure functions)."""
 
-from chain_manager import chain_stream_status_line, unknown_retry_due
+from spx_trade_desk.market.chain_manager import chain_stream_status_line, unknown_retry_due
 
 NOW = 1000.0
 COOLDOWN = 120.0
@@ -31,7 +31,7 @@ class TestUnknownRetryDue:
         assert unknown_retry_due(unknown, NOW, COOLDOWN) == {stale}
 
     def test_default_cooldown_comes_from_config(self):
-        from config import CHAIN_STREAM_UNKNOWN_RETRY_SECS
+        from spx_trade_desk.core.config import CHAIN_STREAM_UNKNOWN_RETRY_SECS
         key = (6000.0, "C")
         assert unknown_retry_due({key: NOW - CHAIN_STREAM_UNKNOWN_RETRY_SECS}, NOW) == {key}
 

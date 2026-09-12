@@ -6,7 +6,7 @@ no-risk rate for GEX calculations.
 
 import logging
 from typing import Optional
-from config import (
+from spx_trade_desk.core.config import (
     DEFAULT_RISK_FREE_RATE,
     SGOV_TICKER,
 )

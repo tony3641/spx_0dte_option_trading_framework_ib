@@ -4,11 +4,12 @@ import logging
 from pathlib import Path
 from typing import Dict, Optional
 
-from strategy_models import Strategy
+from spx_trade_desk.resources import CONFIG_DIR
+from spx_trade_desk.strategy.strategy_models import Strategy
 
 logger = logging.getLogger(__name__)
 
-STRATEGIES_PATH = Path(__file__).parent / "config" / "strategies.json"
+STRATEGIES_PATH = CONFIG_DIR / "strategies.json"
 
 
 def _resolve(path) -> Path:

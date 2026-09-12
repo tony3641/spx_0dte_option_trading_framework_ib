@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import discord
 import pytest
 
-import discord_settings
-from discord_settings import DiscordSettings, DiscordSettingsManager
+from spx_trade_desk.discord import discord_settings
+from spx_trade_desk.discord.discord_settings import DiscordSettings, DiscordSettingsManager
 
 
 async def _ready():

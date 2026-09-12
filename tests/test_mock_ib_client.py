@@ -9,7 +9,7 @@ exercised by the ported tests in Tasks 10-17.
 
 import pytest
 
-from ib_client import OrderHandle, TickStream
+from spx_trade_desk.ib.ib_client import OrderHandle, TickStream
 from tests.conftest import MockContract, MockOrder, MockIBClient
 
 

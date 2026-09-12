@@ -19,8 +19,8 @@ from ibapi.contract import Contract, ComboLeg
 from ibapi.order import Order
 from ibapi.tag_value import TagValue
 
-from config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
-from ib_client import _PENDING_STATUSES, _TERMINAL_STATUSES
+from spx_trade_desk.core.config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
+from spx_trade_desk.ib.ib_client import _PENDING_STATUSES, _TERMINAL_STATUSES
 
 logger = logging.getLogger(__name__)
 

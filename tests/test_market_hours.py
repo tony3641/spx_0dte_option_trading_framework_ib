@@ -2,15 +2,11 @@
 Market hours module unit tests.
 """
 
-import sys
-import os
 from datetime import datetime, date, time
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from market_hours import (
+from spx_trade_desk.market.market_hours import (
     ET,
     is_within_rth,
     market_status,
