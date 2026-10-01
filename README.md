@@ -291,11 +291,24 @@ conditions of the strategies in `config/strategies.json`. Every condition resolv
 (missing timestamp, ATM-IV gate, RSI trend gate) is reported as unverifiable and never
 counted as a failure.
 
+Only **QFX** statements are accepted: they are the one format carrying the intraday
+entry timestamps the `entry_window` check needs. SPX and VIX closes for the statement's
+date range are loaded alongside the trades — fresh from Yahoo Finance by default, or the
+cached CSVs under `reports/data/` with `offline=True` — so the delta and VIX gates are
+decidable. Where no close exists for an entry date, those conditions come back
+unverifiable rather than failing.
+
 The short delta is not recorded in any statement. It is inferred: the observed spread
 credit is used to back out the BSM implied volatility, and that vol gives the delta —
 so the `short_delta` band can be checked against real fills. The inference assumes the
 SPX **close** on the entry date (intraday spot is not in the statement, so big-move days
 carry the most error) and, where a statement has no timestamp, a 12:00 ET entry.
+
+`exit_audit` measures each trade's realized loss ratio against the strategy's stop
+multiple. For a paired spread it divides the **spread's** P&L by its net credit, which
+is what the live engine stops on; the `basis` column says so explicitly, and falls back
+to `short_leg` for an unpaired trade. Rows carry a `source` column, because spread ids
+restart at 0 in every statement file.
 
 Tagging never writes `config/strategies.json`.
 

@@ -1149,6 +1149,7 @@ def analyze_strategy_compliance(
     account_filter: str = "All",
     strategies_path: str | None = None,
     annual_rf_pct: float = 4.0,
+    offline: bool = False,
 ) -> dict[str, Any]:
     """Score realized spreads against the conditions in config/strategies.json.
 
@@ -1157,7 +1158,9 @@ def analyze_strategy_compliance(
     Read-only: the strategy config is never modified.
 
     Only QFX statements are accepted — they are the one format that carries the
-    intraday timestamps the entry-window check needs.
+    intraday timestamps the entry-window check needs. SPX and VIX closes for the
+    statement's date range are loaded (fresh by default; ``offline=True`` uses
+    the cached CSVs) so the credit-implied delta and the VIX gate are decidable.
     """
     try:
         from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
@@ -1170,7 +1173,7 @@ def analyze_strategy_compliance(
                 "config": tg.strategy_config_fingerprint(strategies_path),
             }
 
-        matrices, summaries, audits = [], [], []
+        loaded: list[tuple[str, pd.DataFrame, pd.DataFrame]] = []
         with tempfile.TemporaryDirectory() as tmpdir:
             qfx_paths = [str(p) for p in (paths or [])
                          if Path(p).suffix.lower() == ".qfx"]
@@ -1197,15 +1200,30 @@ def analyze_strategy_compliance(
                     continue
                 positions = sa.load_positions(qfx_path)
                 spreads = tg.attach_entry_times(spreads, positions)
-                matrix = tg.spread_condition_matrix(spreads, strategies,
-                                                    r=annual_rf_pct / 100.0)
+                spreads["source"] = Path(qfx_path).name
+                spreads["spread_id"] = [
+                    f"{Path(qfx_path).name}:{index}" for index in spreads.index
+                ]
+                loaded.append((qfx_path, spreads, positions))
+
+            if not loaded:
+                return {"error": "no spreads found for the requested statement or account",
+                        "config": tg.strategy_config_fingerprint(strategies_path)}
+
+            # Market data spanning every statement, so the delta solver and the
+            # VIX gate have a spot/vol per entry date. Without it every
+            # short_delta check is unverifiable and no strategy can ever match.
+            first_day = min(pd.to_datetime(spreads["date"]).min() for _, spreads, _ in loaded)
+            last_day = max(pd.to_datetime(spreads["date"]).max() for _, spreads, _ in loaded)
+            market = _load_market_frame(first_day, last_day, offline=offline)
+
+            matrices, summaries, audits = [], [], []
+            for _qfx_path, spreads, positions in loaded:
+                matrix = tg.spread_condition_matrix(
+                    spreads, strategies, market=market, r=annual_rf_pct / 100.0)
                 matrices.append(matrix)
                 summaries.append(tg.strategy_compliance_summary(matrix, strategies))
-                audits.append(tg.exit_audit(positions, strategies))
-
-        if not matrices:
-            return {"error": "no spreads found for the requested statement or account",
-                    "config": tg.strategy_config_fingerprint(strategies_path)}
+                audits.append(tg.exit_audit(spreads, positions, strategies))
 
         # df_to_records cleans each cell with pd.isna, which returns an ARRAY for
         # a list cell (and raises on an empty one), so the list-valued columns are
@@ -1220,12 +1238,42 @@ def analyze_strategy_compliance(
             "compliance": df_to_records(pd.concat(summaries, ignore_index=True)),
             "condition_matrix": df_to_records(matrix_frame),
             "exit_audit": df_to_records(pd.concat(audits, ignore_index=True)),
+            "market_days": int(len(market)) if market is not None else 0,
             "note": ("Compliance compares the CURRENT config against historical fills; the "
                      "config armed when a trade was placed is not recoverable from a statement. "
-                     "A null match means a condition could not be checked — not that it failed."),
+                     "A null match means a condition could not be checked — not that it failed. "
+                     "Rows are grouped by source because spread ids restart in every file. "
+                     "exit_audit's basis column says whether loss_ratio was measured against "
+                     "the spread credit (the live engine's rule) or a single short leg."),
         }
     except Exception as exc:
         return {"error": str(exc), "traceback": traceback.format_exc()}
+
+
+def _load_market_frame(first_day, last_day, offline: bool = False):
+    """SPX + VIX closes spanning [first_day, last_day], or None when unavailable.
+
+    Failure to load is not fatal: a missing market frame leaves spot-dependent
+    conditions unverifiable, which is the honest answer, rather than failing them.
+    """
+    try:
+        from spx_trade_desk.resources import REPORT_DATA_DIR
+        from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
+
+        start_year = pd.Timestamp(first_day).year
+        end_date = pd.Timestamp(last_day)
+        spx, vix = sa.load_market_data(
+            str(REPORT_DATA_DIR / "spx_closes.csv"),
+            str(REPORT_DATA_DIR / "vix_closes.csv"),
+            start_year, end_date, offline=offline,
+        )
+        frame = spx[["activity_date", "spx_close"]].copy()
+        if vix is not None and not vix.empty and "vix_close" in vix.columns:
+            frame = frame.merge(vix[["activity_date", "vix_close"]],
+                                on="activity_date", how="outer")
+        return frame if not frame.empty else None
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------

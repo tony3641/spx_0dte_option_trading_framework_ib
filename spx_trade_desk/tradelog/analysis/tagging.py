@@ -100,8 +100,16 @@ def short_delta_estimate(spot, k_short, k_long, t_years, credit_per_share,
 
 
 def _credit_per_share(row: pd.Series) -> Optional[float]:
-    """Statement credits are dollars per contract; strategy bands are per share."""
-    raw = row.get("credit_ct") if bool(row.get("paired")) else row.get("short_credit_ct")
+    """Statement credits are dollars per contract; strategy bands are per share.
+
+    Returns None for an unpaired short: it has no *spread* credit, and its
+    single-leg premium is typically several times a spread credit, so comparing
+    the two would report a false compliance failure on a row that is not a
+    spread at all (a rolled leg, a naked short, a bear call).
+    """
+    if not bool(row.get("paired")):
+        return None
+    raw = row.get("credit_ct")
     if not _finite(raw):
         return None
     return float(raw) / DOLLARS_PER_CONTRACT
@@ -186,7 +194,10 @@ def _range_state(value, cond, default_band) -> str:
 
 
 def _bucket_state(value, params, base) -> str:
-    if value is None:
+    # `_finite`, not `is None`: a NaN (a yfinance gap, a half day, a reindexed
+    # frame) is not None, and every _passes_bucket comparison is False for NaN —
+    # so without this guard a missing value would read as a failed condition.
+    if not _finite(value):
         return UNVERIFIABLE
     op, lo, hi = _bucket_params(params, base)
     if lo is None and hi is None:
@@ -272,7 +283,12 @@ def spread_condition_matrix(spreads: pd.DataFrame, strategies: dict[str, Strateg
     unverifiable rather than failed.
     """
     rows = []
-    for spread_id, row in spreads.iterrows():
+    for index, row in spreads.iterrows():
+        # Prefer an explicit id: the frame index restarts at 0 in every statement,
+        # so a multi-file run would label every spread "0".
+        spread_id = row.get("spread_id")
+        if spread_id is None or (isinstance(spread_id, float) and np.isnan(spread_id)):
+            spread_id = index
         entry_dt, assumed_entry = _entry_datetime(row)
         market_row = _market_row(market, row.get("date"))
         for name, strategy in strategies.items():
@@ -286,6 +302,7 @@ def spread_condition_matrix(spreads: pd.DataFrame, strategies: dict[str, Strateg
             else:
                 match = True
             rows.append({
+                "source": row.get("source"),
                 "spread_id": spread_id,
                 "strategy": name,
                 "match": match,
@@ -295,20 +312,35 @@ def spread_condition_matrix(spreads: pd.DataFrame, strategies: dict[str, Strateg
             })
     return pd.DataFrame(
         rows,
-        columns=["spread_id", "strategy", "match", "failed", "unverifiable", "entry_time_assumed"],
+        columns=["source", "spread_id", "strategy", "match", "failed",
+                 "unverifiable", "entry_time_assumed"],
     )
 
 
 def strategy_compliance_summary(matrix: pd.DataFrame, strategies: dict[str, Strategy]) -> pd.DataFrame:
-    """Per-strategy tallies over the condition matrix."""
+    """Per-(source, strategy) tallies over the condition matrix.
+
+    Grouped by source as well as strategy: ``spread_id`` restarts at 0 in every
+    file, so a multi-statement run would otherwise list the same strategy name
+    several times with no way to tell the rows apart or to sum them safely.
+    """
+    has_source = "source" in matrix.columns
+    if has_source:
+        # Use each group's own frame rather than re-filtering: `sub["source"] == None`
+        # is False for every row, which would silently zero the tallies.
+        groups = [((source, name), sub)
+                  for (source, name), sub in matrix.groupby(["source", "strategy"], dropna=False)]
+    else:
+        groups = [((None, name), matrix[matrix["strategy"] == name]) for name in strategies]
+
     rows = []
-    for name in strategies:
-        sub = matrix[matrix["strategy"] == name]
+    for (source, name), sub in groups:
         failed_kinds: dict[str, int] = {}
         for failed in sub["failed"]:
             for kind in failed:
                 failed_kinds[kind] = failed_kinds.get(kind, 0) + 1
         rows.append({
+            "source": source,
             "strategy": name,
             "spreads_considered": int(len(sub)),
             "spreads_matching": int((sub["match"] == True).sum()),        # noqa: E712
@@ -316,36 +348,82 @@ def strategy_compliance_summary(matrix: pd.DataFrame, strategies: dict[str, Stra
             "spreads_unverifiable": int(sub["match"].isna().sum()),
             "failure_counts": failed_kinds,
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=[
+        "source", "strategy", "spreads_considered", "spreads_matching",
+        "spreads_failing", "spreads_unverifiable", "failure_counts",
+    ])
 
 
-def exit_audit(positions: pd.DataFrame, strategies: dict[str, Strategy]) -> pd.DataFrame:
-    """Realized loss ratio per short position against each strategy's stop multiple."""
-    rows = []
+def exit_audit(spreads: pd.DataFrame, positions: pd.DataFrame,
+               strategies: dict[str, Strategy]) -> pd.DataFrame:
+    """Realized loss ratio per trade against each strategy's stop multiple.
+
+    The live engine stops on the **spread** credit (``stop_mag =
+    abs(candidate.credit_mid) * multiplier``), so a paired spread is measured
+    against its net credit and its whole (both-legs) P&L. Measuring the short leg
+    against its *own* premium instead — which is what the source's per-leg
+    analysis does — understates the ratio by short_premium / net_credit and makes
+    a fired stop read as clean. Unpaired trades have no spread credit, so they
+    fall back to the short leg and are labelled ``basis="short_leg"``.
+    """
+    leg_pnl: dict[tuple, float] = {}
     for _, position in positions.iterrows():
-        if position.get("direction") != "short":
+        try:
+            key = (pd.Timestamp(position["date"]).date(),
+                   str(position["expiry"]), float(position["strike"]))
+        except (TypeError, ValueError, KeyError):
             continue
-        credit = position.get("credit")
-        if not _finite(credit) or float(credit) <= 0:
+        leg_pnl[key] = leg_pnl.get(key, 0.0) + float(position.get("total_pnl") or 0.0)
+
+    rows = []
+    for _, spread in spreads.iterrows():
+        try:
+            day = pd.Timestamp(spread["date"]).date()
+            expiry = str(spread["expiry"])
+            short_strike = float(spread["short_strike"])
+        except (TypeError, ValueError, KeyError):
             continue
-        pnl = float(position.get("total_pnl") or 0.0)
-        loss_ratio = (-pnl / float(credit)) if pnl < 0 else 0.0
+        short_pnl = leg_pnl.get((day, expiry, short_strike))
+        if short_pnl is None:
+            continue
+
+        net_credit = spread.get("credit_ct")
+        if bool(spread.get("paired")) and _finite(net_credit) and float(net_credit) > 0:
+            long_pnl = 0.0
+            try:
+                long_pnl = leg_pnl.get(
+                    (day, expiry, float(spread.get("long_strike"))), 0.0)
+            except (TypeError, ValueError):
+                long_pnl = 0.0
+            pnl = short_pnl + long_pnl
+            credit = float(net_credit)
+            basis = "spread"
+        else:
+            credit = spread.get("short_credit_ct")
+            if not _finite(credit) or float(credit) <= 0:
+                continue
+            pnl = short_pnl
+            credit = float(credit)
+            basis = "short_leg"
+
+        loss_ratio = (-pnl / credit) if pnl < 0 else 0.0
         for name, strategy in strategies.items():
             stop = strategy.exit_rules.stop_loss
             multiple = float(stop.multiplier) if stop is not None else None
             rows.append({
-                "date": position.get("date"),
-                "open_ts": position.get("open_ts"),
-                "strike": position.get("strike"),
+                "date": day,
+                "open_ts": spread.get("open_ts"),
+                "strike": short_strike,
                 "strategy": name,
+                "basis": basis,
                 "total_pnl": pnl,
-                "credit": float(credit),
+                "credit": credit,
                 "loss_ratio": loss_ratio,
                 "stop_multiple": multiple,
                 "stop_hit": bool(multiple is not None and loss_ratio >= multiple),
             })
     return pd.DataFrame(rows, columns=[
-        "date", "open_ts", "strike", "strategy", "total_pnl", "credit",
+        "date", "open_ts", "strike", "strategy", "basis", "total_pnl", "credit",
         "loss_ratio", "stop_multiple", "stop_hit",
     ])
 

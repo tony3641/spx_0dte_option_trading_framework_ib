@@ -304,7 +304,7 @@ def metrics_to_dict(metrics: dict[str, Any]) -> dict[str, Any]:
     """Clean up a metrics dict for JSON: replace NaN with None, flatten DataFrames.
 
     Expects the dict returned by
-    ``src.domain.risk_metrics.calculate_risk_metrics``.
+    ``spx_trade_desk.tradelog.domain.risk_metrics.calculate_risk_metrics``.
     """
     if not metrics:
         return {}

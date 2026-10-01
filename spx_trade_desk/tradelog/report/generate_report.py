@@ -8,11 +8,13 @@ bootstrap significance, spread-capped tail stress, Monte Carlo, Kelly) and the
 cross-month comparison.
 
 Usage:
-    python reports/generate_report.py --monthly <july.qfx> --ytd <ytd.qfx> \
-        --rf 0.04 --label "July 2026" --out reports/output/july_2026_report.html
+    python -m spx_trade_desk.tradelog.report.generate_report --monthly <july.qfx> \
+        --ytd <ytd.qfx> --rf 0.04 --label "July 2026"
 
-Run from the project root. Produces a single self-contained HTML file
-(embedded CSS + inline SVG, no external dependencies, light/dark aware).
+Output paths come from ``spx_trade_desk.resources`` (default
+``reports/output/report.html``); the market-data cache is read from
+``reports/data/``. Produces a single self-contained HTML file (embedded CSS +
+inline SVG, no external dependencies, light/dark aware).
 """
 from __future__ import annotations
 
@@ -815,7 +817,7 @@ def build_report(args) -> tuple[str, dict]:
     month_label = f"{label} · {month_start.strftime('%B %Y')}" if label else month_start.strftime("%B %Y")
     meta = (f"Account {account_id} · {month_start.strftime('%Y-%m-%d')} → {month_end.strftime('%Y-%m-%d')} · "
             f"{n_trades} trades · {n_contracts} contracts · risk-free {rf * 100:.0f}%")
-    foot = (f"Generated {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} by reports/generate_report.py. "
+    foot = (f"Generated {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} by spx_trade_desk.tradelog.report.generate_report. "
             "Analysis is informational, not investment advice. Statistics are computed from your QFX "
             "statement with bull-put-credit-spread reconstruction (position direction from execution order). "
             "Monthly returns/Sharpe are computed on the month's starting balance (file-starting balance plus "

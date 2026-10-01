@@ -13,6 +13,7 @@ from datetime import date, datetime
 import pandas as pd
 import pytest
 
+from spx_trade_desk.resources import REPORT_DATA_DIR
 from spx_trade_desk.sim.pricing import bsm_put
 from spx_trade_desk.strategy.models import Condition, ExitRules, StopLoss, Strategy
 from spx_trade_desk.tradelog.analysis import tagging
@@ -69,8 +70,8 @@ def qfx_losing_positions():
     }])
     spreads = pd.DataFrame([{
         "date": date(2026, 7, 15), "expiry": "2026-07-15", "short_strike": 7400.0,
-        "qty": 1, "short_credit_ct": 49.35, "paired": True, "long_strike": 7350.0,
-        "width": 50.0, "credit_ct": 28.70, "max_loss_ct": 4971.30, "short_pnl": -400.0,
+        "qty": 1, "short_credit_ct": 49.35, "paired": False, "long_strike": None,
+        "width": None, "credit_ct": 49.35, "max_loss_ct": None, "short_pnl": -400.0,
     }])
     return positions, spreads
 
@@ -155,16 +156,182 @@ def test_a_strategy_narrower_than_the_implied_delta_fails_the_delta_check():
 
 
 def test_unpaired_short_is_unverifiable_not_failed():
-    strategies = {"s": _bull_put_strategy()}
+    """A single-leg premium is NOT a spread credit. Comparing it against the
+    strategy's spread-credit band reports a false compliance failure on a row
+    that was never a spread — the failure mode this test exists to prevent.
+    """
+    strategies = {"main_like": _bull_put_strategy(
+        "main_like", credit=(0.30, 0.45))}   # the real Main band
     spread = _spread(paired=False, long_strike=None, width=None,
-                     credit_ct=None, max_loss_ct=None)
+                     credit_ct=500.0, short_credit_ct=500.0, max_loss_ct=None)
 
     matrix = tagging.spread_condition_matrix(spread, strategies)
 
     row = matrix.iloc[0]
-    assert row["match"] is None
-    assert "spread_width" in row["unverifiable"]
     assert row["failed"] == []
+    assert "credit" in row["unverifiable"]
+    assert "spread_width" in row["unverifiable"]
+    assert row["match"] is None
+
+
+def test_nan_market_value_is_unverifiable_not_failed():
+    """A missing VIX close (yfinance gap, half day) must not read as a violation."""
+    strategy = _bull_put_strategy("vix_gated")
+    strategy.conditions.append(Condition(kind="volatility", params={
+        "vix_enabled": True, "vix_op": "above", "vix_value": 13}))
+
+    def _market(vix):
+        return pd.DataFrame([{"activity_date": date(2026, 7, 15),
+                              "spx_close": 7405.0, "vix_close": vix}])
+
+    nan_row = tagging.spread_condition_matrix(
+        _spread(), {"s": strategy}, market=_market(float("nan"))).iloc[0]
+    real_row = tagging.spread_condition_matrix(
+        _spread(), {"s": strategy}, market=_market(16.0)).iloc[0]
+    low_row = tagging.spread_condition_matrix(
+        _spread(), {"s": strategy}, market=_market(10.0)).iloc[0]
+
+    assert "volatility" in nan_row["unverifiable"]
+    assert "volatility" not in nan_row["failed"]
+    assert "volatility" not in real_row["failed"]     # 16 > 13 -> passes
+    assert "volatility" in low_row["failed"]          # 10 < 13 -> fails
+
+
+def test_matrix_carries_the_source_column_and_summary_groups_by_it():
+    """spread_id restarts at 0 per file, so a multi-file run needs the file name
+    carried through or every spread is identified as '0'."""
+    strategies = {"s": _bull_put_strategy("s", delta=(0.0, 0.5))}
+    jan = _spread()
+    jan["source"] = "jan.qfx"
+    feb = _spread()
+    feb["source"] = "feb.qfx"
+    both = pd.concat([jan, feb], ignore_index=True)
+    market = pd.DataFrame([{"activity_date": date(2026, 7, 15), "spx_close": 7405.0}])
+
+    matrix = tagging.spread_condition_matrix(both, strategies, market=market)
+    summary = tagging.strategy_compliance_summary(matrix, strategies)
+
+    assert set(matrix["source"]) == {"jan.qfx", "feb.qfx"}
+    assert len(summary) == 2                       # one row per (source, strategy)
+    assert set(summary["source"]) == {"jan.qfx", "feb.qfx"}
+
+
+def test_exit_audit_measures_a_spread_against_the_spread_credit():
+    """The live engine stops on the SPREAD credit (strategy/engine.py:
+    stop_mag = abs(candidate.credit_mid) * multiplier). Dividing the short leg's
+    loss by its OWN premium understates the ratio whenever the long leg cost
+    anything — here 3.5x instead of the true 6x — so a fired stop reads as clean.
+    """
+    positions = pd.DataFrame([
+        {"contract_key": "S", "date": date(2026, 7, 15),
+         "open_ts": datetime(2026, 7, 15, 9, 30), "direction": "short",
+         "contracts": 1.0, "total_pnl": -350.0, "credit": 100.0,
+         "expiry": "2026-07-15", "strike": 7400.0},
+        {"contract_key": "L", "date": date(2026, 7, 15),
+         "open_ts": datetime(2026, 7, 15, 9, 30), "direction": "long",
+         "contracts": 1.0, "total_pnl": 50.0, "credit": None,
+         "expiry": "2026-07-15", "strike": 7350.0},
+    ])
+    spreads = pd.DataFrame([{
+        "date": date(2026, 7, 15), "expiry": "2026-07-15", "short_strike": 7400.0,
+        "qty": 1, "short_credit_ct": 100.0, "paired": True, "long_strike": 7350.0,
+        "width": 50.0, "credit_ct": 50.0, "max_loss_ct": 4950.0, "short_pnl": -350.0,
+    }])
+
+    audit = tagging.exit_audit(spreads, positions, {"s": _bull_put_strategy()})
+    row = audit.iloc[0]
+
+    assert row["basis"] == "spread"
+    assert row["loss_ratio"] == pytest.approx(6.0)   # 300 / 50, not 350 / 100
+    assert row["stop_hit"] == True                   # noqa: E712 — a 6x stop fires here
+
+
+def test_exit_audit_falls_back_to_the_short_leg_for_an_unpaired_trade():
+    positions = pd.DataFrame([
+        {"contract_key": "S", "date": date(2026, 7, 15),
+         "open_ts": datetime(2026, 7, 15, 9, 30), "direction": "short",
+         "contracts": 1.0, "total_pnl": -400.0, "credit": 49.35,
+         "expiry": "2026-07-15", "strike": 7400.0},
+    ])
+    spreads = pd.DataFrame([{
+        "date": date(2026, 7, 15), "expiry": "2026-07-15", "short_strike": 7400.0,
+        "qty": 1, "short_credit_ct": 49.35, "paired": False, "long_strike": None,
+        "width": None, "credit_ct": 49.35, "max_loss_ct": None, "short_pnl": -400.0,
+    }])
+
+    audit = tagging.exit_audit(spreads, positions, {"s": _bull_put_strategy()})
+    row = audit.iloc[0]
+
+    assert row["basis"] == "short_leg"
+    assert row["loss_ratio"] == pytest.approx(8.105, abs=0.01)
+
+
+def test_tool_evaluates_delta_from_market_data(tmp_path):
+    """Finding 1 regression: the tool never passed a market frame, so the delta
+    was always unverifiable and NO strategy could ever match through the tool —
+    every strategy reported 'matched 0 real fills'.
+
+    The band is derived from the seed market data the tool itself loads: the
+    fixture's strikes sit far OTM relative to the real 2026-07-15 close, so a
+    hand-picked band would be a guess about the market rather than a test of the
+    plumbing. The solver's own correctness is pinned by the round-trip test.
+    """
+    seed = pd.read_csv(REPORT_DATA_DIR / "spx_closes.csv")
+    spot = float(seed[pd.to_datetime(seed["activity_date"]).dt.date
+                      == date(2026, 7, 15)]["spx_close"].iloc[0])
+    t_years = tagging._year_fraction(datetime(2026, 7, 15, 9, 30), date(2026, 7, 15))
+    expected_delta = tagging.short_delta_estimate(spot, 7400.0, 7350.0, t_years, 0.287, 0.04)
+    assert expected_delta is not None, "the seed data must admit a solution"
+
+    cfg = tmp_path / "strategies.json"
+    cfg.write_text(json.dumps({"T": {
+        "name": "T", "direction": "bull_put",
+        "conditions": [
+            {"kind": "short_delta", "enabled": True,
+             "params": {"min": expected_delta - 0.005, "max": expected_delta + 0.005}},
+            {"kind": "spread_width", "enabled": True, "params": {"min": 40, "max": 60}},
+            {"kind": "credit", "enabled": True, "params": {"min": 0.20, "max": 0.60}},
+        ],
+        "run_days": [0, 1, 2, 3, 4],
+    }}), encoding="utf-8")
+    qfx = tmp_path / "min.qfx"
+    qfx.write_text(MINIMAL_QFX, encoding="latin-1")
+
+    from spx_trade_desk.mcp.server import analyze_strategy_compliance
+    result = analyze_strategy_compliance(
+        paths=[str(qfx)], strategies_path=str(cfg), offline=True)
+
+    assert "error" not in result, result.get("traceback")
+    row = result["condition_matrix"][0]
+    assert "short_delta" not in row["unverifiable"]     # the delta was evaluated
+    assert result["compliance"][0]["spreads_matching"] == 1
+
+
+def test_tool_labels_each_spread_with_its_source_file(tmp_path):
+    """Two statements in one call must stay attributable."""
+    cfg = tmp_path / "strategies.json"
+    cfg.write_text(json.dumps({"T": {
+        "name": "T", "direction": "bull_put",
+        "conditions": [{"kind": "spread_width", "enabled": True,
+                        "params": {"min": 40, "max": 60}}],
+        "run_days": [0, 1, 2, 3, 4],
+    }}), encoding="utf-8")
+    first = tmp_path / "jan.qfx"
+    second = tmp_path / "feb.qfx"
+    for path in (first, second):
+        path.write_text(MINIMAL_QFX, encoding="latin-1")
+
+    from spx_trade_desk.mcp.server import analyze_strategy_compliance
+    result = analyze_strategy_compliance(
+        paths=[str(first), str(second)], strategies_path=str(cfg), offline=True)
+
+    assert "error" not in result, result.get("traceback")
+    sources = {row["source"] for row in result["condition_matrix"]}
+    assert sources == {"jan.qfx", "feb.qfx"}
+    ids = [row["spread_id"] for row in result["condition_matrix"]]
+    assert len(ids) == len(set(ids))                    # not all "0"
+    assert len(result["compliance"]) == 2               # one row per (source, strategy)
+
 
 def test_missing_market_data_makes_delta_unverifiable_not_failed():
     strategies = {"s": _bull_put_strategy()}
@@ -283,12 +450,14 @@ def test_attach_entry_times_is_a_no_op_without_positions():
 
 
 def test_exit_audit_flags_a_trade_that_lost_more_than_its_stop(qfx_losing_positions):
-    positions, _spreads = qfx_losing_positions
-    audit = tagging.exit_audit(positions, {"s": _bull_put_strategy()})
+    positions, spreads = qfx_losing_positions
+    audit = tagging.exit_audit(spreads, positions, {"s": _bull_put_strategy()})
 
     assert "loss_ratio" in audit.columns
     assert "stop_multiple" in audit.columns
     assert "stop_hit" in audit.columns
+    assert "basis" in audit.columns
+    # unpaired here, so the ratio is measured against the short leg's own premium:
     # -400 on a 49.35 credit is 8.1x, which trips a 6x stop
     assert audit["loss_ratio"].iloc[0] == pytest.approx(8.105, abs=0.01)
     assert audit["stop_hit"].all()
