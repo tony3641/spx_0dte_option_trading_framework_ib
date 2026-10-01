@@ -79,6 +79,11 @@ config/*.local.*
 *.xlsm
 *.xls
 *.pdf
+# CSV is allowlisted, not blanket-allowed: IBKR (Transaction History) and E*Trade
+# (trades download) exports are CSV too. Only the market-data CSVs below are tracked.
+*.csv
+!reports/data/*.csv
+!tests/fixtures/*.csv
 statements/
 trade_logs/
 tradelogs/
