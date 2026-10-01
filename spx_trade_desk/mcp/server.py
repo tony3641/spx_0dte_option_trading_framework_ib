@@ -1139,6 +1139,87 @@ def generate_monthly_report(
 
 
 # ---------------------------------------------------------------------------
+# Tool: analyze_strategy_compliance
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def analyze_strategy_compliance(
+    paths: list[str] | None = None,
+    file_contents: list[dict[str, str]] | None = None,
+    account_filter: str = "All",
+    strategies_path: str | None = None,
+    annual_rf_pct: float = 4.0,
+) -> dict[str, Any]:
+    """Score realized spreads against the conditions in config/strategies.json.
+
+    Reports, per strategy, which enabled entry conditions the real fills satisfy,
+    which they violate, and which cannot be checked from a statement at all.
+    Read-only: the strategy config is never modified.
+
+    Only QFX statements are accepted — they are the one format that carries the
+    intraday timestamps the entry-window check needs.
+    """
+    try:
+        from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
+        from spx_trade_desk.tradelog.analysis import tagging as tg
+
+        strategies = tg.load_strategy_specs(strategies_path)
+        if not strategies:
+            return {
+                "error": "no strategies configured",
+                "config": tg.strategy_config_fingerprint(strategies_path),
+            }
+
+        matrices, summaries, audits = [], [], []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            qfx_paths = [str(p) for p in (paths or [])
+                         if Path(p).suffix.lower() == ".qfx"]
+            for index, fc in enumerate(file_contents or []):
+                if Path(fc.get("name", "")).suffix.lower() != ".qfx":
+                    continue
+                materialized = _materialize_file_contents(fc, tmpdir, index)
+                if materialized is not None:
+                    qfx_paths.append(materialized)
+
+            if not qfx_paths:
+                return {"error": "analyze_strategy_compliance requires a QFX statement; "
+                                 "no other format carries intraday entry timestamps"}
+
+            for qfx_path in qfx_paths:
+                if account_filter != "All":
+                    frame, _balance, _warning = _load_file_from_path(qfx_path)
+                    accounts = set(frame["account_id"].dropna().astype(str)) if not frame.empty else set()
+                    if account_filter not in accounts:
+                        continue
+
+                spreads = sa.reconstruct_spreads(qfx_path)
+                if spreads.empty:
+                    continue
+                positions = sa.load_positions(qfx_path)
+                matrix = tg.spread_condition_matrix(spreads, strategies,
+                                                    r=annual_rf_pct / 100.0)
+                matrices.append(matrix)
+                summaries.append(tg.strategy_compliance_summary(matrix, strategies))
+                audits.append(tg.exit_audit(positions, strategies))
+
+        if not matrices:
+            return {"error": "no spreads found for the requested statement or account",
+                    "config": tg.strategy_config_fingerprint(strategies_path)}
+
+        return {
+            "config": tg.strategy_config_fingerprint(strategies_path),
+            "compliance": df_to_records(pd.concat(summaries, ignore_index=True)),
+            "condition_matrix": df_to_records(pd.concat(matrices, ignore_index=True)),
+            "exit_audit": df_to_records(pd.concat(audits, ignore_index=True)),
+            "note": ("Compliance compares the CURRENT config against historical fills; the "
+                     "config armed when a trade was placed is not recoverable from a statement. "
+                     "A null match means a condition could not be checked — not that it failed."),
+        }
+    except Exception as exc:
+        return {"error": str(exc), "traceback": traceback.format_exc()}
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
