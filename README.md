@@ -298,6 +298,10 @@ cached CSVs under `reports/data/` with `offline=True` — so the delta and VIX g
 decidable. Where no close exists for an entry date, those conditions come back
 unverifiable rather than failing.
 
+Note that the default (`offline=False`) **rewrites** `reports/data/*.csv` as it merges
+the freshly fetched rows in — that is how the offline cache stays current, and it means
+a default run modifies tracked files. Pass `offline=True` to leave them alone.
+
 The short delta is not recorded in any statement. It is inferred: the observed spread
 credit is used to back out the BSM implied volatility, and that vol gives the delta —
 so the `short_delta` band can be checked against real fills. The inference assumes the
