@@ -554,7 +554,8 @@ def test_tool_serializes_list_valued_matrix_columns(tmp_path):
     qfx.write_text(MINIMAL_QFX, encoding="latin-1")
 
     from spx_trade_desk.mcp.server import analyze_strategy_compliance
-    result = analyze_strategy_compliance(paths=[str(qfx)], strategies_path=str(cfg))
+    result = analyze_strategy_compliance(
+        paths=[str(qfx)], strategies_path=str(cfg), offline=True)
 
     assert "error" not in result, result.get("traceback")
     row = result["condition_matrix"][0]
