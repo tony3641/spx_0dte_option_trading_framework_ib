@@ -337,9 +337,9 @@ Eleven tools over **stdio**:
 python -m spx_trade_desk.mcp.server
 ```
 
-Claude Code picks it up from the repo-root `.mcp.json` and asks for approval on first
-use. That file holds an absolute interpreter path, so it is machine-specific: a clone
-elsewhere must edit `command` and `cwd`.
+Claude Code picks it up from a repo-root `.mcp.json` and asks for approval on first
+use. That file holds an absolute interpreter path, so it is machine-specific and is not
+tracked: copy `.mcp.json.example` to `.mcp.json` and edit `command` and `cwd`.
 
 ### Known limitations
 
