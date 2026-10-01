@@ -537,3 +537,14 @@ At startup the TWS data farms were mid-reconnect: historical bars and live ticks
   seed CSVs under `reports/data/` and gitignored `reports/output/`.
 - Removed the duplicated OCC symbol builder in the PDF loader in favour of the
   shared `parse_option_symbol.build_occ_symbol`.
+- Whole-branch review fix pass: the compliance tool now loads SPX/VIX closes so the
+  delta gate is decidable (it previously reported every strategy as matching 0 fills,
+  because a missing market frame left the delta permanently unverifiable); unpaired
+  shorts are unverifiable rather than false failures; `exit_audit` measures a paired
+  spread against its net credit (the live engine's stop rule) and labels the basis;
+  outputs carry a `source` column because spread ids restart per file.
+- Known minor gaps, deferred deliberately: `strategy_config_fingerprint(<directory>)`
+  raises instead of reporting "no strategies configured"; the summary's
+  `failure_counts` counts only failures, so a row with 0 failures and N unverifiable can
+  read as clean to a skimmer; and no test pins a realistic credit/delta pair against a
+  realistic band (the solver's own round-trip test covers its correctness).
