@@ -261,6 +261,88 @@ python -m spx_trade_desk.sim.tune --strategy MyStrategy --spec docs/experiments/
 python -m spx_trade_desk.sim.tune --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
 ```
 
+## Trade Log Analysis
+
+A statement-facing analysis engine (`spx_trade_desk/tradelog/`, ported from the
+`trade_pnl_dashboard` project) that measures what **actually happened** in the account,
+from broker statements rather than from live state. It never places orders and never
+touches the strategy runtime or the IB connection.
+
+Supported statement formats:
+
+| Format | Broker | Notes |
+|---|---|---|
+| `.qfx` | IBKR | Perf & Reports → 3rd Party Reports → Quicken Web Connect. The only format that preserves intraday trade timestamps. |
+| `.csv` | IBKR | Perf & Reports → Transaction History, and E*Trade's trades download; the format is auto-detected from the header. |
+| `.pdf` | E*Trade (Morgan Stanley) | Monthly client statement. |
+
+What it computes: realized P&L per contract and per day, risk metrics (Sharpe, Sortino,
+drawdown, Net EV, commission drag, SPX/VIX benchmarks), TWR/MWR account returns,
+the daily calendar matrix, and — for bull put spread books — spread reconstruction,
+per-leg win rates, bootstrap significance, spread-capped tail stress, Monte Carlo,
+Kelly sizing, and stop/re-entry behaviour. `generate_monthly_report` renders all of it
+as a self-contained HTML report under `reports/output/`.
+
+### Strategy compliance tagging
+
+`analyze_strategy_compliance` scores each reconstructed spread against the entry
+conditions of the strategies in `config/strategies.json`. Every condition resolves to
+**passes**, **fails**, or **unverifiable** — a condition the statement cannot answer
+(missing timestamp, ATM-IV gate, RSI trend gate) is reported as unverifiable and never
+counted as a failure.
+
+The short delta is not recorded in any statement. It is inferred: the observed spread
+credit is used to back out the BSM implied volatility, and that vol gives the delta —
+so the `short_delta` band can be checked against real fills. The inference assumes the
+SPX **close** on the entry date (intraday spot is not in the statement, so big-move days
+carry the most error) and, where a statement has no timestamp, a 12:00 ET entry.
+
+Tagging never writes `config/strategies.json`.
+
+### MCP server
+
+Eleven tools over **stdio**:
+
+| Tool | Description |
+|------|-------------|
+| `get_transaction_summary` | Load files; row counts, date range, accounts, balances |
+| `compute_daily_pnl` | Realized-P&L pipeline — daily series, cumulative, top contracts |
+| `compute_risk_metrics` | Sharpe, Sortino, drawdown, Net EV, SPX/VIX benchmarks, VIX regimes |
+| `get_calendar_data` | Weekly calendar heatmap matrix |
+| `get_market_data` | SPX or VIX daily OHLC/returns from Yahoo Finance |
+| `parse_occ_symbol` / `build_occ_symbol` | Decompose / assemble an OCC option symbol |
+| `get_contract_details` | All trades and P&L for one contract |
+| `compute_account_return` | SPX/SPXW-only TWR/MWR with non-SPX activity as external flows |
+| `generate_monthly_report` | Full monthly report (HTML + JSON) |
+| `analyze_strategy_compliance` | Score realized spreads against `config/strategies.json` |
+
+```powershell
+python -m spx_trade_desk.mcp.server
+```
+
+Claude Code picks it up from the repo-root `.mcp.json` and asks for approval on first
+use. That file holds an absolute interpreter path, so it is machine-specific: a clone
+elsewhere must edit `command` and `cwd`.
+
+### Known limitations
+
+- **A year-less E*Trade PDF statement is dated with the current year.** The parser reads
+  the year from the statement's period line and falls back to `datetime.now().year`, so a
+  prior-year statement whose header omits the year parses with wrong dates.
+- **Compliance measures the current config against historical fills.** The config armed
+  when a trade was placed is not recoverable from a statement, so every result carries
+  the config's path, mtime, and SHA-256. Band/bucket and run-day semantics are taken from
+  the live engine's own helpers, so "compliant" means exactly what the engine enforces.
+- **`bear_call` strategies can never match.** Spread reconstruction pairs shorts with
+  lower-strike longs, which only builds bull puts.
+- **Entry delta is approximate.** It comes from the daily close and a credit-implied vol,
+  not the intraday entry spot; unpaired shorts and credits outside the no-arbitrage band
+  yield no delta at all (unverifiable).
+- **The E*Trade PDF parser has no automated test** — it needs a real statement. Its
+  year-extraction helper is tested; the body is exercised only by a real run.
+
+New runtime dependencies: `pandas`, `pdfplumber`, `mcp`.
+
 ## Charts
 
 ### 1. SPX Intraday (top)
@@ -338,6 +420,12 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/sim/risk.py` | CVaR/exit breakdown/max-DD/bootstrap ruin metrics, SPX path fan |
 | `spx_trade_desk/sim/jobs.py` | Background job registry, progress, cancel, memoized calibration |
 | `spx_trade_desk/sim/tune.py` | Offline knob-tuning runner (`python -m spx_trade_desk.sim.tune`) |
+| `spx_trade_desk/tradelog/io/` | Statement parsers (IBKR QFX/CSV, E*Trade CSV/PDF) and the SPX/VIX market-data loaders |
+| `spx_trade_desk/tradelog/domain/` | Realized-P&L engine, merge/dedup, SPX/SPXW filter, OCC symbol parse, risk metrics, TWR/MWR, calendar matrix |
+| `spx_trade_desk/tradelog/analysis/` | Spread reconstruction, edge/tail/Monte-Carlo/Kelly analysis, strategy-compliance tagging |
+| `spx_trade_desk/tradelog/report/` | Self-contained HTML monthly report builder |
+| `spx_trade_desk/mcp/` | FastMCP stdio server (11 tools) and its DataFrame→JSON adapter |
+| `reports/data/`, `reports/output/` | Seed SPX/VIX market data (committed) and generated reports (gitignored) |
 | `static/` | Browser app: `index.html`, `css/`, `js/` (charts, chain table, order entry, strategy UI, tabs, WS) |
 | `tests/` | Pytest suite + `run_tests.py` structured runner |
 

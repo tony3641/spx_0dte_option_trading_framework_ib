@@ -518,3 +518,22 @@ At startup the TWS data farms were mid-reconnect: historical bars and live ticks
 **Verification:** `python -m pytest -v` → all pass except the pre-existing `test_chain_fetcher.py::test_compute_gex_uses_bsm_gamma_when_ib_gamma_missing` gex-math failure. `grep -rn "ib_insync" --include="*.py" .` → **0 matches** (docstring/comment references in `chain_fetcher.py`, `ib_connection.py`, and `tests/spikes/smoke_bridge_mock.py` were reworded). `python -c "import ibapi"` OK. `python -c "import server"` boots cleanly with ib_insync absent from the code path.
 
 - Discord support: in-process bot (query / arm-disarm / live candidates, curated alert stream). Orders remain web-only — see `.superpowers/sdd/2026-08-25-discord-support/`.
+
+## Session: September 30, 2026 - Trade log analysis port
+
+- Ported the trade-log analysis engine from `trade_pnl_dashboard` into
+  `spx_trade_desk/tradelog/` (`io/`, `domain/`, `analysis/`, `report/`), moving
+  modules rather than rewriting them; the source repo's own 103-test suite passes
+  with import-path changes only.
+- Extracted `_build_calendar_matrix` out of the Streamlit UI module into
+  `tradelog/domain/calendar.py`, so the MCP server no longer needs streamlit or
+  plotly to build calendars (asserted by a subprocess isolation test).
+- Added `spx_trade_desk/mcp/` — a FastMCP stdio server exposing 11 tools — and
+  registered it in `.mcp.json` (Claude Code prompts for approval on first use).
+- Added `tradelog/analysis/tagging.py`: scores reconstructed spreads against
+  `config/strategies.json` entry conditions as pass / fail / unverifiable, with
+  the short delta implied from the spread's own credit. Read-only.
+- Added `pandas`, `pdfplumber`, `mcp` to `requirements.txt`; committed the SPX/VIX
+  seed CSVs under `reports/data/` and gitignored `reports/output/`.
+- Removed the duplicated OCC symbol builder in the PDF loader in favour of the
+  shared `parse_option_symbol.build_occ_symbol`.
