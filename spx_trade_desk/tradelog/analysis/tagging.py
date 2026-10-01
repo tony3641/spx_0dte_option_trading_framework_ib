@@ -130,6 +130,42 @@ def load_strategy_specs(path=None) -> dict[str, Strategy]:
     return load_strategies(path)
 
 
+def attach_entry_times(spreads: pd.DataFrame, positions: pd.DataFrame) -> pd.DataFrame:
+    """Re-attach intraday entry timestamps to reconstructed spreads.
+
+    ``reconstruct_spreads`` reports a spread's opening *date*, not its time — the
+    QFX loader collapses DTTRADE to a date and the reconstruction keeps that.
+    ``load_positions`` does retain ``open_ts`` per short leg, so the timestamps are
+    joined back on (date, expiry, strike). Without this the ``entry_window``
+    condition can never be anything but unverifiable, even for a statement that
+    carries the timestamp.
+    """
+    if spreads.empty or positions is None or positions.empty:
+        return spreads
+    if "open_ts" not in positions.columns or "direction" not in positions.columns:
+        return spreads
+
+    lookup: dict[tuple, pd.Timestamp] = {}
+    for _, row in positions[positions["direction"] == "short"].iterrows():
+        raw = row.get("open_ts")
+        if raw is None or pd.isna(raw):
+            continue
+        try:
+            stamp = pd.Timestamp(raw)
+            key = (pd.Timestamp(row["date"]).date(), str(row["expiry"]), float(row["strike"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if key not in lookup or stamp < lookup[key]:
+            lookup[key] = stamp
+
+    out = spreads.copy()
+    out["open_ts"] = [
+        lookup.get((pd.Timestamp(day).date(), str(expiry), float(strike)))
+        for day, expiry, strike in zip(out["date"], out["expiry"], out["short_strike"])
+    ]
+    return out
+
+
 def _market_row(market: Optional[pd.DataFrame], day) -> Optional[pd.Series]:
     if market is None or market.empty or day is None:
         return None

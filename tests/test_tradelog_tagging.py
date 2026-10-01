@@ -254,6 +254,34 @@ def test_config_fingerprint_on_a_missing_file_is_empty():
     assert tagging.strategy_config_fingerprint("does-not-exist.json")["sha256"] is None
 
 
+def test_attach_entry_times_restores_the_intraday_timestamp():
+    """reconstruct_spreads drops open_ts, which would leave entry_window
+    permanently unverifiable even for a QFX that carries the timestamp. The
+    timestamp is joined back from load_positions on (date, expiry, strike).
+    """
+    spreads = _spread().drop(columns=["open_ts"])
+    positions = pd.DataFrame([{
+        "date": date(2026, 7, 15), "expiry": "2026-07-15", "strike": 7400.0,
+        "direction": "short", "open_ts": datetime(2026, 7, 15, 9, 30),
+    }])
+
+    enriched = tagging.attach_entry_times(spreads, positions)
+    assert enriched.iloc[0]["open_ts"] == datetime(2026, 7, 15, 9, 30)
+
+    strategy = _bull_put_strategy("windowed")
+    strategy.conditions.append(
+        Condition(kind="entry_window", params={"start": "10:45", "end": "12:30"}))
+    matrix = tagging.spread_condition_matrix(enriched, {"windowed": strategy})
+
+    # 09:30 is before the window, so the condition is now decidable — and fails.
+    assert "entry_window" in matrix.iloc[0]["failed"]
+
+
+def test_attach_entry_times_is_a_no_op_without_positions():
+    spreads = _spread().drop(columns=["open_ts"])
+    assert tagging.attach_entry_times(spreads, pd.DataFrame()).equals(spreads)
+
+
 def test_exit_audit_flags_a_trade_that_lost_more_than_its_stop(qfx_losing_positions):
     positions, _spreads = qfx_losing_positions
     audit = tagging.exit_audit(positions, {"s": _bull_put_strategy()})
@@ -287,3 +315,81 @@ def test_compliance_on_a_corrupt_config_reports_an_error_not_a_traceback(corrupt
         strategies_path=corrupted_config,
     )
     assert "error" in result
+
+
+# --- tool serialization (regression) ------------------------------------
+
+MINIMAL_QFX = (
+    "OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nSECURITY:NONE\nENCODING:USASCII\n"
+    "CHARSET:1252\nCOMPRESSION:NONE\nOLDFILEUID:NONE\nNEWFILEUID:NONE\n\n"
+    "<OFX><SIGNONMSGSRSV1><SONRS><STATUS><CODE>0</CODE><SEVERITY>INFO</SEVERITY>"
+    "</STATUS><DTSOFDT>20260731120000.000[-5:EST]</DTSOFDT><LANGUAGE>ENG</LANGUAGE>"
+    "<FI><ORG>BROKER</ORG><FID>123</FID></FI></SONRS></SIGNONMSGSRSV1>"
+    "<INVSTMTMSGSRSV1><INVSTMTTRNRS><TRNUID>1</TRNUID><STATUS><CODE>0</CODE>"
+    "<SEVERITY>INFO</SEVERITY></STATUS><INVSTMTRS><DTASOF>20260731120000.000[-5:EST]"
+    "</DTASOF><CURDEF>USD</CURDEF><INVACCTFROM><BROKERID>BROKER</BROKERID>"
+    "<ACCTID>U123456</ACCTID></INVACCTFROM><INVTRANLIST><DTSTART>20260701</DTSTART>"
+    "<DTEND>20260731</DTEND>"
+    "<SELLOPT><INVSELL><INVTRAN><DTTRADE>20260715093000.000[-5:EST]</DTTRADE>"
+    "<DTSTAMP>20260715093500.000[-5:EST]</DTSTAMP><MEMO>SPXW 15JUL26 7400 P</MEMO>"
+    "</INVTRAN><SECID><UNIQUEID>00001</UNIQUEID><UNIQUEIDTYPE>CUSIP</UNIQUEIDTYPE>"
+    "</SECID><UNITS>-1</UNITS><UNITPRICE>0.50</UNITPRICE><COMMISSION>0.65</COMMISSION>"
+    "<TOTAL>49.35</TOTAL></INVSELL></SELLOPT>"
+    "<BUYOPT><INVBUY><INVTRAN><DTTRADE>20260715093001.000[-5:EST]</DTTRADE>"
+    "<DTSTAMP>20260715093501.000[-5:EST]</DTSTAMP><MEMO>SPXW 15JUL26 7350 P</MEMO>"
+    "</INVTRAN><SECID><UNIQUEID>00002</UNIQUEID><UNIQUEIDTYPE>CUSIP</UNIQUEIDTYPE>"
+    "</SECID><UNITS>1</UNITS><UNITPRICE>0.20</UNITPRICE><COMMISSION>0.65</COMMISSION>"
+    "<TOTAL>-20.65</TOTAL></INVBUY></BUYOPT>"
+    "<BUYOPT><INVBUY><INVTRAN><DTTRADE>20260715160000.000[-5:EST]</DTTRADE>"
+    "<DTSTAMP>20260715160500.000[-5:EST]</DTSTAMP><MEMO>SPXW 15JUL26 7400 P expiry</MEMO>"
+    "</INVTRAN><SECID><UNIQUEID>00001</UNIQUEID><UNIQUEIDTYPE>CUSIP</UNIQUEIDTYPE>"
+    "</SECID><UNITS>1</UNITS><UNITPRICE>0.00</UNITPRICE><COMMISSION>0.00</COMMISSION>"
+    "<TOTAL>0.00</TOTAL></INVBUY></BUYOPT>"
+    "<SELLOPT><INVSELL><INVTRAN><DTTRADE>20260715160001.000[-5:EST]</DTTRADE>"
+    "<DTSTAMP>20260715160501.000[-5:EST]</DTSTAMP><MEMO>SPXW 15JUL26 7350 P expiry</MEMO>"
+    "</INVTRAN><SECID><UNIQUEID>00002</UNIQUEID><UNIQUEIDTYPE>CUSIP</UNIQUEIDTYPE>"
+    "</SECID><UNITS>-1</UNITS><UNITPRICE>0.00</UNITPRICE><COMMISSION>0.00</COMMISSION>"
+    "<TOTAL>0.00</TOTAL></INVSELL></SELLOPT>"
+    "</INVTRANLIST>"
+    "<SECLIST>"
+    "<OPTINFO><SECINFO><SECID><UNIQUEID>00001</UNIQUEID><UNIQUEIDTYPE>CUSIP</UNIQUEIDTYPE>"
+    "</SECID><TICKER>SPXW  260715P07400000</TICKER><SECNAME>SPXW 15JUL26 7400 P</SECNAME>"
+    "</SECINFO><OPTYPE>PUT</OPTYPE><STRIKEPRICE>7400</STRIKEPRICE><DTEXPIRE>20260715"
+    "</DTEXPIRE><SHPERCTRCT>100</SHPERCTRCT></OPTINFO>"
+    "<OPTINFO><SECINFO><SECID><UNIQUEID>00002</UNIQUEID><UNIQUEIDTYPE>CUSIP</UNIQUEIDTYPE>"
+    "</SECID><TICKER>SPXW  260715P07350000</TICKER><SECNAME>SPXW 15JUL26 7350 P</SECNAME>"
+    "</SECINFO><OPTYPE>PUT</OPTYPE><STRIKEPRICE>7350</STRIKEPRICE><DTEXPIRE>20260715"
+    "</DTEXPIRE><SHPERCTRCT>100</SHPERCTRCT></OPTINFO>"
+    "</SECLIST>"
+    "<INVBAL><AVAILCASH>50400.00</AVAILCASH><BAL><NAME>stock</NAME><VALUE>0.00</VALUE>"
+    "</BAL></INVBAL></INVSTMTRS></INVSTMTTRNRS></INVSTMTMSGSRSV1></OFX>"
+)
+
+
+def test_tool_serializes_list_valued_matrix_columns(tmp_path):
+    """Regression: df_to_records cleans each cell with pd.isna, and pd.isna on a
+    list returns an ARRAY — so list-valued columns (`failed`, `unverifiable`)
+    must be flattened to scalars before serialization, or the tool errors out
+    with "truth value of an array ... is ambiguous" instead of returning data.
+    """
+    cfg = tmp_path / "strategies.json"
+    cfg.write_text(json.dumps({
+        "T": {
+            "name": "T", "direction": "bull_put",
+            "conditions": [{"kind": "spread_width", "enabled": True,
+                            "params": {"min": 40, "max": 60}}],
+            "run_days": [0, 1, 2, 3, 4],
+        },
+    }), encoding="utf-8")
+    qfx = tmp_path / "min.qfx"
+    qfx.write_text(MINIMAL_QFX, encoding="latin-1")
+
+    from spx_trade_desk.mcp.server import analyze_strategy_compliance
+    result = analyze_strategy_compliance(paths=[str(qfx)], strategies_path=str(cfg))
+
+    assert "error" not in result, result.get("traceback")
+    row = result["condition_matrix"][0]
+    assert row["strategy"] == "T"
+    assert isinstance(row["failed"], str)
+    assert isinstance(row["unverifiable"], str)
+    assert isinstance(result["compliance"][0]["failure_counts"], dict)

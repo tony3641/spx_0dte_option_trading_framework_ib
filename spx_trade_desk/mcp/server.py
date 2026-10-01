@@ -1196,6 +1196,7 @@ def analyze_strategy_compliance(
                 if spreads.empty:
                     continue
                 positions = sa.load_positions(qfx_path)
+                spreads = tg.attach_entry_times(spreads, positions)
                 matrix = tg.spread_condition_matrix(spreads, strategies,
                                                     r=annual_rf_pct / 100.0)
                 matrices.append(matrix)
@@ -1206,10 +1207,18 @@ def analyze_strategy_compliance(
             return {"error": "no spreads found for the requested statement or account",
                     "config": tg.strategy_config_fingerprint(strategies_path)}
 
+        # df_to_records cleans each cell with pd.isna, which returns an ARRAY for
+        # a list cell (and raises on an empty one), so the list-valued columns are
+        # flattened to scalars before serialization.
+        matrix_frame = pd.concat(matrices, ignore_index=True)
+        for column in ("failed", "unverifiable"):
+            matrix_frame[column] = matrix_frame[column].apply(
+                lambda value: ", ".join(value) if isinstance(value, list) else value)
+
         return {
             "config": tg.strategy_config_fingerprint(strategies_path),
             "compliance": df_to_records(pd.concat(summaries, ignore_index=True)),
-            "condition_matrix": df_to_records(pd.concat(matrices, ignore_index=True)),
+            "condition_matrix": df_to_records(matrix_frame),
             "exit_audit": df_to_records(pd.concat(audits, ignore_index=True)),
             "note": ("Compliance compares the CURRENT config against historical fills; the "
                      "config armed when a trade was placed is not recoverable from a statement. "
