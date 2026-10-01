@@ -48,3 +48,7 @@ config/sim_smile.json
 
 # Local experiment runs (sim_tune.py output; kept local, never published)
 docs/experiments/
+
+# Generated trade-log reports
+reports/output/*
+!reports/output/.gitkeep
