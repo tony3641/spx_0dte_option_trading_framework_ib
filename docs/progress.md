@@ -679,3 +679,22 @@ At startup the TWS data farms were mid-reconnect: historical bars and live ticks
   CLI prints a traceback instead of the message and has no `--account` / `--initial-capital`; `.ofx` is
   rejected by the extension gate; the loader reads each whole sheet before slicing; ytd validation exists in
   both the tool and `load_report_inputs`; the older server tests still write into `reports/output/`.
+
+## Session: October 1, 2026 - `analyze_strategy_compliance` hung over MCP on Windows
+
+- Symptom: the first `analyze_strategy_compliance` call from Claude Code never returned, while the same
+  function called in-process finished in under 2 s. Every other tool answered normally.
+- Root cause (reproduced with a stdio client and a `faulthandler` stack dump of the server): the tool
+  imported `tradelog.analysis.tagging` lazily, and tagging imports `scipy.optimize`. The server's main
+  thread was stuck loading scipy's BLAS extension (`scipy.linalg.blas`, `create_module`). On Windows,
+  FastMCP's stdio transport keeps a worker thread in a synchronous `ReadFile` on the stdin pipe while a
+  tool runs; the DLL's runtime initialisation queries the std handles and waits behind that read, which
+  only returns when the client sends another message. The client was waiting for the reply, so neither
+  side moved. The server was not slow; it was deadlocked.
+- Fix: `spx_trade_desk/mcp/server.py` imports `strategy_analysis`, `tagging` and `REPORT_DATA_DIR` at
+  module load, before `mcp.run()` starts the reader thread, with a comment saying why imports must never
+  move back into a tool body. Pre-importing scipy alone made the same call return in 1.4 s.
+- Tests: `tests/test_tradelog_mcp_stdio.py` (2). One pins that importing the server already loads
+  `scipy.optimize` and the tagging module (cross-platform); the other drives a real stdio session and
+  calls the tool with a 60 s timeout. Both failed before the fix (the stdio one by timing out) and pass
+  after it. Scoped run (MCP stdio, tagging, server tools, workbook report, characterization): 111 passed.

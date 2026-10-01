@@ -28,7 +28,13 @@ from mcp.server.fastmcp import FastMCP
 from spx_trade_desk.tradelog.report.generate_report import build_report
 from spx_trade_desk.tradelog.report.report_inputs import report_source_kind
 
-from spx_trade_desk.resources import REPORT_OUTPUT_DIR
+from spx_trade_desk.resources import REPORT_DATA_DIR, REPORT_OUTPUT_DIR
+# Import everything here, never inside a tool. On Windows the stdio transport
+# keeps a thread blocked reading stdin while a tool runs, and loading scipy's
+# BLAS DLL (tagging -> scipy.optimize) at that moment waits behind that read:
+# the first analyze_strategy_compliance call hung until the client sent again.
+from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
+from spx_trade_desk.tradelog.analysis import tagging as tg
 from spx_trade_desk.tradelog.domain.merge import merge_transaction_frames
 from spx_trade_desk.tradelog.domain.parse_option_symbol import (
     ParsedOption,
@@ -1240,9 +1246,6 @@ def analyze_strategy_compliance(
     the cached CSVs) so the credit-implied delta and the VIX gate are decidable.
     """
     try:
-        from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
-        from spx_trade_desk.tradelog.analysis import tagging as tg
-
         strategies = tg.load_strategy_specs(strategies_path)
         if not strategies:
             return {
@@ -1334,9 +1337,6 @@ def _load_market_frame(first_day, last_day, offline: bool = False):
     conditions unverifiable, which is the honest answer, rather than failing them.
     """
     try:
-        from spx_trade_desk.resources import REPORT_DATA_DIR
-        from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
-
         start_year = pd.Timestamp(first_day).year
         end_date = pd.Timestamp(last_day)
         spx, vix = sa.load_market_data(
