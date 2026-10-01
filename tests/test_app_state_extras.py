@@ -1,4 +1,4 @@
-from app_state import create_app_state
+from spx_trade_desk.core.app_state import create_app_state
 
 
 def test_strategy_state_defaults():

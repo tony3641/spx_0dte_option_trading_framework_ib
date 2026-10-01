@@ -48,3 +48,51 @@ config/sim_smile.json
 
 # Local experiment runs (sim_tune.py output; kept local, never published)
 docs/experiments/
+
+# Generated trade-log reports
+reports/output/*
+!reports/output/.gitkeep
+
+# --- Secrets & credentials (never commit) ---
+# .env holds the Discord bot token + IDs. The stores write .env.tmp and
+# config/strategies.tmp while saving, so a crash mid-write must not leave a
+# committable copy of either.
+.env.*
+!.env.example
+*.tmp
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# --- Personal strategy config & runtime state ---
+config/strategies.*
+config/*.local.*
+
+# --- Brokerage statements, trade logs, account data (never commit) ---
+# Force-add (git add -f) a deliberately synthetic fixture if one is ever needed.
+*.qfx
+*.ofx
+*.qbo
+*.xlsx
+*.xlsm
+*.xls
+*.pdf
+# CSV is allowlisted, not blanket-allowed: IBKR (Transaction History) and E*Trade
+# (trades download) exports are CSV too. Only the market-data CSVs below are tracked.
+*.csv
+!reports/data/*.csv
+!tests/fixtures/*.csv
+statements/
+trade_logs/
+tradelogs/
+trade-logs/
+account_data/
+
+# --- Local tool state (machine-specific paths / session data) ---
+# .mcp.json pins this machine's Python and checkout paths; copy
+# .mcp.json.example to .mcp.json and edit.
+.mcp.json
+.claude/settings.local.json
+.playwright-mcp/

@@ -28,21 +28,43 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
 
 ## Quick Start
 
-1. Open IB TWS / Gateway and enable API access on port 7497.
-2. Install dependencies:
-   - The native broker API client (`ibapi`), from your local TWS API source:
-     ```
-     pip install -e "C:\TWS API\source\pythonclient"
-     ```
-   - Python dependencies:
-     ```
-     pip install -r requirements.txt
-     ```
-3. Start the server:
+1. **Install the Interactive Brokers TWS API.** The native broker client (`ibapi`) is
+   not on PyPI — it ships with the TWS API distribution. Download and install it from
+   IBKR first:
+
    ```
-   python server.py
+   pip install -e "C:\TWS API\source\pythonclient"
    ```
-4. Open `http://localhost:8000` in a browser.
+
+   The path above is machine-specific. Edit it to match your local TWS API installation.
+
+2. **Install the Python dependencies.**
+
+   ```
+   pip install -r requirements.txt
+   ```
+
+   Do this *after* step 1. `requirements.txt` contains an editable install pointing at
+   the same local TWS API path, so it fails if the TWS API is not present.
+
+3. **Install this project in editable mode.**
+
+   ```
+   pip install -e . --no-deps
+   ```
+
+   `--no-deps` is correct here: dependencies are already installed by step 2, and the
+   project declares none of its own.
+
+4. **Open IB TWS / Gateway** and enable API access on port 7497.
+
+5. **Start the server.**
+
+   ```
+   python -m spx_trade_desk.server
+   ```
+
+6. Open `http://localhost:8000` in a browser.
 
 ### Tests
 
@@ -223,7 +245,7 @@ guidance.
 
 ### Strategy tuning (agent workflow)
 
-`sim_tune.py` executes **named knob variants** of one live strategy from
+`spx_trade_desk.sim.tune` executes **named knob variants** of one live strategy from
 `config/strategies.json` through the simulator — deterministically, without ever
 writing the config file. It backs the agent-driven tuning methodology in
 `.claude/skills/strategy-tuning/` (baseline → diagnose → one-knob-at-a-time
@@ -235,9 +257,132 @@ dataset, and `n_paths`, so the simulator replays identical spot paths per varian
 (common random numbers) and metric deltas are attributable to the knobs alone.
 
 ```
-python sim_tune.py --strategy MyStrategy --spec docs/experiments/<slug>/variants.json --smoke  # wiring check
-python sim_tune.py --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
+python -m spx_trade_desk.sim.tune --strategy MyStrategy --spec docs/experiments/<slug>/variants.json --smoke  # wiring check
+python -m spx_trade_desk.sim.tune --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
 ```
+
+## Trade Log Analysis
+
+A statement-facing analysis engine (`spx_trade_desk/tradelog/`, ported from the
+`trade_pnl_dashboard` project) that measures what **actually happened** in the account,
+from broker statements rather than from live state. It never places orders and never
+touches the strategy runtime or the IB connection.
+
+Supported statement formats:
+
+| Format | Broker | Notes |
+|---|---|---|
+| `.qfx` | IBKR | Perf & Reports → 3rd Party Reports → Quicken Web Connect. The only format that preserves intraday trade timestamps. |
+| `.csv` | IBKR | Perf & Reports → Transaction History, and E*Trade's trades download; the format is auto-detected from the header. |
+| `.pdf` | E*Trade (Morgan Stanley) | Monthly client statement. |
+| `.xlsx` | IBKR + E*Trade | A consolidated trade-log workbook: tabs `Index Options` / `Other Options` / `Stock & ETF` / `Other Transactions`, each with the header `Date, Source, Account, Underlying, Symbol, Description, Order Type, Quantity, Price, Commission, Net Amount`. Pass it by path, or as `data_base64` in `file_contents`. |
+
+The `.xlsx` workbook is read as a standalone ledger, so load it on its own. Its IBKR
+account id is masked (`U***12345`) and cannot be matched to a QFX statement's account, so
+loading both would double count; the server adds a warning when it sees that combination.
+E*Trade rows take the same account id as an E*Trade CSV (or the real id of a loaded E*Trade
+PDF, so those still dedup). The workbook carries no balances, so capital falls back to
+`initial_capital` or the $100,000 default, exactly as with an E*Trade CSV. Columns are
+matched by header name, so dashboard cells beside the ledger are ignored, and each tab's
+data ends at its first blank `Date`. The workbook has dates but no intraday timestamps, so
+`analyze_strategy_compliance` takes QFX statements only; `generate_monthly_report` accepts the
+workbook with the reduced content described below.
+
+What it computes: realized P&L per contract and per day, risk metrics (Sharpe, Sortino,
+drawdown, Net EV, commission drag, SPX/VIX benchmarks), TWR/MWR account returns,
+the daily calendar matrix, and — for bull put spread books — spread reconstruction,
+per-leg win rates, bootstrap significance, spread-capped tail stress, Monte Carlo,
+Kelly sizing, and stop/re-entry behaviour. `generate_monthly_report` renders all of it
+as a self-contained HTML report under `reports/output/`.
+
+`generate_monthly_report` accepts a QFX statement or the `.xlsx` trade-log workbook (any other type is rejected
+with a clear message). A QFX report is the full analysis. A workbook report is day-level: it covers the
+SPX/SPXW option rows (stock, dividend and non-SPX rows are excluded) with the executive summary, daily and
+weekly P&L, risk-adjusted metrics, VIX regimes, SPX benchmark, bootstrap significance and Monte Carlo, and it
+shows a "Needs QFX timestamps" notice in place of strategy structure, stops/re-entry and Kelly, because a
+contract that was both bought and sold on one day cannot be classified as a short or a long from dates alone.
+`unavailable_sections` in the result lists them. Extra parameters for a workbook: `month="YYYY-MM"` slices one
+month (earlier months in the same file feed the cross-month table and pooled significance automatically),
+`account_filter` (default `"All"`, the combined book) and `initial_capital` (default 100,000, shown on the page
+as assumed, since the workbook has no balances). The bundled SPX/VIX cache ends 2026-07-31; later months need
+`offline=False`, which refreshes and rewrites that cache.
+
+### Strategy compliance tagging
+
+`analyze_strategy_compliance` scores each reconstructed spread against the entry
+conditions of the strategies in `config/strategies.json`. Every condition resolves to
+**passes**, **fails**, or **unverifiable** — a condition the statement cannot answer
+(missing timestamp, ATM-IV gate, RSI trend gate) is reported as unverifiable and never
+counted as a failure.
+
+Only **QFX** statements are accepted: they are the one format carrying the intraday
+entry timestamps the `entry_window` check needs. SPX and VIX closes for the statement's
+date range are loaded alongside the trades — fresh from Yahoo Finance by default, or the
+cached CSVs under `reports/data/` with `offline=True` — so the delta and VIX gates are
+decidable. Where no close exists for an entry date, those conditions come back
+unverifiable rather than failing.
+
+Note that the default (`offline=False`) **rewrites** `reports/data/*.csv` as it merges
+the freshly fetched rows in — that is how the offline cache stays current, and it means
+a default run modifies tracked files. Pass `offline=True` to leave them alone.
+
+The short delta is not recorded in any statement. It is inferred: the observed spread
+credit is used to back out the BSM implied volatility, and that vol gives the delta —
+so the `short_delta` band can be checked against real fills. The inference assumes the
+SPX **close** on the entry date (intraday spot is not in the statement, so big-move days
+carry the most error) and, where a statement has no timestamp, a 12:00 ET entry.
+
+`exit_audit` measures each trade's realized loss ratio against the strategy's stop
+multiple. For a paired spread it divides the **spread's** P&L by its net credit, which
+is what the live engine stops on; the `basis` column says so explicitly, and falls back
+to `short_leg` for an unpaired trade. Rows carry a `source` column, because spread ids
+restart at 0 in every statement file.
+
+Tagging never writes `config/strategies.json`.
+
+### MCP server
+
+Eleven tools over **stdio**:
+
+| Tool | Description |
+|------|-------------|
+| `get_transaction_summary` | Load files; row counts, date range, accounts, balances |
+| `compute_daily_pnl` | Realized-P&L pipeline — daily series, cumulative, top contracts |
+| `compute_risk_metrics` | Sharpe, Sortino, drawdown, Net EV, SPX/VIX benchmarks, VIX regimes |
+| `get_calendar_data` | Weekly calendar heatmap matrix |
+| `get_market_data` | SPX or VIX daily OHLC/returns from Yahoo Finance |
+| `parse_occ_symbol` / `build_occ_symbol` | Decompose / assemble an OCC option symbol |
+| `get_contract_details` | All trades and P&L for one contract |
+| `compute_account_return` | SPX/SPXW-only TWR/MWR with non-SPX activity as external flows |
+| `generate_monthly_report` | Full monthly report (HTML + JSON) |
+| `analyze_strategy_compliance` | Score realized spreads against `config/strategies.json` |
+
+```powershell
+python -m spx_trade_desk.mcp.server
+```
+
+Claude Code picks it up from a repo-root `.mcp.json` and asks for approval on first
+use. That file holds an absolute interpreter path, so it is machine-specific and is not
+tracked: copy `.mcp.json.example` to `.mcp.json` and edit `command` and `cwd`.
+
+### Known limitations
+
+- **A year-less E*Trade PDF statement is dated with the current year.** The parser reads
+  the year from the statement's period line and falls back to `datetime.now().year`, so a
+  prior-year statement whose header omits the year parses with wrong dates.
+- **Compliance measures the current config against historical fills.** The config armed
+  when a trade was placed is not recoverable from a statement, so every result carries
+  the config's path, mtime, and SHA-256. Band/bucket and run-day semantics are taken from
+  the live engine's own helpers, so "compliant" means exactly what the engine enforces.
+- **`bear_call` strategies can never match.** Spread reconstruction pairs shorts with
+  lower-strike longs, which only builds bull puts.
+- **Entry delta is approximate.** It comes from the daily close and a credit-implied vol,
+  not the intraday entry spot; unpaired shorts and credits outside the no-arbitrage band
+  yield no delta at all (unverifiable).
+- **The E*Trade PDF parser has no automated test** — it needs a real statement. Its
+  year-extraction helper is tested; the body is exercised only by a real run.
+
+New runtime dependencies: `pandas`, `pdfplumber`, `mcp`.
 
 ## Charts
 
@@ -285,32 +430,43 @@ Key strike prices and conditions:
 
 ## Files
 
+All application modules live in the installable `spx_trade_desk` package, grouped by
+domain. `config/`, `static/` and `tests/` stay at the repository root as data and tests.
+
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI app, IB connection, state management, WebSocket endpoint |
-| `ws_handler.py` | WebSocket message routing (tabs, GEX mode, strategies, orders, viewport sync) |
-| `ib_client.py` / `ib_connection.py` | Native `ibapi` wrapper: contract resolution, streaming quotes, connection lifecycle |
-| `chain_fetcher.py` | Batched SPXW option chain fetcher (streaming mode, ±8σ strike filter) |
-| `chain_manager.py` | Chain caching, qualification, streaming state, monthly/0DTE coordination |
-| `gex_calculator.py` | GEX computation: Call/Put Wall, Gamma Flip, Max Pain, Net GEX, MM regime |
-| `market_hours.py` | Market-hours helpers, ET timezone, expiration, FOMC/NFP day utilities |
-| `price_bars.py` / `risk_free.py` | Historical bars and risk-free-rate (SGOV) helpers |
-| `order_manager.py` | Order placement, take-profit close loop, stop-loss handling |
-| `account_manager.py` | Account values, portfolio positions, executions serialization |
-| `strategy_models.py` | Strategy/Condition/Trigger/TakeProfit/StopLoss/RuntimeState dataclasses |
-| `strategy_engine.py` | Candidate generation, condition eval, sizing, entry payloads, triggers, parent/child logic |
-| `strategy_store.py` | Strategy persistence to `config/strategies.json` |
-| `app_state.py` | Shared AppState runtime, day key, kill switch |
-| `log_buffer.py` | Ring-buffer framework log for the Log tab |
-| `config.py` | Centralized settings: env var → repo-root `.env` → `config/params.yaml` → defaults |
-| `sim_config.py` | Simulation run config: validation, JSON round-trip, sweep cells |
-| `sim_data.py` | Layered intraday bar loaders: CSV → yfinance → IB |
-| `sim_calibrate.py` | GJR-GARCH(1,1)-t MLE, U-shape profile, smile snapshot, VIX mapping |
-| `sim_paths.py` | Chunked vectorized path generation (stress dials: ν, γ×; ATM-IV anchored per-bar sigma cap) |
-| `sim_pricing.py` | Vectorized BSM, vol-linked smile, spreads, tick fill rules |
-| `sim_engine.py` | Entry/exit scans, single + family simulation, experiment modes |
-| `sim_risk.py` | CVaR/exit breakdown/max-DD/bootstrap ruin metrics, SPX path fan |
-| `sim_jobs.py` | Background job registry, progress, cancel, memoized calibration |
+| `spx_trade_desk/server.py` | FastAPI app, IB connection, state management, WebSocket endpoint |
+| `spx_trade_desk/web/ws.py` | WebSocket message routing (tabs, GEX mode, strategies, orders, viewport sync) |
+| `spx_trade_desk/ib/client.py` / `ib/connection.py` | Native `ibapi` wrapper: contract resolution, streaming quotes, connection lifecycle |
+| `spx_trade_desk/market/chain_fetcher.py` | Batched SPXW option chain fetcher (streaming mode, ±8σ strike filter) |
+| `spx_trade_desk/market/chain_manager.py` | Chain caching, qualification, streaming state, monthly/0DTE coordination |
+| `spx_trade_desk/market/gex.py` | GEX computation: Call/Put Wall, Gamma Flip, Max Pain, Net GEX, MM regime |
+| `spx_trade_desk/market/hours.py` | Market-hours helpers, ET timezone, expiration, FOMC/NFP day utilities |
+| `spx_trade_desk/market/bars.py` / `core/rates.py` | Historical bars and risk-free-rate (SGOV) helpers |
+| `spx_trade_desk/ib/orders.py` | Order placement, take-profit close loop, stop-loss handling |
+| `spx_trade_desk/ib/account.py` | Account values, portfolio positions, executions serialization |
+| `spx_trade_desk/strategy/models.py` | Strategy/Condition/Trigger/TakeProfit/StopLoss/RuntimeState dataclasses |
+| `spx_trade_desk/strategy/engine.py` | Candidate generation, condition eval, sizing, entry payloads, triggers, parent/child logic |
+| `spx_trade_desk/strategy/store.py` | Strategy persistence to `config/strategies.json` |
+| `spx_trade_desk/core/app_state.py` | Shared AppState runtime, day key, kill switch |
+| `spx_trade_desk/core/log_buffer.py` | Ring-buffer framework log for the Log tab |
+| `spx_trade_desk/core/config.py` | Centralized settings: env var → repo-root `.env` → `config/params.yaml` → defaults |
+| `spx_trade_desk/resources.py` | Repository-relative path anchors (`config/`, `static/`, `.env`, `docs/experiments`) |
+| `spx_trade_desk/sim/config.py` | Simulation run config: validation, JSON round-trip, sweep cells |
+| `spx_trade_desk/sim/data.py` | Layered intraday bar loaders: CSV → yfinance → IB |
+| `spx_trade_desk/sim/calibrate.py` | GJR-GARCH(1,1)-t MLE, U-shape profile, smile snapshot, VIX mapping |
+| `spx_trade_desk/sim/paths.py` | Chunked vectorized path generation (stress dials: ν, γ×; ATM-IV anchored per-bar sigma cap) |
+| `spx_trade_desk/sim/pricing.py` | Vectorized BSM, vol-linked smile, spreads, tick fill rules |
+| `spx_trade_desk/sim/engine.py` | Entry/exit scans, single + family simulation, experiment modes |
+| `spx_trade_desk/sim/risk.py` | CVaR/exit breakdown/max-DD/bootstrap ruin metrics, SPX path fan |
+| `spx_trade_desk/sim/jobs.py` | Background job registry, progress, cancel, memoized calibration |
+| `spx_trade_desk/sim/tune.py` | Offline knob-tuning runner (`python -m spx_trade_desk.sim.tune`) |
+| `spx_trade_desk/tradelog/io/` | Statement parsers (IBKR QFX/CSV, E*Trade CSV/PDF, consolidated `.xlsx` trade-log workbook) and the SPX/VIX market-data loaders |
+| `spx_trade_desk/tradelog/domain/` | Realized-P&L engine, merge/dedup, SPX/SPXW filter, OCC symbol parse, risk metrics, TWR/MWR, calendar matrix |
+| `spx_trade_desk/tradelog/analysis/` | Spread reconstruction, edge/tail/Monte-Carlo/Kelly analysis, strategy-compliance tagging |
+| `spx_trade_desk/tradelog/report/` | Self-contained HTML monthly report builder |
+| `spx_trade_desk/mcp/` | FastMCP stdio server (11 tools) and its DataFrame→JSON adapter |
+| `reports/data/`, `reports/output/` | Seed SPX/VIX market data (committed) and generated reports (gitignored) |
 | `static/` | Browser app: `index.html`, `css/`, `js/` (charts, chain table, order entry, strategy UI, tabs, WS) |
 | `tests/` | Pytest suite + `run_tests.py` structured runner |
 

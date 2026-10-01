@@ -1,0 +1,4521 @@
+{
+  "summary": {
+    "total": 751,
+    "passed": 749,
+    "failed": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "tests": [
+    {
+      "name": "test_simulation_tab_runs_and_renders",
+      "module": "e2e/test_sim_ui_playwright",
+      "duration_ms": 17017.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_settings_modal_exposes_sim_workers",
+      "module": "e2e/test_sim_ui_playwright",
+      "duration_ms": 2332.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_extracts_wanted_keys",
+      "module": "test_account_manager",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_filters_non_usd",
+      "module": "test_account_manager",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty_list",
+      "module": "test_account_manager",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_value_skipped",
+      "module": "test_account_manager",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_serializes_option_position",
+      "module": "test_account_manager",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_serializes_no_strike_contract",
+      "module": "test_account_manager",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_serializes_filled_order",
+      "module": "test_account_manager",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unset_prices_serialize_as_none",
+      "module": "test_account_manager",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_zero_aux_price_is_preserved",
+      "module": "test_account_manager",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_filters_to_today_and_reads_commission",
+      "module": "test_account_manager",
+      "duration_ms": 1.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_oversized_commission_treated_as_none",
+      "module": "test_account_manager",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty_list",
+      "module": "test_account_manager",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_reads_a_snapshot_not_the_live_list",
+      "module": "test_account_manager",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_returns_expected_keys",
+      "module": "test_account_manager",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_populates_state_from_mock_ib",
+      "module": "test_account_manager",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_terminal_orders_excluded_from_open_orders",
+      "module": "test_account_manager",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty_mock_does_not_crash",
+      "module": "test_account_manager",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_reads_snapshots_not_live_lists",
+      "module": "test_account_manager",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_aware_utc_converts_to_et",
+      "module": "test_account_manager",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_native_ib_execution_time_string",
+      "module": "test_account_manager",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_format_execution_time_uses_dst_label_in_april",
+      "module": "test_account_manager",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_time_only_rolls_to_previous_day_if_future",
+      "module": "test_account_manager",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_forwards_order_status",
+      "module": "test_alert_bridge",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_suppresses_candidate_too_high_frequency",
+      "module": "test_alert_bridge",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_suppresses_gex_and_account",
+      "module": "test_alert_bridge",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_dedup_repeated_event",
+      "module": "test_alert_bridge",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_connection_change_only_forwards_on_transition",
+      "module": "test_alert_bridge",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_kill_switch_change_via_strategy_list",
+      "module": "test_alert_bridge",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_no_poster_is_noop",
+      "module": "test_alert_bridge",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_state_defaults",
+      "module": "test_app_state_extras",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_subsequent_runtime_state_defaults",
+      "module": "test_app_state_extras",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stream_to_option_data_put_open_interest_falls_back_to_call_field",
+      "module": "test_chain_fetcher",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stream_to_option_data_call_open_interest_falls_back_to_put_field",
+      "module": "test_chain_fetcher",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stream_to_option_data_uses_bid_greeks_when_model_and_last_missing",
+      "module": "test_chain_fetcher",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stream_to_option_data_normalizes_percent_like_iv_values",
+      "module": "test_chain_fetcher",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stream_to_option_data_returns_none_for_stream_without_strike",
+      "module": "test_chain_fetcher",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_option_chain_filters_strikes_to_multiple_of_five_within_range",
+      "module": "test_chain_fetcher",
+      "duration_ms": 620.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_option_chain_cache_hit_then_requalify_on_spot_move",
+      "module": "test_chain_fetcher",
+      "duration_ms": 1750.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_option_chain_unknown_blacklist_and_retry",
+      "module": "test_chain_fetcher",
+      "duration_ms": 1752.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_chain_params_returns_sorted_spxw_expirations_and_strikes",
+      "module": "test_chain_fetcher",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_monthly_chain_params_returns_spx_chain",
+      "module": "test_chain_fetcher",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_gex_uses_bsm_gamma_when_ib_gamma_missing",
+      "module": "test_chain_fetcher",
+      "duration_ms": 1.2,
+      "status": "FAILED",
+      "error": "E    +    where 114168.27510948243 = GEXResult(gex_by_strike={6800: 0.0}, call_gex_by_strike={6800: 114168.27510948243}, put_gex_by_strike={6800: -114168.2... put_delta_by_strike={}, call_charm_by_strike={6800: 4.213345175735273}, put_charm_by_strike={6800: 4.213345175735273}).total_call_gex",
+      "traceback": "tests\\test_chain_fetcher.py:290: in test_compute_gex_uses_bsm_gamma_when_ib_gamma_missing\n    assert abs(result.total_call_gex - expected_call_gex) < 0.01\nE   assert 0.592446776892757 < 0.01\nE    +  where 0.592446776892757 = abs((114168.27510948243 - 114167.68266270554))\nE    +    where 114168.27510948243 = GEXResult(gex_by_strike={6800: 0.0}, call_gex_by_strike={6800: 114168.27510948243}, put_gex_by_strike={6800: -114168.2... put_delta_by_strike={}, call_charm_by_strike={6800: 4.213345175735273}, put_charm_by_strike={6800: 4.213345175735273}).total_call_gex"
+    },
+    {
+      "name": "test_compute_gex_ib_gamma_takes_precedence_over_bsm",
+      "module": "test_chain_fetcher",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_gex_no_gex_when_gamma_and_iv_both_missing",
+      "module": "test_chain_fetcher",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty_blacklist_yields_nothing",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_recent_failure_stays_blacklisted",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_failure_at_exact_cooldown_is_retryable",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_old_failure_is_retryable",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_mixed_freshness_returns_only_stale_keys",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_default_cooldown_comes_from_config",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_quotes_present_log_unchanged",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_zero_quotes_adds_recovery_hint",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_zero_quotes_with_no_subs_gets_no_hint",
+      "module": "test_chain_manager",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_wilder_rsi_all_gains_is_100",
+      "module": "test_condition_helpers",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_wilder_rsi_not_enough_data",
+      "module": "test_condition_helpers",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_percent_change",
+      "module": "test_condition_helpers",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_percent_change_short",
+      "module": "test_condition_helpers",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_nearest_row_and_atm_iv",
+      "module": "test_condition_helpers",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_width_and_margin",
+      "module": "test_condition_helpers",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_credit",
+      "module": "test_condition_helpers",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_below_threshold",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_above_threshold",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_negative_uses_absolute",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_exact_tick",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_rounds_down",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_rounds_up",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_never_returns_zero",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_negative_input_uses_abs",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_midpoint_rounding",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positive",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_negative",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_negative_small",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positive_small",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_zero_positive",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_defaults_are_reasonable",
+      "module": "test_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_defaults_disabled",
+      "module": "test_config_discord",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_token_env_enables",
+      "module": "test_config_discord",
+      "duration_ms": 3.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_user_ids_env_csv",
+      "module": "test_config_discord",
+      "duration_ms": 4.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_user_ids_public",
+      "module": "test_config_discord",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_dotenv_loaded_at_import",
+      "module": "test_config_discord",
+      "duration_ms": 146.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_real_env_var_beats_dotenv",
+      "module": "test_config_discord",
+      "duration_ms": 142.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_make_discord_bot_builds_bot_and_bridge",
+      "module": "test_discord_bot",
+      "duration_ms": 1.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_alert_bridge_wired_to_channel",
+      "module": "test_discord_bot",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_allowlist_defaults_to_config",
+      "module": "test_discord_bot",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_allowlist_overridable_per_instance",
+      "module": "test_discord_bot",
+      "duration_ms": 1.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_respond_handles_command_none_without_crash",
+      "module": "test_discord_bot",
+      "duration_ms": 2.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_on_tree_error_responds_to_command_not_found",
+      "module": "test_discord_bot",
+      "duration_ms": 1.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_is_authorized_user_ids",
+      "module": "test_discord_commands",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_is_authorized_role_name_case_insensitive",
+      "module": "test_discord_commands",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_is_authorized_role_id",
+      "module": "test_discord_commands",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_view_builds_payload",
+      "module": "test_discord_commands",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positions_view_filter",
+      "module": "test_discord_commands",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_orders_view",
+      "module": "test_discord_commands",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_status_view_keys",
+      "module": "test_discord_commands",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategies_view_single_and_all",
+      "module": "test_discord_commands",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_candidates_view_returns_sized_rows",
+      "module": "test_discord_commands",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_arm_disarm_and_killswitch",
+      "module": "test_discord_commands",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_arm_missing_strategy",
+      "module": "test_discord_commands",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_refusal_never_orders",
+      "module": "test_discord_commands",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_liquidate_poskey_places_close_order",
+      "module": "test_discord_liquidate",
+      "duration_ms": 1.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_liquidate_poskey_rejects_unknown_position",
+      "module": "test_discord_liquidate",
+      "duration_ms": 1.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_liquidate_poskey_dedupes_duplicate_click",
+      "module": "test_discord_liquidate",
+      "duration_ms": 2.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positions_view_builds_button_per_liquidatable",
+      "module": "test_discord_liquidate",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positions_view_empty_returns_none",
+      "module": "test_discord_liquidate",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_table_emits_header_separator_and_data",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_table_empty_rows_still_show_header",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_money_formats_to_two_places",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_pct_formats_negative_ratio",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_badge_is_emoji_plus_word",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_candidates_is_a_table_not_a_dict_dump",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_candidates_empty_returns_clean_message",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_candidates_uses_strategy_metadata",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_detail_shows_summary_and_conditions",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_run_days_on_one_line_with_bold_selected",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_detail_uses_run_days_line",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_status_shows_readable_key_values",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_shows_summary_and_count_not_raw_list",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_shows_cash_and_excess_margin",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_renders_summary_as_kv_not_dict_lines",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_orders_shows_count_and_rows",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positions_shows_count_and_contracts",
+      "module": "test_discord_render",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positions_lists_full_option_name",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positions_shows_avg_cost_and_unrealized_pnl",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_action_arm_renders_armed_badge",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_action_killswitch_renders_state",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_action_place_refusal_renders_message",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_alert_order_status_is_readable_not_dict",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_alert_connection_transition",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_alert_kill_switch_uses_symbol",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_alert_exit_reason",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_position_key_is_stable_discord_safe",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_liquidation_payload_close_short_position_buys_back",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_liquidation_payload_long_position_sells_to_close",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_liquidation_payload_rejects_zero_and_unsupported",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_liquidatable_true_for_opt_and_stk",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positions_table_has_row_index_no_liq_column",
+      "module": "test_discord_render",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_embed_color_red_on_error",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_embed_color_red_when_kill_switch_on",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_embed_color_amber_for_empty_candidates",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_embed_color_green_for_ok_data",
+      "module": "test_discord_render",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_success_swaps_bridge_and_persists",
+      "module": "test_discord_settings",
+      "duration_ms": 2.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_passes_settings_to_factory",
+      "module": "test_discord_settings",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_passes_cleared_channel_through_and_guild_none",
+      "module": "test_discord_settings",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_bad_token_rolls_back",
+      "module": "test_discord_settings",
+      "duration_ms": 1.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_timeout_rolls_back",
+      "module": "test_discord_settings",
+      "duration_ms": 61.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty_token_stops_bot_and_persists",
+      "module": "test_discord_settings",
+      "duration_ms": 3.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_persist_false_empty_token_skips_persist",
+      "module": "test_discord_settings",
+      "duration_ms": 4.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_persist_false_success_skips_persist",
+      "module": "test_discord_settings",
+      "duration_ms": 2.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_is_idempotent",
+      "module": "test_discord_settings",
+      "duration_ms": 2.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_update_creates_file",
+      "module": "test_env_store",
+      "duration_ms": 3.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_roundtrip_preserves_other_lines",
+      "module": "test_env_store",
+      "duration_ms": 7.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_update_appends_missing_keys",
+      "module": "test_env_store",
+      "duration_ms": 10.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty_value_written_as_bare_key",
+      "module": "test_env_store",
+      "duration_ms": 3.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_read_strips_quotes_and_ignores_junk",
+      "module": "test_env_store",
+      "duration_ms": 3.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_read_missing_file",
+      "module": "test_env_store",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_atomic_write_leaves_no_temp_file",
+      "module": "test_env_store",
+      "duration_ms": 2.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_connect_async_waits_for_next_valid_id",
+      "module": "test_ib_client",
+      "duration_ms": 2.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_connect_async_times_out",
+      "module": "test_ib_client",
+      "duration_ms": 68.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_disconnect_sets_connected_false",
+      "module": "test_ib_client",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_req_contract_details_aggregates_until_end",
+      "module": "test_ib_client",
+      "duration_ms": 1.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_req_sec_def_opt_params_aggregates_until_end",
+      "module": "test_ib_client",
+      "duration_ms": 1.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ib_error_resolves_pending_one_shot_request",
+      "module": "test_ib_client",
+      "duration_ms": 1.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_error_signature_accepts_five_positional_args",
+      "module": "test_ib_client",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_req_historical_bars_accumulates_and_converts_dates",
+      "module": "test_ib_client",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_tick_stream_maps_tick_price_and_size",
+      "module": "test_ib_client",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_tick_option_computation_populates_model_greeks",
+      "module": "test_ib_client",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_snapshot_returns_on_first_ticks",
+      "module": "test_ib_client",
+      "duration_ms": 505.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_snapshot_falls_back_to_timeout",
+      "module": "test_ib_client",
+      "duration_ms": 569.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_order_ack_and_fill_events",
+      "module": "test_ib_client",
+      "duration_ms": 3.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_order_status_fires_activated_event",
+      "module": "test_ib_client",
+      "duration_ms": 1.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_cancel_order",
+      "module": "test_ib_client",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_callbacks_populate_state_and_mark_dirty",
+      "module": "test_ib_client",
+      "duration_ms": 1.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_value_upserts_by_tag_currency",
+      "module": "test_ib_client",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_portfolio_upserts_and_removes_closed",
+      "module": "test_ib_client",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_portfolio_separates_distinct_contracts",
+      "module": "test_ib_client",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_req_account_updates_clears_on_subscribe",
+      "module": "test_ib_client",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_order_modify_reuses_order_id",
+      "module": "test_ib_client",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_req_contract_details_times_out_when_no_end",
+      "module": "test_ib_client",
+      "duration_ms": 50.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_req_historical_bars_times_out_when_no_end",
+      "module": "test_ib_client",
+      "duration_ms": 57.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_req_sec_def_opt_params_times_out_when_no_end",
+      "module": "test_ib_client",
+      "duration_ms": 58.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unsubscribe_all_clears_all_streams",
+      "module": "test_ib_client",
+      "duration_ms": 1.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_snapshot_grace_window_lets_late_oi_greeks_land",
+      "module": "test_ib_client",
+      "duration_ms": 210.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_error_fires_snapshot_done_when_pending_empties",
+      "module": "test_ib_client",
+      "duration_ms": 2.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_connect_records_port_on_success",
+      "module": "test_ib_connection",
+      "duration_ms": 15.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_connect_failure_leaves_port_unchanged",
+      "module": "test_ib_connection",
+      "duration_ms": 7.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_log_store_handler_increments_seq_and_formats",
+      "module": "test_log_buffer",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_log_store_handler_bounds_buffer",
+      "module": "test_log_buffer",
+      "duration_ms": 7.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_log_push_loop_broadcasts_new_entries",
+      "module": "test_log_buffer",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_log_push_loop_does_not_replay_preexisting_backlog",
+      "module": "test_log_buffer",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_set_tab_log_sends_log_history",
+      "module": "test_log_buffer",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_during_rth",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_at_open",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_at_close",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_before_open",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_after_close",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_weekend",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_rth",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gth_morning",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_curb",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_closed_weekday_gap",
+      "module": "test_market_hours",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gth_evening",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_saturday_closed",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sunday_before_open",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sunday_after_gth_open",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_today_available",
+      "module": "test_market_hours",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_today_not_available",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_all_past",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty_list",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_weekend_rolls_to_monday",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_during_rth",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_during_gth",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_during_curb",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_during_gap",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_saturday",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sunday_before_open",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sunday_after_open",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_alias",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_weekday",
+      "module": "test_market_hours",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_saturday_rolls_back",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sunday_rolls_back",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_monday",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_weekdays",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_weekend",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_normal_session",
+      "module": "test_market_hours",
+      "duration_ms": 464.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_early_close_session",
+      "module": "test_market_hours",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_holiday_is_not_a_short_day",
+      "module": "test_market_hours",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_first_friday",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_second_friday_is_not",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_first_tuesday_is_not",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_known_fomc_date",
+      "module": "test_market_hours",
+      "duration_ms": 0.2,
+      "status": "FAILED",
+      "error": "E    +    where datetime.date(2026, 1, 27) = date(2026, 1, 27)",
+      "traceback": "tests\\test_market_hours.py:258: in test_known_fomc_date\n    assert is_fomc_day(date(2026, 1, 27)) is True\nE   assert False is True\nE    +  where False = is_fomc_day(datetime.date(2026, 1, 27))\nE    +    where datetime.date(2026, 1, 27) = date(2026, 1, 27)"
+    },
+    {
+      "name": "test_non_fomc_date",
+      "module": "test_market_hours",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_pm_classes",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_am_unknown_class_rejected",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_prefers_spxw_today",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_falls_back_to_spx_monthly",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_prefers_spxw_over_spx_when_both",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_none_on_holiday_or_no_0dte",
+      "module": "test_market_hours",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_order_fills_immediately_returns_order_handle",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_order_events_are_awaitable",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_order_pending_mode_stays_submitted",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_order_reject_mode_cancels",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_order_with_explicit_order_id_modifies_existing",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_connect_isConnected_toggle",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bracket_child_activates_on_parent_fill",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bracket_child_activated_event_fires_on_activation",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_cancel_order_cascades_to_bracket_children",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_set_fill_status_transitions_handle_and_fires_events",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_req_contract_details_assigns_fresh_con_id_and_min_tick",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_subscribe_tick_and_fetch_snapshot_use_real_tickstream",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_one_shot_and_account_fakes_record_in_call_log",
+      "module": "test_mock_ib_client",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_single_leg_lmt_order",
+      "module": "test_order_placement",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_single_leg_with_stop_loss",
+      "module": "test_order_placement",
+      "duration_ms": 50.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_bag_order",
+      "module": "test_order_placement",
+      "duration_ms": 1.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_bag_with_stop_loss",
+      "module": "test_order_placement",
+      "duration_ms": 52.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_bag_preserves_outside_rth_for_spx",
+      "module": "test_order_placement",
+      "duration_ms": 57.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_bag_uses_qualified_exchange_for_parent_and_stop",
+      "module": "test_order_placement",
+      "duration_ms": 57.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_dynamic_fill_reprice",
+      "module": "test_order_placement",
+      "duration_ms": 296.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_dynamic_fill_filled_order_skips_modify",
+      "module": "test_order_placement",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_dynamic_fill_spx_above_two_uses_ten_cent_tick",
+      "module": "test_order_placement",
+      "duration_ms": 215.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_dynamic_fill_cancellation",
+      "module": "test_order_placement",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_missing_lmt_price",
+      "module": "test_order_placement",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_strike",
+      "module": "test_order_placement",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ib_disconnected",
+      "module": "test_order_placement",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_no_legs",
+      "module": "test_order_placement",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_spx_tick_below_2",
+      "module": "test_order_placement",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_spx_tick_above_2",
+      "module": "test_order_placement",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_round_abs_to_tick",
+      "module": "test_order_placement",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_round_signed_to_tick",
+      "module": "test_order_placement",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_credit_spread",
+      "module": "test_order_placement",
+      "duration_ms": 1.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_leg_rejects_mismatched_conid",
+      "module": "test_order_placement",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_cancel_order",
+      "module": "test_order_placement",
+      "duration_ms": 110.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_cancel_nonexistent_order",
+      "module": "test_order_placement",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unsupported_sec_type",
+      "module": "test_order_placement",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sell_order_tick_rounding",
+      "module": "test_order_placement",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_outside_rth_flag",
+      "module": "test_order_placement",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_stays_presubmitted_until_parent_fills",
+      "module": "test_order_placement",
+      "duration_ms": 62.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_cancelled_when_parent_cancelled",
+      "module": "test_order_placement",
+      "duration_ms": 59.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_action_reversal_sell_parent",
+      "module": "test_order_placement",
+      "duration_ms": 60.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_persists_in_active_trades",
+      "module": "test_order_placement",
+      "duration_ms": 58.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_parent_ack_resolves_at_presubmitted",
+      "module": "test_order_placement",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_parent_ws_status_push_at_presubmitted",
+      "module": "test_order_placement",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_ws_status_push_on_parent_fill",
+      "module": "test_order_placement",
+      "duration_ms": 118.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_ws_status_push_on_parent_cancel",
+      "module": "test_order_placement",
+      "duration_ms": 266.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_watcher_exits_on_parent_fill_without_cancelling_stop",
+      "module": "test_order_placement",
+      "duration_ms": 54.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_debit_spread_stop_lifecycle",
+      "module": "test_order_placement",
+      "duration_ms": 58.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_credit_spread_stop_lifecycle",
+      "module": "test_order_placement",
+      "duration_ms": 60.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_stop_cancelled_when_parent_cancelled",
+      "module": "test_order_placement",
+      "duration_ms": 60.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_stop_has_reversed_legs",
+      "module": "test_order_placement",
+      "duration_ms": 61.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_stop_direct_cboe_routing",
+      "module": "test_order_placement",
+      "duration_ms": 59.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_invalid_stop_price_zero",
+      "module": "test_order_placement",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_scalar_format",
+      "module": "test_order_placement",
+      "duration_ms": 59.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_dict_format",
+      "module": "test_order_placement",
+      "duration_ms": 60.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_tick_rounding_spx",
+      "module": "test_order_placement",
+      "duration_ms": 60.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_not_cancelled_when_parent_already_filled",
+      "module": "test_order_placement",
+      "duration_ms": 60.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_multiple_qty_stop_order_single_leg",
+      "module": "test_order_placement",
+      "duration_ms": 60.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_multiple_qty_stop_order_combo",
+      "module": "test_order_placement",
+      "duration_ms": 60.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_iron_condor_stop_lifecycle",
+      "module": "test_order_placement",
+      "duration_ms": 60.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_combo_stop_ws_push_on_parent_cancel",
+      "module": "test_order_placement",
+      "duration_ms": 268.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_outside_rth_propagated",
+      "module": "test_order_placement",
+      "duration_ms": 57.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_order_tif_matches_parent",
+      "module": "test_order_placement",
+      "duration_ms": 56.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_sgov_no_risk_yield_uses_yfinance_yield_plus_expense_ratio",
+      "module": "test_risk_free",
+      "duration_ms": 2.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_sgov_no_risk_yield_requires_yield",
+      "module": "test_risk_free",
+      "duration_ms": 2.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fetch_sgov_no_risk_yield_requires_expense_ratio",
+      "module": "test_risk_free",
+      "duration_ms": 2.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_risk_free_rate_falls_back_to_default_when_fetch_fails",
+      "module": "test_risk_free",
+      "duration_ms": 1.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_settings_403_for_remote",
+      "module": "test_settings_api",
+      "duration_ms": 5.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_discord_settings_503_when_manager_none",
+      "module": "test_settings_api",
+      "duration_ms": 2.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_discord_masks_token",
+      "module": "test_settings_api",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_discord_no_token",
+      "module": "test_settings_api",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_sets_token_and_persists",
+      "module": "test_settings_api",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_without_token_keeps_existing",
+      "module": "test_settings_api",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_empty_token_clears_and_stops",
+      "module": "test_settings_api",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_invalid_user_ids_400",
+      "module": "test_settings_api",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_non_numeric_guild_id_400",
+      "module": "test_settings_api",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_non_numeric_channel_id_400",
+      "module": "test_settings_api",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_empty_ids_still_allowed",
+      "module": "test_settings_api",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_bad_token_400_no_persist_old_kept",
+      "module": "test_settings_api",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_ib_settings",
+      "module": "test_settings_api",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_ib_persists_port",
+      "module": "test_settings_api",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_ib_invalid_port",
+      "module": "test_settings_api",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_ib_reconnect_failure_no_persist",
+      "module": "test_settings_api",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sim_settings_403_for_remote",
+      "module": "test_settings_api",
+      "duration_ms": 1.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_sim_settings",
+      "module": "test_settings_api",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_sim_persists_and_hot_applies",
+      "module": "test_settings_api",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_post_sim_negative_400",
+      "module": "test_settings_api",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_full_run_lifecycle_over_http",
+      "module": "test_sim_api",
+      "duration_ms": 16815.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_result_200_when_entry_window_starts_after_first_bar",
+      "module": "test_sim_api",
+      "duration_ms": 644.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_rejects_bad_config",
+      "module": "test_sim_api",
+      "duration_ms": 3.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_second_job_while_busy_conflicts",
+      "module": "test_sim_api",
+      "duration_ms": 18.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_smile_endpoint_reports_source",
+      "module": "test_sim_api",
+      "duration_ms": 4.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_result_returns_409_when_job_not_finished",
+      "module": "test_sim_api",
+      "duration_ms": 13.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_smile_capture_succeeds_when_chain_seeded",
+      "module": "test_sim_api",
+      "duration_ms": 1075.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_smile_capture_skewed_chain_bounded",
+      "module": "test_sim_api",
+      "duration_ms": 1655.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_smile_capture_stray_outlier_409",
+      "module": "test_sim_api",
+      "duration_ms": 1312.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_smile_capture_live_0dte_chain_succeeds",
+      "module": "test_sim_api",
+      "duration_ms": 151.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fit_recovers_parameters_loosely",
+      "module": "test_sim_calibrate",
+      "duration_ms": 18897.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_variance_path_matches_recursion",
+      "module": "test_sim_calibrate",
+      "duration_ms": 559.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fit_degenerate_returns_preset",
+      "module": "test_sim_calibrate",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fit_ushape_peaks_at_open_and_close",
+      "module": "test_sim_calibrate",
+      "duration_ms": 7.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fit_smile_svi_recovers_skew",
+      "module": "test_sim_calibrate",
+      "duration_ms": 389.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fit_smile_insufficient_points_falls_back",
+      "module": "test_sim_calibrate",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_snapshot_round_trip",
+      "module": "test_sim_calibrate",
+      "duration_ms": 2.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_legacy_quadratic_snapshot_is_skipped",
+      "module": "test_sim_calibrate",
+      "duration_ms": 2.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_skewed_chain_bounded_far_otm",
+      "module": "test_sim_calibrate",
+      "duration_ms": 377.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_degenerate_stray_outlier_falls_back",
+      "module": "test_sim_calibrate",
+      "duration_ms": 542.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_default_smile_bounded",
+      "module": "test_sim_calibrate",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_calibrate_excludes_overnight_cross_day_return",
+      "module": "test_sim_calibrate",
+      "duration_ms": 3467.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_calibrate_end_to_end",
+      "module": "test_sim_calibrate",
+      "duration_ms": 14892.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_dynamics_neutral_fields",
+      "module": "test_sim_calibrate",
+      "duration_ms": 6007.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_dynamics_t_scale_table",
+      "module": "test_sim_calibrate",
+      "duration_ms": 7355.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_tables_match_direct_summation",
+      "module": "test_sim_calibrate",
+      "duration_ms": 7221.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_conditional_expectation_closed_form",
+      "module": "test_sim_calibrate",
+      "duration_ms": 6024.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fit_smile_steep_0dte_skew_stays_bounded",
+      "module": "test_sim_calibrate",
+      "duration_ms": 179.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fit_smile_flat_degenerate_is_rejected",
+      "module": "test_sim_calibrate",
+      "duration_ms": 22.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_off_leaves_tables_empty",
+      "module": "test_sim_calibrate",
+      "duration_ms": 7214.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_defaults_and_steps_per_day",
+      "module": "test_sim_config",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_validate_rejects_bad_inputs",
+      "module": "test_sim_config",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_validate_rejects_ib_source",
+      "module": "test_sim_config",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_validate_rejects_family_with_sweep_params",
+      "module": "test_sim_config",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_validate_family_without_sweep_passes",
+      "module": "test_sim_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_json_round_trip",
+      "module": "test_sim_config",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sweep_cells_product",
+      "module": "test_sim_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sweep_cells_defaults",
+      "module": "test_sim_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_skew_beta_default_is_neutral",
+      "module": "test_sim_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_negative_skew_beta_rejected",
+      "module": "test_sim_config",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_positive_skew_beta_accepted",
+      "module": "test_sim_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_t_gamma_default_is_neutral",
+      "module": "test_sim_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_t_gamma_out_of_range_rejected",
+      "module": "test_sim_config",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_dials_default_neutral",
+      "module": "test_sim_config",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_negative_budget_beta_rejected",
+      "module": "test_sim_config",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_csv_fixture",
+      "module": "test_sim_data",
+      "duration_ms": 5.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_load_bars_csv_layer",
+      "module": "test_sim_data",
+      "duration_ms": 4.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_load_bars_preloaded_bypass",
+      "module": "test_sim_data",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_load_bars_missing_csv_raises",
+      "module": "test_sim_data",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_window_minutes_maps_bars",
+      "module": "test_sim_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_window_minutes_sub_minute_bar_sizes[5s-5-4680-59-359]",
+      "module": "test_sim_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_window_minutes_sub_minute_bar_sizes[15s-15-1560-19-119]",
+      "module": "test_sim_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_window_minutes_sub_minute_bar_sizes[30s-30-780-9-59]",
+      "module": "test_sim_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_entry_sub_minute_respects_window",
+      "module": "test_sim_engine",
+      "duration_ms": 3.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_enabled_trend_condition_raises_not_silently_skipped",
+      "module": "test_sim_engine",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_enabled_atm_iv_volatility_condition_raises",
+      "module": "test_sim_engine",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_vix_only_volatility_condition_still_validates",
+      "module": "test_sim_engine",
+      "duration_ms": 4.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bear_call_direction_rejected",
+      "module": "test_sim_engine",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_extract_conditions_defaults",
+      "module": "test_sim_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_entry_enters_in_window_with_valid_geometry",
+      "module": "test_sim_engine",
+      "duration_ms": 4.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_entry_dynamic_k_mode",
+      "module": "test_sim_engine",
+      "duration_ms": 2.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_entry_respects_per_path_start",
+      "module": "test_sim_engine",
+      "duration_ms": 4.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_entry_engine_mode_budget_gates_qty",
+      "module": "test_sim_engine",
+      "duration_ms": 75.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_fill_is_trigger_plus_extra",
+      "module": "test_sim_engine",
+      "duration_ms": 1.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_expiry_settles_intrinsic",
+      "module": "test_sim_engine",
+      "duration_ms": 65.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_take_profit_fills_at_limit",
+      "module": "test_sim_engine",
+      "duration_ms": 31.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_never_entered_paths_report_never",
+      "module": "test_sim_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_cell_end_to_end_small",
+      "module": "test_sim_engine",
+      "duration_ms": 279.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_explicit_dyn_matches_lazy_build",
+      "module": "test_sim_engine",
+      "duration_ms": 16343.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_skew_tilt_moves_put_credits_with_sigma_state",
+      "module": "test_sim_engine",
+      "duration_ms": 21.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_family_reenters_after_parent_stop",
+      "module": "test_sim_family",
+      "duration_ms": 197.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_family_total_pnl_sums_all_legs",
+      "module": "test_sim_family",
+      "duration_ms": 204.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_family_unrealized_pnl_trigger",
+      "module": "test_sim_family",
+      "duration_ms": 246.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_family_all_logic_raises",
+      "module": "test_sim_family",
+      "duration_ms": 205.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_execute_pipeline_produces_payload",
+      "module": "test_sim_jobs",
+      "duration_ms": 1425.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_execute_pipeline_attaches_spx_fan",
+      "module": "test_sim_jobs",
+      "duration_ms": 1486.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_execute_pipeline_sweep_grid",
+      "module": "test_sim_jobs",
+      "duration_ms": 8021.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_pipeline_honours_cancel",
+      "module": "test_sim_jobs",
+      "duration_ms": 1339.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_start_run_lifecycle_with_stub_engine",
+      "module": "test_sim_jobs",
+      "duration_ms": 31.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_start_run_validates_and_blocks_concurrency",
+      "module": "test_sim_jobs",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_registry_pruned_to_last_ten_keeping_active",
+      "module": "test_sim_jobs",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_resolve_workers_explicit_value",
+      "module": "test_sim_parallel",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_resolve_workers_capped_by_task_count",
+      "module": "test_sim_parallel",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_resolve_workers_auto_reads_env",
+      "module": "test_sim_parallel",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_resolve_workers_auto_defaults_to_cpu_count",
+      "module": "test_sim_parallel",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_resolve_workers_auto_stays_serial_for_tiny_runs",
+      "module": "test_sim_parallel",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_resolve_workers_auto_parallelizes_at_a_few_thousand_paths",
+      "module": "test_sim_parallel",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_configured_workers_reads_env_then_config",
+      "module": "test_sim_parallel",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_n_workers_negative_rejected",
+      "module": "test_sim_parallel",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_auto_workers_stay_serial_for_tiny_runs",
+      "module": "test_sim_parallel",
+      "duration_ms": 1463.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parallel_payload_matches_serial",
+      "module": "test_sim_parallel",
+      "duration_ms": 4882.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parallel_family_mode_matches_serial",
+      "module": "test_sim_parallel",
+      "duration_ms": 3383.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parallel_sweep_grid_order_and_values",
+      "module": "test_sim_parallel",
+      "duration_ms": 14590.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parallel_honours_cancel",
+      "module": "test_sim_parallel",
+      "duration_ms": 2829.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_pool_is_terminated_when_a_worker_fails",
+      "module": "test_sim_parallel",
+      "duration_ms": 6.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_chunk_is_deterministic",
+      "module": "test_sim_parallel",
+      "duration_ms": 17400.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_reproducible_and_shape",
+      "module": "test_sim_paths",
+      "duration_ms": 33.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_vol_link_and_ushape",
+      "module": "test_sim_paths",
+      "duration_ms": 243.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stress_nu_3_fatter_tails",
+      "module": "test_sim_paths",
+      "duration_ms": 1016.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_atm_iv_caps_conditional_sigma",
+      "module": "test_sim_paths",
+      "duration_ms": 278.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_atm_iv_anchors_terminal_breadth",
+      "module": "test_sim_paths",
+      "duration_ms": 489.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bsm_put_put_call_parity",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bsm_put_expiry_is_intrinsic",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_put_delta_matches_gex_calculator",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_smile_iv_vol_link_and_flat",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_neutral_dyn_is_bit_identical_to_legacy_formula",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_tilt_zero_at_atm_and_moves_wings",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_down_shock_flattens_wing",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ratio_clamped_for_uncapped_tails",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_flat_iv_short_circuit_ignores_dynamics",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_put_prices_monotone_in_strike_with_tilt",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_half_spread_widens_otm",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_tick_floor_and_combo_fill",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_ladder",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strike_monotonicity_every_bar_at_gamma_04",
+      "module": "test_sim_pricing",
+      "duration_ms": 19.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_late_window_credits_steeper_with_gamma",
+      "module": "test_sim_pricing",
+      "duration_ms": 67.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_quiet_flat_ushape_gives_flat_atm_iv",
+      "module": "test_sim_pricing",
+      "duration_ms": 11.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_quiet_ushape_early_dip_then_firms",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_stress_rises_into_close",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_off_branch_bit_identical_to_legacy_expression",
+      "module": "test_sim_pricing",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_late_window_entry_bias_report",
+      "module": "test_sim_pricing",
+      "duration_ms": 81.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_high_beta_low_sigma_is_finite",
+      "module": "test_sim_pricing",
+      "duration_ms": 13.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_vectorized_entry_matches_generate_candidates",
+      "module": "test_sim_reference",
+      "duration_ms": 86.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_legacy_baseline_unchanged",
+      "module": "test_sim_regression",
+      "duration_ms": 17354.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_phase_A_activated_baseline_unchanged",
+      "module": "test_sim_regression",
+      "duration_ms": 17126.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_phase_B_gamma0_matches_phase_A",
+      "module": "test_sim_regression",
+      "duration_ms": 18207.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_phase_B_activated_baseline_unchanged",
+      "module": "test_sim_regression",
+      "duration_ms": 18978.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_phase_C_budget_off_matches_phase_B",
+      "module": "test_sim_regression",
+      "duration_ms": 18492.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_phase_C_full_stack_baseline_unchanged",
+      "module": "test_sim_regression",
+      "duration_ms": 18304.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_summarize_matches_hand_computed",
+      "module": "test_sim_risk",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_breakdown_counts",
+      "module": "test_sim_risk",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_intraday_max_dd_nan_aware",
+      "module": "test_sim_risk",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bootstrap_ruin_matches_simulated",
+      "module": "test_sim_risk",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_cell_payload_shape",
+      "module": "test_sim_risk",
+      "duration_ms": 3.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fan_gaps_are_null_not_nan_json_compliant",
+      "module": "test_sim_risk",
+      "duration_ms": 2.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_spot_fan_quantiles_shape_and_order",
+      "module": "test_sim_risk",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_spot_fan_quantiles_empty_input",
+      "module": "test_sim_risk",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bootstrap_ruin_counts_first_bar_loss",
+      "module": "test_sim_risk",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_knobs_whitelist_and_unknown_raises",
+      "module": "test_sim_tune",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_apply_knobs_does_not_mutate_the_original",
+      "module": "test_sim_tune",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unsupported_live_strategy_fails_before_compute",
+      "module": "test_sim_tune",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unknown_strategy_and_bad_spec_fail_clean",
+      "module": "test_sim_tune",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_runner_crn_identical_market_paths",
+      "module": "test_sim_tune",
+      "duration_ms": 3063.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_runner_is_deterministic_across_invocations",
+      "module": "test_sim_tune",
+      "duration_ms": 7218.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_runner_injects_overridden_strategy_without_touching_config_file",
+      "module": "test_sim_tune",
+      "duration_ms": 3016.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_runner_writes_csv_and_json_schemas",
+      "module": "test_sim_tune",
+      "duration_ms": 2980.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_runner_multi_seed_rows",
+      "module": "test_sim_tune",
+      "duration_ms": 7286.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_main_cli_smoke_end_to_end",
+      "module": "test_sim_tune",
+      "duration_ms": 8719.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bear_call_candidates",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unbounded_max_when_min_only",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_has_margin_budget_caps",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_position_size_budget_sizing",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_position_size_respects_excess_liquidity",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_position_size_zero_when_single_exceeds_capacity",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_position_size_no_budget_returns_one",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_candidate_view_includes_sizing",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fail_window_blocker",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_all_pass_ready",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_vix_blocks_before_candidates",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_entry_payload_credit_negative",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_entry_payload_stop_loss_multiplier",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_entry_payload_includes_trading_class",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_entry_payload_sizes_qty",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_entry_payload_gth_sets_gct_and_outside_rth",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_entry_payload_default_day_rth",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_entry_payload_combo_ratio_is_one",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_option_contract_trading_class_default_and_override",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_place_strategy_entry_via_mock",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_has_open_position",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_eval_loop_skips_strategy_with_open_position",
+      "module": "test_strategy_engine",
+      "duration_ms": 3492.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_eval_loop_broadcasts_candidates_for_auto_execute",
+      "module": "test_strategy_engine",
+      "duration_ms": 3497.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_match_positions",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gate_skips_non_run_day",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gate_runs_on_run_day",
+      "module": "test_strategy_engine",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gate_skips_holiday_no_0dte",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gate_skips_half_day_when_disabled",
+      "module": "test_strategy_engine",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gate_runs_half_day_when_enabled",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gate_skips_fomc_when_disabled",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gate_skips_nfp_when_disabled",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gate_permissive_when_expiration_data_unloaded",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_maybe_flatten_below_target_does_not_place",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_maybe_flatten_take_profit_gth_sets_gct_and_outside_rth",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_runtime_creates_on_demand",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_trigger_exit_reason_fires_when_parent_closed",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_child_not_eligible_while_parent_open",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_child_eligible_when_parent_done_and_trigger_fired",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_child_not_eligible_after_it_entered",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_child_not_eligible_while_parent_close_legs_present",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_trigger_pnl_gain_multiple",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_trigger_time_of_day_window",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_reset_strategy_runtime_increments_cycle",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_reset_strategy_runtime_clears_stale_open_position",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_classify_stop_loss_when_configured",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_classify_manual_when_no_stop_and_future_expiry",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_classify_expire_when_past_expiry",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_refresh_credit_from_executions",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_update_parent_role_marks_done_and_fires_children",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_update_parent_role_updates_water_marks_while_open",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_daily_reset_preserves_open_position",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_daily_reset_resets_closed",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_daily_reset_clears_stale_open_position_for_closed",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_eval_loop_child_enters_once_eligible",
+      "module": "test_strategy_engine",
+      "duration_ms": 7023.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sort_candidate_views_prefers_highest_total_credit",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sort_candidate_views_tie_fewer_spreads_first",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_sort_candidate_views_tie_lower_margin_first",
+      "module": "test_strategy_engine",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_candidate_views_size_and_sort",
+      "module": "test_strategy_engine",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_roundtrips",
+      "module": "test_strategy_models",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_direction_rejected",
+      "module": "test_strategy_models",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_condition_passthrough",
+      "module": "test_strategy_models",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_roundtrips_as_number",
+      "module": "test_strategy_models",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_defaults_to_none",
+      "module": "test_strategy_models",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_budget_negative_rejected",
+      "module": "test_strategy_models",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_schedule_fields_roundtrip",
+      "module": "test_strategy_models",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_schedule_fields_default_when_absent",
+      "module": "test_strategy_models",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_gth_roundtrips_and_defaults_false",
+      "module": "test_strategy_models",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_days_list_not_mutated",
+      "module": "test_strategy_models",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_days_invalid_rejected",
+      "module": "test_strategy_models",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_trigger_spec_roundtrips",
+      "module": "test_strategy_models",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_child_strategy_roundtrip_with_triggers",
+      "module": "test_strategy_models",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_child_strategy_defaults_when_absent",
+      "module": "test_strategy_models",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_trigger_logic_rejected",
+      "module": "test_strategy_models",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_trigger_kind_rejected",
+      "module": "test_strategy_models",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_runtime_state_defaults",
+      "module": "test_strategy_models",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_save_and_load_roundtrip",
+      "module": "test_strategy_store",
+      "duration_ms": 3.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_delete",
+      "module": "test_strategy_store",
+      "duration_ms": 8.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_malformed_file_is_safe",
+      "module": "test_strategy_store",
+      "duration_ms": 2.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_validate_accepts_clean_tree",
+      "module": "test_strategy_store",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_validate_drops_orphan_child",
+      "module": "test_strategy_store",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_validate_drops_child_with_no_enabled_trigger",
+      "module": "test_strategy_store",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_validate_drops_cycle",
+      "module": "test_strategy_store",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_load_applies_validation",
+      "module": "test_strategy_store",
+      "duration_ms": 3.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_set_tab_strategies_sends_strategy_list",
+      "module": "test_strategy_ws",
+      "duration_ms": 1.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_save_persists_and_sends_strategy_list",
+      "module": "test_strategy_ws",
+      "duration_ms": 5.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_save_persists_budget",
+      "module": "test_strategy_ws",
+      "duration_ms": 4.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_save_rejects_budget_above_excess",
+      "module": "test_strategy_ws",
+      "duration_ms": 2.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_save_allows_budget_when_excess_unknown",
+      "module": "test_strategy_ws",
+      "duration_ms": 2.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_arm_sets_armed",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_arm_unknown_name_keeps_connection_open",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_disarm_clears_armed",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_kill_switch_enables",
+      "module": "test_strategy_ws",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_kill_switch_toggles_off",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_delete_removes_from_state_and_store",
+      "module": "test_strategy_ws",
+      "duration_ms": 4.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_delete_handles_quoted_name",
+      "module": "test_strategy_ws",
+      "duration_ms": 5.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_arm_handles_quoted_name",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_status_push_loop_broadcasts_vix_update",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_arm_resets_runtime",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_arm_sends_strategy_list",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_disarm_sends_strategy_list",
+      "module": "test_strategy_ws",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_normal",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_nan",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_inf",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_none",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_numpy_nan",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_string",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_date",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_none",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_string_passthrough",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_pandas_timestamp",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_scalars",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_float_nan",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_dict",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_list",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_basic",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_date_columns",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_basic",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_with_capital",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_basic",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_full",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_nan_handling",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_basic",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_inv_balance",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_etrade_balance",
+      "module": "test_tradelog_adapter",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_reconstruct_spreads_pairs_the_vertical",
+      "module": "test_tradelog_analysis",
+      "duration_ms": 9.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_load_positions_preserves_intraday_timestamps",
+      "module": "test_tradelog_analysis",
+      "duration_ms": 5.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stop_events_flags_nothing_when_no_trade_lost_multiple_of_credit",
+      "module": "test_tradelog_analysis",
+      "duration_ms": 5.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bootstrap_ci_brackets_the_mean",
+      "module": "test_tradelog_analysis",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_kelly_binary_and_breakeven",
+      "module": "test_tradelog_analysis",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_report_writes_into_the_repo_reports_directory",
+      "module": "test_tradelog_analysis",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_report_returns_html_and_json_without_writing_files",
+      "module": "test_tradelog_analysis",
+      "duration_ms": 231.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_occ_symbol_extracts_components",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_occ_symbol_rejects_bad_input[]",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_occ_symbol_rejects_bad_input[   ]",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_occ_symbol_rejects_bad_input[not-a-symbol]",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_occ_symbol_rejects_bad_input[SPXW260202X06940000]",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_occ_symbol_pads_root_and_strike",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_occ_symbol_round_trips_through_parse",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse_expiry_from_description",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_merge_keeps_same_file_duplicates_but_drops_cross_file_duplicates",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 2.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_merge_with_single_frame_never_dedups",
+      "module": "test_tradelog_domain_pure",
+      "duration_ms": 1.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_etrade",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ibkr",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unknown",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ibkr_with_preamble",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_etrade_leading_spaces",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_parse",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 5.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_stock_rows_kept",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 6.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_override",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 6.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_from_path",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 12.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_from_bytes",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 6.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unknown_order_type_zero_pnl",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 5.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_is_etrade_account",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_is_strategy_symbol",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_filter",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 1.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_strategy_twr",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_strategy_twr_with_statements",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_statement_external_flows",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_twr_single",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_twr_chained",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_twr_invalid_period",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_mwr_no_flows",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_mwr_with_deposit",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_mwr_bad_capital",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_annualize",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_load_and_merge_etrade_csv",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 7.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_get_transaction_summary_full_ledger",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 6.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_daily_pnl_strategy_filter",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 35.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_account_return_etrade",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 9.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_account_return_mwr_uses_strategy_ending",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 9.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_account_capital_chained_twr",
+      "module": "test_tradelog_etrade_csv",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_detect_etrade_and_ibkr",
+      "module": "test_tradelog_io_csv",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_etrade_loader_signs_by_order_type_and_skips_expiry_rows",
+      "module": "test_tradelog_io_csv",
+      "duration_ms": 11.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_etrade_loader_builds_occ_symbols",
+      "module": "test_tradelog_io_csv",
+      "duration_ms": 7.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ibkr_csv_parses_transaction_history",
+      "module": "test_tradelog_io_csv",
+      "duration_ms": 18.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ibkr_csv_raises_without_a_transaction_table",
+      "module": "test_tradelog_io_csv",
+      "duration_ms": 2.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_qfx_parses_all_transactions_with_symbols",
+      "module": "test_tradelog_io_qfx_pdf",
+      "duration_ms": 3.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_pdf_statement_year_is_read_from_the_period_line",
+      "module": "test_tradelog_io_qfx_pdf",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_pdf_statement_year_falls_back_to_the_current_year",
+      "module": "test_tradelog_io_qfx_pdf",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_etrade_balance_dataclass_defaults",
+      "module": "test_tradelog_io_qfx_pdf",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_enriched_rows_derive_option_fields",
+      "module": "test_tradelog_pnl_filter",
+      "duration_ms": 16.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_daily_realized_pnl_sums_both_closed_spreads",
+      "module": "test_tradelog_pnl_filter",
+      "duration_ms": 20.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_realized_pnl_is_idempotent",
+      "module": "test_tradelog_pnl_filter",
+      "duration_ms": 34.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_strategy_symbol_accepts_spx_and_spxw_options_only",
+      "module": "test_tradelog_pnl_filter",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_etrade_account_detection",
+      "module": "test_tradelog_pnl_filter",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_filter_strategy_rows_keeps_only_spx_options",
+      "module": "test_tradelog_pnl_filter",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_filter_strategy_rows_on_empty_frame_is_safe",
+      "module": "test_tradelog_pnl_filter",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_buystock_parsed",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 1.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invbalance_metadata",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 1.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_to_statement_period",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_strategy_twr_spanning_qfx",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_statement_external_flows_spanning",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_portfolio_twr",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_build_account_capital_qfx",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 1.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_period_range_merges_ledger",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_account_return_combined",
+      "module": "test_tradelog_qfx_return",
+      "duration_ms": 23.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_annualize_over_one_year_is_identity",
+      "module": "test_tradelog_return_metrics",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_annualize_returns_none_without_inputs",
+      "module": "test_tradelog_return_metrics",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_twr_chains_monthly_returns",
+      "module": "test_tradelog_return_metrics",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_twr_skips_invalid_periods_with_a_warning",
+      "module": "test_tradelog_return_metrics",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_mwr_on_a_single_period_without_flows",
+      "module": "test_tradelog_return_metrics",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compute_mwr_with_an_external_flow",
+      "module": "test_tradelog_return_metrics",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_calendar_import_pulls_in_neither_streamlit_nor_plotly",
+      "module": "test_tradelog_risk_calendar",
+      "duration_ms": 769.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_fmt_signed_formats_with_an_explicit_sign",
+      "module": "test_tradelog_risk_calendar",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_calendar_matrix_returns_six_frames_and_week_labels",
+      "module": "test_tradelog_risk_calendar",
+      "duration_ms": 19.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_calendar_matrix_on_empty_input_is_empty",
+      "module": "test_tradelog_risk_calendar",
+      "duration_ms": 1.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_risk_metrics_returns_empty_dict_for_an_empty_view",
+      "module": "test_tradelog_risk_calendar",
+      "duration_ms": 0.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_risk_metrics_reports_extremes_and_the_expected_keys",
+      "module": "test_tradelog_risk_calendar",
+      "duration_ms": 4.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_csv_data_text",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 13.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_both_none",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_missing_data_fields",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_all",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_1m",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_custom",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 1.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty_df",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_provided",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_default",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_qfx_balance",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 11.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_valid",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_valid",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_date",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_basic",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 16.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_with_paths",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_basic",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 30.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_with_capital",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 40.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_filter",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 39.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_valid_contract",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 66.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_missing_key",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_nonexistent_contract",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 29.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_ticker",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_dates",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_spx_fetch",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 545.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_vix_fetch",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 88.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_basic",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 38.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_empty",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 0.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_basic_no_benchmarks",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 36.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_custom_window",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 29.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_account_filter",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 30.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_invalid_window",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 23.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_by_file_contents",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 244.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_by_path",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 237.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_offline_uses_cache",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 211.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_no_file",
+      "module": "test_tradelog_server_tools",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_implied_vol_round_trips",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_short_delta_is_a_bounded_probability",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_solver_returns_none_instead_of_raising_on_impossible_credits[0.0]",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_solver_returns_none_instead_of_raising_on_impossible_credits[-1.0]",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_solver_returns_none_instead_of_raising_on_impossible_credits[50.0]",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_solver_returns_none_instead_of_raising_on_impossible_credits[999.0]",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_solver_returns_none_instead_of_raising_on_impossible_credits[None]",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_solver_returns_none_instead_of_raising_on_impossible_credits[nan]",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_solver_returns_none_when_the_spread_is_deep_in_the_money",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.2,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_matrix_reports_pass_fail_and_unverifiable_per_strategy",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 4.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_a_strategy_narrower_than_the_implied_delta_fails_the_delta_check",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 2.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_unpaired_short_is_unverifiable_not_failed",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 1.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_missing_market_data_makes_delta_unverifiable_not_failed",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 1.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_bear_call_strategy_can_never_match",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 1.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_entry_window_is_unverifiable_without_a_timestamp",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 1.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_entry_window_passes_inside_and_fails_outside_the_band",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 2.0,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_run_days_and_fomc_filters_are_evaluated",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 1.1,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compliance_summary_counts_matches",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 3.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_config_fingerprint_is_stable_and_describes_the_file",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 3.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_config_fingerprint_on_a_missing_file_is_empty",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 0.5,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_attach_entry_times_restores_the_intraday_timestamp",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 6.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_attach_entry_times_is_a_no_op_without_positions",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 1.7,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_exit_audit_flags_a_trade_that_lost_more_than_its_stop",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 1.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_load_strategies_is_fail_safe_on_a_corrupt_config",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 2.8,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_compliance_on_a_corrupt_config_reports_an_error_not_a_traceback",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 2.6,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_tool_serializes_list_valued_matrix_columns",
+      "module": "test_tradelog_tagging",
+      "duration_ms": 29.9,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_vix_subscription_and_update",
+      "module": "test_vix",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ib_error_handler_ignores_informational_codes",
+      "module": "test_ws_handler",
+      "duration_ms": 0.3,
+      "status": "PASSED"
+    },
+    {
+      "name": "test_ib_error_handler_broadcasts_actionable_error_with_trade_contract",
+      "module": "test_ws_handler",
+      "duration_ms": 0.4,
+      "status": "PASSED"
+    }
+  ]
+}

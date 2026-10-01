@@ -104,7 +104,7 @@ def server_url():
         # comes up exactly as it does in CI.
         env["IB_HOST"] = "127.0.0.1"
         env["IB_PORT"] = str(port + 1)
-        proc = subprocess.Popen([sys.executable, "server.py"], cwd=ROOT, env=env,
+        proc = subprocess.Popen([sys.executable, "-m", "spx_trade_desk.server"], env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         url = f"http://127.0.0.1:{port}"
         deadline = time.time() + 60

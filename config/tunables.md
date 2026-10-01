@@ -5,7 +5,7 @@ Scope: backend + frontend runtime/configuration knobs in the current workspace.
 
 ## 1) Environment-driven settings (primary)
 
-Source: config.py
+Source: spx_trade_desk/core/config.py
 
 - IB_HOST = "127.0.0.1"
 - IB_PORT = 7497
@@ -23,17 +23,17 @@ Source: config.py
 
 ## 2) Backend hardcoded tunables (not env-wired today)
 
-### server.py
+### spx_trade_desk/server.py
 - Initial chain snapshot wait loop: 120 iterations
 - Initial chain snapshot poll sleep: 0.5 s
 - Reconnect endpoint valid port range: 1..65535
 
-### app_state.py
+### spx_trade_desk/core/app_state.py
 - price_history maxlen: 28800
 - annual_vol default: 0.20
 - risk_free_rate default: 0.043
 
-### chain_fetcher.py
+### spx_trade_desk/market/chain_fetcher.py
 - BATCH_SIZE: 200
 - QUALIFY_BATCH_SIZE: 150
 - QUAL_CACHE_REQUALIFY_MOVE: 20.0 points
@@ -44,7 +44,7 @@ Source: config.py
 - qualify batch delay: 0.1 s
 - snapshot inter-batch delay: 0.5 s
 
-### chain_manager.py
+### spx_trade_desk/market/chain_manager.py
 - build_chain_quotes annual_vol default: 0.20
 - same-day minimum minutes-left floor: 1.0 min
 - annualization basis: 390 minutes/day, 252 days/year
@@ -59,30 +59,30 @@ Source: config.py
 - chain stream qualify batch size: 40
 - chain stream qualify batch delay: 0.05 s
 - chain stream tick-log cadence: 10.0 s
-- chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from config.py)
+- chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py)
 - monthly cache TTL: 600 s
 - monthly fetch std_dev_range: 8.0
 
-### ib_connection.py
+### spx_trade_desk/ib/connection.py
 - connectAsync timeout: 15 s
 - SPX generic ticks: "233"
 - ES baseline end time: 16:20:00 ET
 - ES baseline history duration: 600 s
 - ES baseline bar size: 1 min
 
-### market_hours.py
+### spx_trade_desk/market/hours.py
 - RTH open: 09:30 ET
 - RTH close: 16:15 ET
 - SPXW cease (expiration day): 16:00 ET
 - Daily options gap: 17:00..20:15 ET
 
-### account_manager.py
+### spx_trade_desk/ib/account.py
 - Invalid IB sentinel for prices: 1.7976931348623157e+308
 - FORCE_REFRESH_INTERVAL: 10.0 s
 - account push loop base sleep: 1.0 s
 - account push error backoff: 2 s
 
-### order_manager.py
+### spx_trade_desk/ib/orders.py
 - await_order_status timeout default: 5.0 s
 - await_order_status poll sleep: 0.1 s
 - watch_and_push_status timeout: 30.0 s
@@ -102,22 +102,22 @@ Source: config.py
 - combo pending recheck sleep: 0.5 s
 - cancel order settle sleep: 0.1 s
 
-### price_bars.py
+### spx_trade_desk/market/bars.py
 - compute_annual_vol lookback_days default: 30
 - minimum bars needed for vol calc: 5
 - annualization trading days: 252
 - historical bars duration: 1 D
 - historical bars size: 1 min
 - historical fetch off-hours end time: 16:30:00 ET
-- price_push_loop cadence: PRICE_PUSH_INTERVAL (from config.py)
+- price_push_loop cadence: PRICE_PUSH_INTERVAL (from spx_trade_desk/core/config.py)
 - price push error backoff: 1 s
 
-### risk_free.py
+### spx_trade_desk/core/rates.py
 - SGOV source URL: https://finance.yahoo.com/quote/SGOV?p=SGOV
 - DEFAULT_RISK_FREE_RATE: 0.038
 - fetch_sgov_7_day_yield timeout default: 5.0 s
 
-### ws_handler.py
+### spx_trade_desk/web/ws.py
 - status_push_loop cadence: 5 s
 - keepalive ib.sleep cadence: 0.1 s
 - keepalive asyncio sleep cadence: 0.1 s
@@ -171,7 +171,7 @@ Source: config.py
 
 ## 4) Duplicate/overlap notes
 
-- There are existing env keys in config.py that appear to be legacy/unused in current runtime path:
+- There are existing env keys in spx_trade_desk/core/config.py that appear to be legacy/unused in current runtime path:
   - CHAIN_REFRESH_SECONDS
   - DASHBOARD_CHAIN_REFRESH_SECONDS
   - CHAIN_TAB_FULL_REFRESH_SECONDS
@@ -181,6 +181,6 @@ Source: config.py
 
 If you want every tunable centralized and runtime-editable, the next pass should:
 
-1. Add remaining hardcoded backend values into config.py as env-backed constants.
+1. Add remaining hardcoded backend values into spx_trade_desk/core/config.py as env-backed constants.
 2. Add a frontend settings object (single static/js config module).
 3. Replace in-file literals with imports/references from those central modules.

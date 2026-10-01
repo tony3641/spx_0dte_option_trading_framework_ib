@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "spx-trade-desk": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "spx_trade_desk.mcp.server"],
+      "cwd": "/absolute/path/to/spx_0dte_gex_dashboard"
+    }
+  }
+}
