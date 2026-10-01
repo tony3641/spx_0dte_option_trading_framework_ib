@@ -88,7 +88,10 @@ Related reproducibility notes:
   invocations, never mid-experiment.
 - `tests/fixtures/SPX_1min_10d.csv` is the committed 1-minute fixture (the
   last 10 trading days, 390 RTH bars/day) used by the sim tests and for real
-  calibration; `SPX_1min_default.csv` is the longer 13-day source it is cut from.
+  calibration; `SPX_1min_default.csv` is the longer 30-day source it is cut from
+  (2026-08-19 to 2026-09-30; sessions 09-08 to 09-14 were pulled from IB and carry
+  09:30-15:59 bars only, because IB's archive no longer serves the post-16:00 prints
+  the other days have).
 - The repo's sim tests pin bit-identical baselines; `sim_tune` adds no state to
   that (it writes only into `--out`).
 
