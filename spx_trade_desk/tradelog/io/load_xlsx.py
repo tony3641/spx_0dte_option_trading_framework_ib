@@ -137,7 +137,12 @@ def _find_header(rows: list[tuple]) -> Optional[tuple[int, dict[str, int]]]:
     """Return (header row index, {normalized column name: column index})."""
     required = {c.lower() for c in LEDGER_HEADER}
     for idx, row in enumerate(rows):
-        cols = {_norm(cell): i for i, cell in enumerate(row) if _norm(cell)}
+        cols: dict[str, int] = {}
+        for i, cell in enumerate(row):
+            name = _norm(cell)
+            if name:
+                # first occurrence wins: a same-named header further right (a dashboard) must not shadow the ledger
+                cols.setdefault(name, i)
         if required.issubset(cols):
             return idx, cols
     return None
@@ -227,6 +232,7 @@ def load_transactions_xlsx(
     wb = _open_workbook(file_or_path)
     rows: list[dict] = []
     found_ledger = False
+    skipped = 0
     try:
         for ws in wb.worksheets:
             sheet_rows = list(ws.iter_rows(values_only=True))
@@ -246,6 +252,8 @@ def load_transactions_xlsx(
                 row = _convert_row(get, account_id)
                 if row is not None:
                     rows.append(row)
+                else:
+                    skipped += 1  # a non-blank Date that is not a valid date (Excel serial number, bad text)
     finally:
         wb.close()
 
@@ -258,4 +266,10 @@ def load_transactions_xlsx(
     out = pd.DataFrame(rows, columns=OUTPUT_COLUMNS[:-1])
     out = out.sort_values("activity_date", kind="stable").reset_index(drop=True)
     out["source_row"] = range(1, len(out) + 1)
+    if skipped:
+        message = (f"xlsx: skipped {skipped} row(s) whose Date is not a valid date "
+                   "(an Excel serial number or malformed text)")
+        log.warning(message)
+        out.attrs["skipped_rows"] = skipped
+        out.attrs["warning"] = message
     return out

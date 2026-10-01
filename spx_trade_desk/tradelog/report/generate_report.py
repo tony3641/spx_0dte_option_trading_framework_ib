@@ -326,6 +326,9 @@ def provenance_box(source):
         f"Coverage: {source['contract_days']} contract-days, {source['closed_intraday']} closed within the "
         "same day (their direction cannot be recovered from dates)",
     ]
+    if source.get("skipped_rows"):
+        items.append(f"Skipped: {source['skipped_rows']} workbook row(s) with a missing or invalid Date "
+                     "were not read; check the workbook")
     return callout("info", "About this report",
                    "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>")
 
@@ -692,7 +695,7 @@ def build_report(args) -> tuple[str, dict]:
     # ---- 8. Edge & significance ----
     if not positional:
         edge_text = (
-            f"<p>Day-level EV for {label or 'this window'} is <b>{money(ci[1])}</b>/day with 95% CI "
+            f"<p>Day-level EV for {esc(label or 'this window')} is <b>{money(ci[1])}</b>/day with 95% CI "
             f"[{money(ci[0])}, {money(ci[2])}] and <b>p={p_val:.3f}</b> "
             f"(H0: mean ≤ 0; {len(day_pnl)} days).</p>")
         if len(pooled_pnl) > len(day_pnl):
@@ -701,7 +704,7 @@ def build_report(args) -> tuple[str, dict]:
         be = sa.breakeven_win_rate(short_row["avg_win"], short_row["avg_loss"])
         margin = short_row["win_rate"] - be
         edge_text = (
-            f"<p>Day-level EV for {label or 'this month'} is <b>{money(ci[1])}</b>/day with 95% CI "
+            f"<p>Day-level EV for {esc(label or 'this month')} is <b>{money(ci[1])}</b>/day with 95% CI "
             f"[{money(ci[0])}, {money(ci[2])}] and <b>p={p_val:.3f}</b> "
             f"(H0: mean ≤ 0; {len(day_pnl)} days). The short leg wins <b>{pct(short_row['win_rate'],1,False)}</b> vs a breakeven "
             f"of <b>{pct(be,1,False)}</b> — a <b>{pct(margin,1,False)}</b> edge margin.</p>")

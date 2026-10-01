@@ -103,7 +103,7 @@ def _load_file_from_path(
             return df, bal, None
         elif ext in _XLSX_EXTS:
             df = load_transactions_xlsx(p, account_id=csv_account_id)
-            return df, None, None
+            return df, None, df.attrs.get("warning")
         else:
             df = load_csv_by_format(p, account_id=csv_account_id)
             return df, None, None
@@ -128,7 +128,7 @@ def _load_file_from_bytes(
             return df, bal, None
         elif ext in _XLSX_EXTS:
             df = load_transactions_xlsx(buf, account_id=csv_account_id)
-            return df, None, None
+            return df, None, df.attrs.get("warning")
         else:
             df = load_csv_by_format(buf, account_id=csv_account_id)
             return df, None, None
@@ -1195,6 +1195,9 @@ def generate_monthly_report(
 
         if report_data is None:
             return {"error": "No trades found in the provided monthly file.", "warnings": warnings}
+        skipped = (report_data.get("source") or {}).get("skipped_rows")
+        if skipped:
+            warnings.append(f"{skipped} workbook row(s) with a missing or invalid Date were skipped.")
 
         out_dir = REPORT_OUTPUT_DIR
         out_dir.mkdir(parents=True, exist_ok=True)

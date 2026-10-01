@@ -460,3 +460,49 @@ except ValueError as exc:
             cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert "CLEAR_ERROR True" in result.stdout
+
+
+class TestLedgerRobustness:
+    """Review fixes: header shadowing and silently dropped rows."""
+
+    def test_a_dashboard_header_with_a_ledger_name_does_not_shadow_the_ledger_column(self, tmp_path):
+        wb = Workbook()
+        ws = _sheet(wb, "Index Options", INDEX_ROWS, first=True)
+        ws["M1"] = "Account"          # a dashboard label that repeats a ledger header
+        ws["M2"] = "dashboard value"
+        path = tmp_path / "shadow.xlsx"
+        wb.save(path)
+        out = load_transactions_xlsx(path)
+        assert "" not in set(out["account_id"])  # the dashboard cell would have read as a blank account
+        assert set(out["account_id"]) == {IBKR[1], "E*Trade"}
+
+    def test_rows_with_an_invalid_date_are_counted_logged_and_flagged(self, tmp_path, caplog):
+        bad = [
+            (46000, *IBKR, "SPXW", IBKR_SHORT, "SPXW 03MAR25 5000 P", "Sell", 1, 0.50, -1.00, 49.00),
+            ("2025-13-45", *IBKR, "SPXW", IBKR_SHORT, "SPXW 03MAR25 5000 P", "Sell", 1, 0.50, -1.00, 49.00),
+        ]
+        wb = Workbook()
+        _sheet(wb, "Index Options", INDEX_ROWS + bad, first=True)
+        path = tmp_path / "bad_dates.xlsx"
+        wb.save(path)
+        with caplog.at_level("WARNING"):
+            out = load_transactions_xlsx(path)
+        assert len(out) == len(INDEX_ROWS)
+        assert out.attrs["skipped_rows"] == 2
+        assert "skipped 2 row" in out.attrs["warning"]
+        assert any("skipped 2 row" in r.getMessage() for r in caplog.records)
+
+    def test_a_clean_workbook_carries_no_warning(self, xlsx_path):
+        out = load_transactions_xlsx(xlsx_path)
+        assert "warning" not in out.attrs and "skipped_rows" not in out.attrs
+
+    def test_the_mcp_loader_returns_the_skip_warning(self, tmp_path):
+        from spx_trade_desk.mcp.server import _load_file_from_path
+        bad = [(46000, *IBKR, "SPXW", IBKR_SHORT, "SPXW 03MAR25 5000 P", "Sell", 1, 0.50, -1.00, 49.00)]
+        wb = Workbook()
+        _sheet(wb, "Index Options", INDEX_ROWS + bad, first=True)
+        path = tmp_path / "bad_dates.xlsx"
+        wb.save(path)
+        df, balance, warning = _load_file_from_path(str(path))
+        assert balance is None and len(df) == len(INDEX_ROWS)
+        assert warning and "skipped 1 row" in warning

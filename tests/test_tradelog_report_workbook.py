@@ -171,6 +171,11 @@ class TestEdges:
 
 
 class TestTool:
+    @pytest.fixture(autouse=True)
+    def isolated_output_dir(self, tmp_path, monkeypatch):
+        """The tool writes its HTML report; keep it out of the repo's real reports/output."""
+        monkeypatch.setattr("spx_trade_desk.mcp.server.REPORT_OUTPUT_DIR", tmp_path / "reports_out")
+
     def test_by_path(self, ledger_path):
         result = generate_monthly_report(paths=[ledger_path], label="Workbook Test", offline=True)
         assert "error" not in result
@@ -282,3 +287,25 @@ class TestCliHelp:
             cwd=repo_root, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert "xlsx" in result.stdout.lower()
+
+
+class TestReviewFixes:
+    def test_a_label_with_markup_is_escaped_everywhere_in_the_report(self, ledger_path):
+        label = "<img src=x onerror=alert(1)> R&D"
+        html_doc, _data = build_report(_args(ledger_path, label=label))
+        assert "<img src=x" not in html_doc
+        assert "&lt;img src=x onerror=alert(1)&gt; R&amp;D" in html_doc
+
+    def test_skipped_rows_are_stated_in_the_report_and_warned_by_the_tool(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("spx_trade_desk.mcp.server.REPORT_OUTPUT_DIR", tmp_path / "out")
+        bad = [(46000, "IBKR", "U***12345", "SPXW", "SPXW  260601P05000000", "x", "Sell", 1, 0.5, -1.0, 49.0)]
+        path = str(write_ledger(tmp_path / "bad.xlsx", spx_rows=SPX_ROWS + bad))
+        html_doc, data = build_report(_args(path))
+        assert data["source"]["skipped_rows"] == 1
+        assert "Skipped: 1 workbook row" in html_doc
+        result = generate_monthly_report(paths=[path], label="Skip Test", offline=True)
+        assert any("skipped" in w for w in result["warnings"])
+
+    def test_a_clean_workbook_reports_no_skipped_rows(self, ledger_path):
+        html_doc, data = build_report(_args(ledger_path))
+        assert data["source"]["skipped_rows"] == 0 and "Skipped:" not in html_doc

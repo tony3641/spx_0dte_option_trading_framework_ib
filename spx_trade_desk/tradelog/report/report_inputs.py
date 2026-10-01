@@ -117,7 +117,9 @@ def load_ledger_inputs(args) -> ReportInputs:
         raise ValueError("initial_capital must be a positive number")
     account = getattr(args, "account", None) or "All"
 
-    frame = filter_strategy_rows(load_transactions_xlsx(args.monthly))
+    loaded = load_transactions_xlsx(args.monthly)
+    skipped_rows = int(loaded.attrs.get("skipped_rows", 0))
+    frame = filter_strategy_rows(loaded)
     accounts = sorted(frame["account_id"].dropna().astype(str).unique()) if not frame.empty else []
     if account != "All":
         if account not in accounts:
@@ -145,6 +147,7 @@ def load_ledger_inputs(args) -> ReportInputs:
             "capital_assumed": capital_arg is None,
             "contract_days": contract_days,
             "closed_intraday": closed_intraday,
+            "skipped_rows": skipped_rows,
         },
     )
 

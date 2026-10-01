@@ -655,6 +655,27 @@ At startup the TWS data farms were mid-reconnect: historical bars and live ticks
   `_position_analytics`. The QFX HTML and `report_data` are unchanged, pinned by a golden snapshot
   (`tests/test_tradelog_report_characterization.py`, written before the refactor, market data faked).
 - Tests: `tests/test_tradelog_report_inputs.py`, `tests/test_tradelog_report_workbook.py`, shared invented
-  workbook in `tests/ledger_fixture.py` (no real data). Only the tradelog tests were run.
+  workbook in `tests/ledger_fixture.py` (no real data). Full suite (browser e2e excluded): 853 passed, 2 failed. Both failures are pre-existing and identical on
+  pristine master (`test_chain_fetcher::test_compute_gex_uses_bsm_gamma_when_ib_gamma_missing`,
+  `test_market_hours::TestIsFomcDay::test_known_fomc_date`: `params.yaml` lists only 2026-01-28 for the January
+  meeting while the test expects both days).
 - Known and unchanged: the bundled SPX/VIX cache ends 2026-07-31, and an online run (`offline=False`)
   rewrites it; the E*Trade CSV loader's missing `Buy To Close` mapping.
+
+## Session: October 1, 2026 - Review of the workbook loader and report
+
+- A line-by-line review of the `.xlsx` loader and the workbook report found four defects, fixed with tests
+  (the regression tests fail against the old code):
+  - the caller-supplied `label` was interpolated into the section-8 HTML unescaped (workbook branch, and the
+    same pre-existing line on the QFX branch); it now goes through `esc()`;
+  - a header repeated further right on the sheet (a dashboard) shadowed the ledger column because the last
+    occurrence won; the first occurrence now wins;
+  - rows whose Date is not a valid date (an Excel serial number, malformed text) were dropped with no trace;
+    they are now counted, logged, returned as a warning by the MCP loaders and `generate_monthly_report`, and
+    stated in the report's provenance box (`source.skipped_rows`);
+  - the `generate_monthly_report` tool tests wrote into the real `reports/output/`; they now use a temp dir.
+- Open, not fixed (low): a blank `Date` still ends a tab's data block by design; `build_report`'s `ValueError`
+  is reported to the MCP client as a plain error (a dedicated exception type would not mask internal bugs); the
+  CLI prints a traceback instead of the message and has no `--account` / `--initial-capital`; `.ofx` is
+  rejected by the extension gate; the loader reads each whole sheet before slicing; ytd validation exists in
+  both the tool and `load_report_inputs`; the older server tests still write into `reports/output/`.
