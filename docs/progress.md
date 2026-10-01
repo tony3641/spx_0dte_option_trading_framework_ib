@@ -548,3 +548,113 @@ At startup the TWS data farms were mid-reconnect: historical bars and live ticks
   `failure_counts` counts only failures, so a row with 0 failures and N unverifiable can
   read as clean to a skimmer; and no test pins a realistic credit/delta pair against a
   realistic band (the solver's own round-trip test covers its correctness).
+
+## Session: September 30, 2026 - Trade log: `.xlsx` workbook loader
+
+- Added `tradelog/io/load_xlsx.py`: reads the consolidated IBKR + E*Trade trade-log
+  workbook (tabs `Index Options` / `Other Options` / `Stock & ETF` / `Other Transactions`)
+  into the standard 11-column transaction frame, and routed `.xlsx` / `.xlsm` through the
+  MCP server (`_load_file_from_path`, `_load_file_from_bytes`, pass 2 of `_load_and_merge`).
+  Pass it by path, or as `data_base64` in `file_contents`.
+- The sheet's conventions differ from every other loader's input, so the loader converts
+  them: quantity is positive in the sheet and is signed here (Buy +, Sell -), because the
+  engine's expire-inference only fires on a negative Sell quantity; `Net Amount` is already
+  signed and is taken verbatim; `Buy*` / `Sell*` order types (Buy Open, Sell To Open,
+  Buy To Close, ...) collapse to Buy / Sell while Cash Settlement, Dividend and Other Fee
+  pass through by name.
+- Commission is taken as recorded, which means different things per broker: IBKR's column
+  includes all fees, while E*Trade's is only the broker's own charge (exchange fees are
+  already in the recorded fill price). So commission is the column's magnitude and
+  `gross_amount` is net with it added back, for both. The E*Trade CSV loader instead
+  reports the whole gap between `qty x price` and the net as commission, so commission
+  totals (and commission drag) differ between loading the same E*Trade trades as CSV and
+  as workbook; that is known and accepted. Realized P&L uses `net_amount` and is the
+  same either way.
+- E*Trade option symbols (`SPXW MAR 10 '25 $5100 PUT`) are rebuilt as OCC from
+  `Description` with the E*Trade CSV loader's own pattern. E*Trade rows take the same
+  account id as an E*Trade CSV (the real id of a loaded E*Trade PDF, so those still dedup).
+- Columns are matched by header name, so dashboard cells beside the ledger are ignored; a
+  tab without the ledger header is skipped; each tab's data ends at its first blank `Date`.
+- Decision: the workbook is a standalone ledger. Its IBKR account id is masked
+  (`U***12345`), so it cannot be matched to a QFX statement's account; loading both would
+  double count, and `_load_and_merge` now warns when it sees that combination. Mapping the
+  masked id onto a real QFX account was considered and deliberately not built.
+- The workbook carries no balances, so capital falls back to `initial_capital` or the
+  $100,000 default, as with an E*Trade CSV. `analyze_strategy_compliance` stays QFX-only (no
+  intraday timestamps in the workbook); `generate_monthly_report` accepts the workbook, see the
+  next entry.
+- Added `openpyxl>=3.1` to `requirements.txt` (it was installed but undeclared).
+- Tests: `tests/test_tradelog_io_xlsx.py` (37), built from a synthetic workbook, no real
+  statement data. Covers the shape, every conversion above, input forms (path / bytes /
+  buffer / base64), bad input becoming a warning, the QFX double-count warning,
+  `get_transaction_summary` / `compute_daily_pnl` end to end, and that the same E*Trade
+  trades load with identical identity columns (symbol, quantity, price, net) from the
+  workbook and from the E*Trade CSV, with commission deliberately not compared.
+  Each conversion rule was mutation-checked: breaking it makes a test fail.
+- Known, pre-existing, not changed: the E*Trade CSV loader has no `Buy To Close` mapping,
+  so it would load such a row with zero P&L (the workbook loader handles it). (The bare
+  `KeyError: 'is_option'` that `generate_monthly_report` raised for any non-QFX input is fixed
+  in the next entry.)
+
+## Session: October 1, 2026 - Repository hygiene audit (public repo)
+
+- Scope: the working tree, ignored files, every commit on every ref, PR/issue text, and the
+  repo's forks. Method: path sweep, secret-pattern scan of each history diff, and a search
+  for every `.env` value across all revisions.
+- No credential ever reached git. The Discord token and IDs live only in the git-ignored
+  `.env`; none appears in any revision, PR or issue.
+- Found and fixed: the live parameters of one strategy were quoted in the strategy-tuning
+  skill docs (knobs table, eval prompts, a BEFORE/AFTER example) and a real strategy name
+  was used as test data; a partially masked real broker account id and real commission
+  totals were in the in-progress `.xlsx` docs and tests. All replaced with placeholders
+  (`MyStrategy`, "see config", the synthetic account id `U***12345`).
+- Policy: tracked docs, tests and skills never quote values read from
+  `config/strategies.json`, a broker statement or the account panel. Test account ids are
+  synthetic. A screenshot of the live Account tab is acceptable only for a paper account.
+- `.gitignore` now also covers `.env.*`, `*.tmp` (the stores write `config/strategies.tmp`
+  and `.env.tmp` while saving), `config/strategies.*`, statement types (`*.qfx *.ofx *.qbo
+  *.xlsx *.xlsm *.xls *.pdf`) and directories, key material, `.mcp.json`,
+  `.claude/settings.local.json`, `.playwright-mcp/`. `.mcp.json` pins a machine-specific
+  interpreter path, so it is untracked; copy `.mcp.json.example`. `docs/superpowers/` was
+  already ignored but still tracked; it is now untracked (files stay on disk).
+- GitHub: history was rewritten with `git filter-branch` (index-filter, 225 commits, five
+  branches force-pushed; a full bundle backup was taken first) to drop the values and
+  `.mcp.json` from every commit. Limits a push cannot fix: GitHub's own `refs/pull/*` heads
+  for three merged PRs still hold the pre-rewrite commits, and one third-party fork copied
+  the skill docs before the rewrite. The first needs a GitHub Support request.
+- Follow-up: `*.csv` is now ignored except `reports/data/` and `tests/fixtures/` (IBKR and
+  E*Trade exports are CSV). A local `.git/hooks/pre-commit` (POSIX sh, not versioned, not
+  pushed) rejects staged statement/data files (`csv tsv pdf xlsx xlsm xls qfx ofx qbo`
+  outside those two folders) and secrets (`.env*`, `config/strategies.*`,
+  `config/sim_smile.json`, `.mcp.json`, key files) even after `git add -f`. Deliberate
+  override: `git commit --no-verify`. A fresh clone does not have the hook.
+
+## Session: October 1, 2026 - Monthly report from the `.xlsx` trade log
+
+- `generate_monthly_report` / `build_report` now accept the trade-log workbook as well as a QFX statement.
+  Any other file type is rejected up front with a message naming the file and the accepted types (this
+  replaces the bare `KeyError: 'is_option'` a CSV used to produce). Design:
+  `docs/superpowers/specs/2026-10-01-xlsx-monthly-report-design.md` (local planning doc).
+- Decision: **position direction is not inferred.** A date-only ledger cannot say whether a contract that was
+  both bought and sold in one day was a short bought back or a long sold. Two structural rules were tried on a
+  real year-long ledger and rejected: the "higher strike of a matched spread is the short" rule disagreed with
+  an independent net-position signal more often than not, and anchoring on one-sided legs gave clear evidence
+  for only a minority of the fully closed contracts. Those contracts are exactly the stops and early exits, so
+  a wrong label would corrupt the analysis that needs direction. A workbook report is therefore day-level.
+- Workbook report: SPX/SPXW option rows only (stocks, dividends, fees and other underlyings are excluded);
+  sections 1-6, the day-level bootstrap and Monte Carlo are exact; sections 7 (structure), 9 (stops/re-entry)
+  and 11 (Kelly) show a "Needs QFX timestamps" notice and the gap-stress table is omitted;
+  `report_data` carries `source` and `unavailable_sections` and nulls for the unavailable blocks. A provenance
+  box states the source, accounts, scope, capital (assumed unless `initial_capital` is passed) and coverage
+  (contract-days and how many closed within the same day).
+- New tool parameters: `account_filter` (default `"All"`) and `initial_capital` (default 100,000, workbook
+  only; ignored with a warning for a QFX). `month` slices one month and the earlier months in the same
+  workbook feed the cross-month table and pooled significance. `ytd_*` is rejected with a workbook.
+- Structure: `tradelog/report/report_inputs.py` holds `ReportInputs` and the QFX / workbook loaders;
+  `build_report` consumes the bundle and the position-dependent computation moved verbatim into
+  `_position_analytics`. The QFX HTML and `report_data` are unchanged, pinned by a golden snapshot
+  (`tests/test_tradelog_report_characterization.py`, written before the refactor, market data faked).
+- Tests: `tests/test_tradelog_report_inputs.py`, `tests/test_tradelog_report_workbook.py`, shared invented
+  workbook in `tests/ledger_fixture.py` (no real data). Only the tradelog tests were run.
+- Known and unchanged: the bundled SPX/VIX cache ends 2026-07-31, and an online run (`offline=False`)
+  rewrites it; the E*Trade CSV loader's missing `Buy To Close` mapping.

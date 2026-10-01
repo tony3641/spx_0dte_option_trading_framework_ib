@@ -7,6 +7,10 @@ VIX regimes, SPX benchmark) with the strategy-level edge & risk analysis
 bootstrap significance, spread-capped tail stress, Monte Carlo, Kelly) and the
 cross-month comparison.
 
+``--monthly`` takes a QFX statement (full analysis) or an ``.xlsx`` trade-log workbook (day-level report: no
+position direction, so the structure, stops/re-entry and Kelly sections show a notice; see
+``report_inputs.py``).
+
 Usage:
     python -m spx_trade_desk.tradelog.report.generate_report --monthly <july.qfx> \
         --ytd <ytd.qfx> --rf 0.04 --label "July 2026"
@@ -22,12 +26,13 @@ import argparse
 import html
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 
 from spx_trade_desk.resources import REPORT_DATA_DIR, REPORT_OUTPUT_DIR
-from spx_trade_desk.tradelog.io.load_qfx import load_transactions_qfx
+from spx_trade_desk.tradelog.report.report_inputs import load_report_inputs
 from spx_trade_desk.tradelog.domain.risk_metrics import calculate_risk_metrics
 from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
 
@@ -301,18 +306,128 @@ def compute_metrics(daily, capital, rf, spx, vix):
     return calculate_risk_metrics(daily, capital, rf, spx, vix)
 
 
+def needs_qfx_notice(what):
+    """Notice that replaces a section a date-only workbook cannot support."""
+    return callout(
+        "info", "Needs QFX timestamps",
+        f"This section needs {what}, which a trade-log workbook does not carry (it has dates, not "
+        "execution times). Load a QFX statement for the same period to see it.")
+
+
+def provenance_box(source):
+    """The 'About this report' box shown on workbook reports."""
+    capital = ("assumed, the workbook has no balances; pass initial_capital to change it"
+               if source["capital_assumed"] else "supplied")
+    items = [
+        "Source: " + source["description"],
+        "Accounts: " + ", ".join(source["accounts"]),
+        "Scope: " + source["scope"],
+        f"Capital at the start of the workbook: {money(source['capital_at_start'], 0, False)} ({capital})",
+        f"Coverage: {source['contract_days']} contract-days, {source['closed_intraday']} closed within the "
+        "same day (their direction cannot be recovered from dates)",
+    ]
+    return callout("info", "About this report",
+                   "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>")
+
+
+def _pooled_paragraph(day_pnl, pooled_pnl, pool_window, pool_ci, pool_p, conclude=False):
+    """Pooled-significance paragraph for section 8.
+
+    The QFX report keeps its original fixed closing sentence (``conclude=False``, byte-for-byte unchanged).
+    A workbook report passes ``conclude=True`` so the sentence follows the pooled numbers: earlier months are
+    pooled in automatically there, so the pooled result is often neither positive nor significant.
+    """
+    if not conclude or (pool_p < 0.05 and pool_ci[1] > 0):
+        verdict = (f"the edge is statistically significant when measured across the full window, "
+                   f"not on one month's {len(day_pnl)} days alone.")
+    elif pool_ci[1] > 0:
+        verdict = "positive, but not statistically significant even when measured across the full window."
+    else:
+        verdict = "negative on average across the full window, so no edge is demonstrated."
+    return (
+        f"<p class='muted' style='font-size:13px'>Pooled across {len(pooled_pnl)} days "
+        f"({pool_window}): day EV <b>{money(pool_ci[1])}</b>, "
+        f"95% CI [{money(pool_ci[0])}, {money(pool_ci[2])}], <b>p={pool_p:.3f}</b> — "
+        f"{verdict}</p>")
+
+
+def _position_analytics(positions, spreads, daily, spx, gaps):
+    """Spread/leg statistics, stops & re-entry, gap stress and Kelly.
+
+    Moved verbatim out of ``build_report``. Every figure here needs position direction, so a source without
+    it (the trade-log workbook) uses ``_no_position_analytics`` instead.
+    """
+    # ---- spread / leg stats ----
+    leg_stats = sa.per_leg_stats(positions)
+    short_row = leg_stats[leg_stats["leg"] == "short"].iloc[0] if len(leg_stats) else None
+    long_row = leg_stats[leg_stats["leg"] == "long"].iloc[0] if len(leg_stats) else None
+    n_paired = int(spreads["paired"].sum()) if len(spreads) else 0
+    n_short = len(spreads)
+    unpaired = spreads[~spreads["paired"]] if len(spreads) else pd.DataFrame()
+    widths = pd.to_numeric(spreads["width"], errors="coerce").dropna() if len(spreads) else pd.Series(dtype=float)
+    credits = pd.to_numeric(spreads["credit_ct"], errors="coerce").dropna() if len(spreads) else pd.Series(dtype=float)
+    maxloss = pd.to_numeric(spreads["max_loss_ct"], errors="coerce").dropna() if len(spreads) else pd.Series(dtype=float)
+    spread_ev = (short_row["ev"] + long_row["ev"]) if (short_row is not None and long_row is not None) else np.nan
+
+    # ---- stops & re-entry (short-leg loss >= 3.5x credit ~= 6x spread price) ----
+    stops = sa.stop_events(positions, stop_multiple=3.5)
+    stop_rows = stops[stops["is_stop"]]
+    stop_days = set(pd.Timestamp(d).date() for d in stop_rows["date"]) if len(stop_rows) else set()
+    reentry = sa.reentry_test(positions, stop_rows) if len(stop_rows) else pd.DataFrame()
+    dd2 = daily.copy()
+    dd2["d"] = pd.to_datetime(dd2["activity_date"]).dt.date
+    stop_day_pnl = dd2[dd2["d"].isin(stop_days)]["realized_pnl"] if stop_days else pd.Series(dtype=float)
+    normal_day_pnl = dd2[~dd2["d"].isin(stop_days)]["realized_pnl"] if stop_days else dd2["realized_pnl"]
+    positions_per_day = len(positions) / max(1, len(daily))
+    day_ev_pred = positions_per_day * positions["total_pnl"].mean() if len(positions) else np.nan
+
+    # ---- tail ----
+    spx_map = {}
+    try:
+        spx_tmp = spx.copy()
+        spx_tmp["activity_date"] = pd.to_datetime(spx_tmp["activity_date"]).dt.date
+        spx_map = dict(zip(spx_tmp["activity_date"], pd.to_numeric(spx_tmp["spx_close"], errors="coerce")))
+    except Exception:
+        spx_map = {}
+    stress = sa.gap_stress(spreads, spx_map, gaps) if len(spreads) else pd.DataFrame()
+
+    # ---- Kelly ----
+    if short_row is not None and not np.isnan(short_row["avg_win"]) and not np.isnan(short_row["avg_loss"]):
+        f_kelly, half = sa.kelly_binary(short_row["win_rate"], short_row["avg_win"] / short_row["avg_loss"])
+    else:
+        f_kelly, half = np.nan, np.nan
+    return SimpleNamespace(
+        short_row=short_row, long_row=long_row, n_paired=n_paired, n_short=n_short, unpaired=unpaired,
+        widths=widths, credits=credits, maxloss=maxloss, spread_ev=spread_ev,
+        stop_rows=stop_rows, reentry=reentry, stop_day_pnl=stop_day_pnl, normal_day_pnl=normal_day_pnl,
+        positions_per_day=positions_per_day, day_ev_pred=day_ev_pred,
+        stress=stress, f_kelly=f_kelly, half=half)
+
+
+def _no_position_analytics():
+    """Neutral stand-ins for a source without position direction; the guarded sections never read them."""
+    empty = pd.DataFrame()
+    return SimpleNamespace(
+        short_row=None, long_row=None, n_paired=0, n_short=0, unpaired=empty,
+        widths=pd.Series(dtype=float), credits=pd.Series(dtype=float), maxloss=pd.Series(dtype=float),
+        spread_ev=np.nan, stop_rows=empty, reentry=empty,
+        stop_day_pnl=pd.Series(dtype=float), normal_day_pnl=pd.Series(dtype=float),
+        positions_per_day=np.nan, day_ev_pred=np.nan, stress=empty, f_kelly=np.nan, half=np.nan)
+
+
 def build_report(args) -> tuple[str, dict]:
-    monthly = Path(args.monthly)
     label = args.label
     rf = args.rf
 
-    # ---- load monthly data ----
-    daily = sa.load_daily(str(monthly))
-    enriched = sa.load_enriched(str(monthly))
-    positions = sa.load_positions(str(monthly))
-    spreads = sa.reconstruct_spreads(str(monthly))
-    df_raw, bal = load_transactions_qfx(str(monthly))
-    full_initial = bal.total - df_raw["net_amount"].fillna(0.0).sum()
+    # ---- load the source (QFX statement or trade-log workbook) ----
+    inputs = load_report_inputs(args)
+    positional = inputs.has_positions
+    full_daily = inputs.daily
+    daily = full_daily
+    positions = inputs.positions if positional else pd.DataFrame()
+    spreads = inputs.spreads if positional else pd.DataFrame()
+    prior_daily = inputs.prior_daily
+    prior_capital = inputs.prior_capital
 
     # ---- optional month filter (slice one calendar month out of the file) ----
     if args.month:
@@ -320,21 +435,31 @@ def build_report(args) -> tuple[str, dict]:
         m_end = m_start + pd.offsets.MonthEnd(0)
         daily = daily[(pd.to_datetime(daily["activity_date"]) >= m_start) &
                       (pd.to_datetime(daily["activity_date"]) <= m_end)]
-        positions = positions[(pd.to_datetime(positions["date"]) >= m_start) &
-                              (pd.to_datetime(positions["date"]) <= m_end)]
-        spreads = spreads[(pd.to_datetime(spreads["date"]) >= m_start) &
-                          (pd.to_datetime(spreads["date"]) <= m_end)]
+        if positional:
+            positions = positions[(pd.to_datetime(positions["date"]) >= m_start) &
+                                  (pd.to_datetime(positions["date"]) <= m_end)]
+            spreads = spreads[(pd.to_datetime(spreads["date"]) >= m_start) &
+                              (pd.to_datetime(spreads["date"]) <= m_end)]
         # running capital: full-file starting balance + cumulative PnL through prior month
-        full_daily = sa.load_daily(str(monthly))
         prior = full_daily[pd.to_datetime(full_daily["activity_date"]).dt.date < m_start.date()]
-        initial_capital = full_initial + float(prior["realized_pnl"].sum())
+        initial_capital = inputs.initial_capital + float(prior["realized_pnl"].sum())
+        if inputs.prior_from_window:
+            # a workbook carries its own earlier months: they feed the cross-month context
+            prior_daily = prior if len(prior) else None
+            prior_capital = inputs.initial_capital
     else:
-        initial_capital = full_initial
+        initial_capital = inputs.initial_capital
 
     if not daily.empty:
         month_start = pd.Timestamp(daily["activity_date"].min())
         month_end = pd.Timestamp(daily["activity_date"].max())
         month_str = month_start.strftime("%Y-%m")
+        window_label = month_str
+        span_text = month_start.strftime("%B %Y")
+        if inputs.source is not None and not args.month and month_end.strftime("%Y-%m") != month_str:
+            # a workbook window with no month filter can span several months
+            window_label = f"{month_str} → {month_end.strftime('%Y-%m')}"
+            span_text = f"{month_start.strftime('%B %Y')} – {month_end.strftime('%B %Y')}"
     else:
         return "<p>No trades found in the monthly file for the selected window.</p>", None
 
@@ -372,12 +497,10 @@ def build_report(args) -> tuple[str, dict]:
     # ---- cross-month ----
     cross_rows = []
     cross_order = []
-    if args.ytd:
-        ytd_daily = sa.load_daily(args.ytd)
-        ytd_raw, ytd_bal = load_transactions_qfx(args.ytd)
-        ytd_capital = ytd_bal.total - ytd_raw["net_amount"].fillna(0.0).sum()
+    if prior_daily is not None:
+        ytd_daily = prior_daily.copy()
         ytd_daily["month"] = pd.to_datetime(ytd_daily["activity_date"]).dt.to_period("M").astype(str)
-        running = ytd_capital
+        running = prior_capital
         prior_end = None
         for mm in sorted(ytd_daily["month"].unique()):
             if mm >= month_str:
@@ -402,7 +525,7 @@ def build_report(args) -> tuple[str, dict]:
             running += mm_pnl
     # target month row
     cross_rows.append({
-        "month": month_str,
+        "month": window_label,
         "pnl": total_pnl,
         "ret": total_pnl / initial_capital,
         "sharpe": m.get("sharpe"),
@@ -412,16 +535,15 @@ def build_report(args) -> tuple[str, dict]:
         "max_loss": m.get("max_loss"),
         "days": len(daily),
     })
-    cross_order.append(month_str)
+    cross_order.append(window_label)
 
     # ---- pooled day-level bootstrap (prior months + this month) ----
     pooled_pnl = day_pnl
     pool_ci = ci
     pool_p = p_val
     pool_window = "this month"
-    if args.ytd:
-        ytd_daily2 = sa.load_daily(args.ytd)
-        prior = ytd_daily2[pd.to_datetime(ytd_daily2["activity_date"]).dt.date < month_start.date()]
+    if prior_daily is not None:
+        prior = prior_daily[pd.to_datetime(prior_daily["activity_date"]).dt.date < month_start.date()]
         if len(prior):
             pooled_pnl = np.concatenate([prior["realized_pnl"].astype(float).values, day_pnl])
             pool_ci = sa.bootstrap_ci(pooled_pnl)
@@ -429,48 +551,19 @@ def build_report(args) -> tuple[str, dict]:
             pool_window = (f"{pd.Timestamp(prior['activity_date'].min()).strftime('%Y-%m')} "
                            f"→ {month_start.strftime('%Y-%m')}")
 
-    # ---- spread / leg stats ----
-    leg_stats = sa.per_leg_stats(positions)
-    short_row = leg_stats[leg_stats["leg"] == "short"].iloc[0] if len(leg_stats) else None
-    long_row = leg_stats[leg_stats["leg"] == "long"].iloc[0] if len(leg_stats) else None
-    n_paired = int(spreads["paired"].sum()) if len(spreads) else 0
-    n_short = len(spreads)
-    unpaired = spreads[~spreads["paired"]] if len(spreads) else pd.DataFrame()
-    widths = pd.to_numeric(spreads["width"], errors="coerce").dropna() if len(spreads) else pd.Series(dtype=float)
-    credits = pd.to_numeric(spreads["credit_ct"], errors="coerce").dropna() if len(spreads) else pd.Series(dtype=float)
-    maxloss = pd.to_numeric(spreads["max_loss_ct"], errors="coerce").dropna() if len(spreads) else pd.Series(dtype=float)
-    spread_ev = (short_row["ev"] + long_row["ev"]) if (short_row is not None and long_row is not None) else np.nan
-
-    # ---- stops & re-entry (short-leg loss >= 3.5x credit ~= 6x spread price) ----
-    stops = sa.stop_events(positions, stop_multiple=3.5)
-    stop_rows = stops[stops["is_stop"]]
-    stop_days = set(pd.Timestamp(d).date() for d in stop_rows["date"]) if len(stop_rows) else set()
-    reentry = sa.reentry_test(positions, stop_rows) if len(stop_rows) else pd.DataFrame()
-    dd2 = daily.copy()
-    dd2["d"] = pd.to_datetime(dd2["activity_date"]).dt.date
-    stop_day_pnl = dd2[dd2["d"].isin(stop_days)]["realized_pnl"] if stop_days else pd.Series(dtype=float)
-    normal_day_pnl = dd2[~dd2["d"].isin(stop_days)]["realized_pnl"] if stop_days else dd2["realized_pnl"]
-    positions_per_day = len(positions) / max(1, len(daily))
-    day_ev_pred = positions_per_day * positions["total_pnl"].mean() if len(positions) else np.nan
-
-    # ---- tail ----
-    spx_map = {}
-    try:
-        spx_tmp = spx.copy()
-        spx_tmp["activity_date"] = pd.to_datetime(spx_tmp["activity_date"]).dt.date
-        spx_map = dict(zip(spx_tmp["activity_date"], pd.to_numeric(spx_tmp["spx_close"], errors="coerce")))
-    except Exception:
-        spx_map = {}
+    # ---- spread / leg stats, stops, tail stress, Kelly (all need position direction) ----
     gaps = [0.005, 0.01, 0.02, 0.03, 0.04]
-    stress = sa.gap_stress(spreads, spx_map, gaps) if len(spreads) else pd.DataFrame()
+    pa = (_position_analytics(positions, spreads, daily, spx, gaps) if positional
+          else _no_position_analytics())
+    short_row, long_row = pa.short_row, pa.long_row
+    n_paired, n_short, unpaired = pa.n_paired, pa.n_short, pa.unpaired
+    widths, credits, maxloss, spread_ev = pa.widths, pa.credits, pa.maxloss, pa.spread_ev
+    stop_rows, reentry = pa.stop_rows, pa.reentry
+    stop_day_pnl, normal_day_pnl = pa.stop_day_pnl, pa.normal_day_pnl
+    positions_per_day, day_ev_pred = pa.positions_per_day, pa.day_ev_pred
+    stress, f_kelly, half = pa.stress, pa.f_kelly, pa.half
     mc = sa.monte_carlo_days(day_pnl)
     worst_day = float(day_pnl.min())
-
-    # ---- Kelly ----
-    if short_row is not None and not np.isnan(short_row["avg_win"]) and not np.isnan(short_row["avg_loss"]):
-        f_kelly, half = sa.kelly_binary(short_row["win_rate"], short_row["avg_win"] / short_row["avg_loss"])
-    else:
-        f_kelly, half = np.nan, np.nan
 
     # =======================================================================
     # Assemble HTML
@@ -592,9 +685,19 @@ def build_report(args) -> tuple[str, dict]:
                 f"{u['date']}: short P{u['short_strike']:.0f} x {u['qty']} did not pair to a same-day "
                 f"lower-strike long — likely a close-matching artifact, but worth a manual check.")
         P.append(section("7", "Strategy Structure — Bull Put Credit Spreads", structure))
+    elif not positional:
+        P.append(section("7", "Strategy Structure — Bull Put Credit Spreads",
+                         needs_qfx_notice("position direction (which leg of each spread was opened first)")))
 
     # ---- 8. Edge & significance ----
-    if short_row is not None and not np.isnan(short_row["avg_loss"]):
+    if not positional:
+        edge_text = (
+            f"<p>Day-level EV for {label or 'this window'} is <b>{money(ci[1])}</b>/day with 95% CI "
+            f"[{money(ci[0])}, {money(ci[2])}] and <b>p={p_val:.3f}</b> "
+            f"(H0: mean ≤ 0; {len(day_pnl)} days).</p>")
+        if len(pooled_pnl) > len(day_pnl):
+            edge_text += _pooled_paragraph(day_pnl, pooled_pnl, pool_window, pool_ci, pool_p, conclude=True)
+    elif short_row is not None and not np.isnan(short_row["avg_loss"]):
         be = sa.breakeven_win_rate(short_row["avg_win"], short_row["avg_loss"])
         margin = short_row["win_rate"] - be
         edge_text = (
@@ -603,12 +706,7 @@ def build_report(args) -> tuple[str, dict]:
             f"(H0: mean ≤ 0; {len(day_pnl)} days). The short leg wins <b>{pct(short_row['win_rate'],1,False)}</b> vs a breakeven "
             f"of <b>{pct(be,1,False)}</b> — a <b>{pct(margin,1,False)}</b> edge margin.</p>")
         if len(pooled_pnl) > len(day_pnl):
-            edge_text += (
-                f"<p class='muted' style='font-size:13px'>Pooled across {len(pooled_pnl)} days "
-                f"({pool_window}): day EV <b>{money(pool_ci[1])}</b>, "
-                f"95% CI [{money(pool_ci[0])}, {money(pool_ci[2])}], <b>p={pool_p:.3f}</b> — "
-                f"the edge is statistically significant when measured across the full window, "
-                f"not on one month's {len(day_pnl)} days alone.</p>")
+            edge_text += _pooled_paragraph(day_pnl, pooled_pnl, pool_window, pool_ci, pool_p)
     else:
         edge_text = "<p>Insufficient position data.</p>"
     cross_headers = ["Month", "PnL", "Return", "Sharpe@RF", "Sortino", "EV/day", "Win days", "Max loss"]
@@ -626,22 +724,25 @@ def build_report(args) -> tuple[str, dict]:
         table(cross_headers, cross_rows_html)))
 
     # ---- 9. Stops & re-entry ----
-    stop_text = ""
-    if len(stop_rows):
-        re_rows = [[str(r["stop_date"])[:10], money(r["stop_loss"]), int(r["n_after"]),
-                    money(r["pnl_after"])] for _, r in reentry.iterrows()]
-        stop_text += table(["Stop date", "Stop loss", "Trades after", "PnL after"], re_rows)
-        stop_text += "<p class='muted' style='font-size:13px'>" + \
-            f"Stop days average <b>{money(stop_day_pnl.mean())}</b> vs non-stop days <b>{money(normal_day_pnl.mean())}</b>. " + \
-            f"Trades-after-stops net <b>{money(reentry['pnl_after'].sum())}</b>. " + \
-            "Re-entry recovers on reversal days and amplifies losses on continuation days.</p>"
+    if positional:
+        stop_text = ""
+        if len(stop_rows):
+            re_rows = [[str(r["stop_date"])[:10], money(r["stop_loss"]), int(r["n_after"]),
+                        money(r["pnl_after"])] for _, r in reentry.iterrows()]
+            stop_text += table(["Stop date", "Stop loss", "Trades after", "PnL after"], re_rows)
+            stop_text += "<p class='muted' style='font-size:13px'>" + \
+                f"Stop days average <b>{money(stop_day_pnl.mean())}</b> vs non-stop days <b>{money(normal_day_pnl.mean())}</b>. " + \
+                f"Trades-after-stops net <b>{money(reentry['pnl_after'].sum())}</b>. " + \
+                "Re-entry recovers on reversal days and amplifies losses on continuation days.</p>"
+        else:
+            stop_text += "<p>No stop-zone events this month (short-leg loss ≥ 3.5× credit, ≈ 6× spread price).</p>"
+        stop_text += callout("info", "Day-edge vs trade-edge",
+            f"positions/day ({positions_per_day:.1f}) × per-position EV ({money(positions['total_pnl'].mean())}) = "
+            f"<b>{money(day_ev_pred)}</b> vs actual day EV <b>{money(day_ev)}</b>. The residual "
+            f"({money(day_ev - day_ev_pred)})/day is non-option income (dividends) in the daily total — the "
+            f"tradeable edge is the sum of the position edges; there is no hidden re-entry alpha beyond the trades themselves.")
     else:
-        stop_text += "<p>No stop-zone events this month (short-leg loss ≥ 3.5× credit, ≈ 6× spread price).</p>"
-    stop_text += callout("info", "Day-edge vs trade-edge",
-        f"positions/day ({positions_per_day:.1f}) × per-position EV ({money(positions['total_pnl'].mean())}) = "
-        f"<b>{money(day_ev_pred)}</b> vs actual day EV <b>{money(day_ev)}</b>. The residual "
-        f"({money(day_ev - day_ev_pred)})/day is non-option income (dividends) in the daily total — the "
-        f"tradeable edge is the sum of the position edges; there is no hidden re-entry alpha beyond the trades themselves.")
+        stop_text = needs_qfx_notice("position direction and execution order (which fills opened and which closed)")
     P.append(section("9", "Stops, Re-Entry & Day-vs-Trade Edge", stop_text))
 
     # ---- 10. Tail ----
@@ -674,21 +775,25 @@ def build_report(args) -> tuple[str, dict]:
     P.append(section("10", "Tail Risk — “Works Until It Doesn’t”", stress_text + mc_text))
 
     # ---- 11. Sizing & Kelly ----
-    pnl2 = "-2% close"
-    sizing_rows = [
-        ["Binary Kelly (short leg, per position)", pct(f_kelly, 2, False) if not np.isnan(f_kelly) else "—"],
-        ["Half-Kelly", pct(half, 2, False) if not np.isnan(half) else "—"],
-        ["Contracts traded", str(n_contracts)],
-        ["Avg contracts/day", f"{n_contracts / max(1, len(daily)):.1f}"],
-        ["Worst single −2% day (gross)", money(stress[stress['gap'] == 0.02]['pnl'].min()) if len(stress) else "—"],
-    ]
-    P.append(section("11", "Position Sizing & Kelly",
-        table(["Metric", "Value"], sizing_rows) +
-        callout("warn", "Sizing vs the tail",
-            f"One −2% SPX close with the book on is worth <b>{money(stress[stress['gap'] == 0.02]['pnl'].median())}</b> "
-            f"(median) on <b>{money(initial_capital, 0, False)}</b> of capital — more than the account. "
-            f"The spread caps it, but the cap is large relative to the edge; sizing must be set so a −2% day "
-            f"is survivable.")))
+    if positional:
+        pnl2 = "-2% close"
+        sizing_rows = [
+            ["Binary Kelly (short leg, per position)", pct(f_kelly, 2, False) if not np.isnan(f_kelly) else "—"],
+            ["Half-Kelly", pct(half, 2, False) if not np.isnan(half) else "—"],
+            ["Contracts traded", str(n_contracts)],
+            ["Avg contracts/day", f"{n_contracts / max(1, len(daily)):.1f}"],
+            ["Worst single −2% day (gross)", money(stress[stress['gap'] == 0.02]['pnl'].min()) if len(stress) else "—"],
+        ]
+        P.append(section("11", "Position Sizing & Kelly",
+            table(["Metric", "Value"], sizing_rows) +
+            callout("warn", "Sizing vs the tail",
+                f"One −2% SPX close with the book on is worth <b>{money(stress[stress['gap'] == 0.02]['pnl'].median())}</b> "
+                f"(median) on <b>{money(initial_capital, 0, False)}</b> of capital — more than the account. "
+                f"The spread caps it, but the cap is large relative to the edge; sizing must be set so a −2% day "
+                f"is survivable.")))
+    else:
+        P.append(section("11", "Position Sizing & Kelly",
+            needs_qfx_notice("the short-leg win rate and reconstructed spreads (position direction)")))
 
     # ---- 12. Takeaways (conditional on the month's gain/loss) ----
     month_positive = total_pnl > 0
@@ -731,7 +836,12 @@ def build_report(args) -> tuple[str, dict]:
     else:
         edge = (f"<b>Negative expectancy this month:</b> day EV {money(day_ev)} "
                 f"(95% CI [{money(ci[0])}, {money(ci[2])}]) — the month destroyed value on average.")
-        if has_pooled:
+        if has_pooled and not positional and pool_ci[1] <= 0:
+            # a workbook pools its earlier months automatically, so the pooled window can be negative too
+            edge += (f" Over the pooled {len(pooled_pnl)}-day window the day EV is also negative "
+                     f"(EV {money(pool_ci[1])}/day, p={pool_p:.3f}) — no edge is demonstrated; review regime "
+                     "and sizing before continuing.")
+        elif has_pooled:
             edge += (f" Your baseline edge over the pooled {len(pooled_pnl)}-day window is still positive "
                      f"(EV {money(pool_ci[1])}/day, p={pool_p:.3f})")
             if pool_p < 0.05:
@@ -812,16 +922,21 @@ def build_report(args) -> tuple[str, dict]:
     P.append(section("12", "Key Takeaways & Recommendations", takeaways))
 
     # ---- Assemble page ----
-    body = "".join(P)
-    account_id = str(df_raw["account_id"].iloc[0]) if ("account_id" in df_raw and len(df_raw)) else "—"
-    month_label = f"{label} · {month_start.strftime('%B %Y')}" if label else month_start.strftime("%B %Y")
-    meta = (f"Account {account_id} · {month_start.strftime('%Y-%m-%d')} → {month_end.strftime('%Y-%m-%d')} · "
+    body = (provenance_box(inputs.source) if inputs.source else "") + "".join(P)
+    month_label = f"{label} · {span_text}" if label else span_text
+    meta = (f"{inputs.account_label} · {month_start.strftime('%Y-%m-%d')} → {month_end.strftime('%Y-%m-%d')} · "
             f"{n_trades} trades · {n_contracts} contracts · risk-free {rf * 100:.0f}%")
     foot = (f"Generated {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} by spx_trade_desk.tradelog.report.generate_report. "
             "Analysis is informational, not investment advice. Statistics are computed from your QFX "
             "statement with bull-put-credit-spread reconstruction (position direction from execution order). "
             "Monthly returns/Sharpe are computed on the month's starting balance (file-starting balance plus "
             "cumulative PnL through the prior month).")
+    if not positional:
+        foot = (f"Generated {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} by spx_trade_desk.tradelog.report.generate_report. "
+                "Analysis is informational, not investment advice. Statistics are computed from your trade-log "
+                "workbook (SPX/SPXW option rows, dates only), so position direction, stops and tail stress are "
+                "omitted. Monthly returns/Sharpe are computed on the month's starting capital (the workbook's "
+                "starting capital plus cumulative PnL through the prior month).")
     html_doc = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -862,7 +977,7 @@ def build_report(args) -> tuple[str, dict]:
         short_margin = margin
     report_data = {
         "title": label or month_label,
-        "month": month_str,
+        "month": window_label,
         "date_range": {"start": month_start.strftime("%Y-%m-%d"),
                        "end": month_end.strftime("%Y-%m-%d")},
         "initial_capital": _clean(initial_capital),
@@ -942,14 +1057,21 @@ def build_report(args) -> tuple[str, dict]:
         "cross_month": [_clean_dict(r) for r in cross_rows],
         "takeaways": [re.sub(r"<[^>]+>", "", x) for x in t],
     }
+    if not positional:
+        report_data["spreads"] = None
+        report_data["stops"] = None
+        report_data["kelly"] = None
+        report_data["tail"]["gap_stress"] = None
+        report_data["source"] = inputs.source
+        report_data["unavailable_sections"] = [7, 9, 11]
     return html_doc, report_data
 
 
 def main():
     ap = argparse.ArgumentParser(description="Generate a comprehensive HTML monthly trading report.")
-    ap.add_argument("--monthly", required=True, help="QFX file for the target month (or containing it).")
+    ap.add_argument("--monthly", required=True, help="QFX statement for the target month (or containing it), or an .xlsx trade-log workbook (day-level report).")
     ap.add_argument("--month", default=None, help="Filter to one calendar month, e.g. 2026-06.")
-    ap.add_argument("--ytd", default=None, help="YTD (or prior-month) QFX for cross-month context.")
+    ap.add_argument("--ytd", default=None, help="YTD (or prior-month) QFX for cross-month context (not used with a workbook).")
     ap.add_argument("--rf", type=float, default=0.04, help="Annual risk-free rate (decimal). Default 0.04.")
     ap.add_argument("--label", default=None, help="Report title label, e.g. 'July 2026'.")
     ap.add_argument("--offline", action="store_true", help="Use persisted market-data CSVs (no network fetch).")

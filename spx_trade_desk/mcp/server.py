@@ -26,6 +26,7 @@ import pandas as pd
 from mcp.server.fastmcp import FastMCP
 
 from spx_trade_desk.tradelog.report.generate_report import build_report
+from spx_trade_desk.tradelog.report.report_inputs import report_source_kind
 
 from spx_trade_desk.resources import REPORT_OUTPUT_DIR
 from spx_trade_desk.tradelog.domain.merge import merge_transaction_frames
@@ -53,6 +54,7 @@ from spx_trade_desk.tradelog.io.load_etrade_pdf import EtradeBalance, load_trans
 from spx_trade_desk.tradelog.io.load_qfx import InvBalance, load_transactions_qfx, resolve_qfx_account_id
 from spx_trade_desk.tradelog.io.load_spx import load_spx_daily
 from spx_trade_desk.tradelog.io.load_vix import load_vix_daily
+from spx_trade_desk.tradelog.io.load_xlsx import load_transactions_xlsx
 from spx_trade_desk.tradelog.domain.calendar import _build_calendar_matrix
 
 from spx_trade_desk.mcp.adapter import (
@@ -81,6 +83,9 @@ mcp = FastMCP("trade-pnl-dashboard")
 
 _BalanceInfo = InvBalance | EtradeBalance
 
+# Consolidated trade-log workbooks; routed to the xlsx loader, not the CSV one.
+_XLSX_EXTS = (".xlsx", ".xlsm")
+
 
 def _load_file_from_path(
     path_str: str,
@@ -96,6 +101,9 @@ def _load_file_from_path(
         elif ext == ".pdf":
             df, bal = load_transactions_etrade_pdf(p)
             return df, bal, None
+        elif ext in _XLSX_EXTS:
+            df = load_transactions_xlsx(p, account_id=csv_account_id)
+            return df, None, None
         else:
             df = load_csv_by_format(p, account_id=csv_account_id)
             return df, None, None
@@ -118,6 +126,9 @@ def _load_file_from_bytes(
         elif ext == ".pdf":
             df, bal = load_transactions_etrade_pdf(buf)
             return df, bal, None
+        elif ext in _XLSX_EXTS:
+            df = load_transactions_xlsx(buf, account_id=csv_account_id)
+            return df, None, None
         else:
             df = load_csv_by_format(buf, account_id=csv_account_id)
             return df, None, None
@@ -149,7 +160,7 @@ def _load_and_merge(
     Two-pass loading so an E*Trade trades CSV aligns its account id to a
     loaded E*Trade PDF statement (their option trades overlap and must dedup):
     pass 1 loads QFX/PDF (balances + E*Trade PDF account ids); pass 2 loads
-    CSVs using the resolved account id.
+    CSVs and ``.xlsx`` trade-log workbooks using the resolved account id.
 
     Returns ``(merged_df, balances, warnings)``.
     """
@@ -168,14 +179,18 @@ def _load_and_merge(
     balances: list[_BalanceInfo] = []
     warnings: list[str] = []
     etrade_pdf_accounts: list[str] = []
+    qfx_loaded = False
+    xlsx_loaded = False
 
     # ---- Pass 1: QFX + PDF (balance-bearing) --------------------------------
     for kind, payload in sources:
-        if _ext(kind, payload) not in (".qfx", ".pdf"):
+        ext = _ext(kind, payload)
+        if ext not in (".qfx", ".pdf"):
             continue
         df, bal, warn = _load_single_source(kind, payload)
         if not df.empty:
             frames.append(df)
+            qfx_loaded = qfx_loaded or ext == ".qfx"
         if bal is not None:
             balances.append(bal)
             if isinstance(bal, EtradeBalance):
@@ -185,17 +200,27 @@ def _load_and_merge(
 
     csv_account_id = etrade_pdf_accounts[0] if etrade_pdf_accounts else "E*Trade"
 
-    # ---- Pass 2: CSVs (format-detected, aligned to E*Trade PDF account) ----
+    # ---- Pass 2: CSVs + xlsx workbooks (aligned to E*Trade PDF account) ----
     for kind, payload in sources:
-        if _ext(kind, payload) != ".csv":
+        ext = _ext(kind, payload)
+        if ext != ".csv" and ext not in _XLSX_EXTS:
             continue
         df, bal, warn = _load_single_source(kind, payload, csv_account_id=csv_account_id)
         if not df.empty:
             frames.append(df)
+            xlsx_loaded = xlsx_loaded or ext in _XLSX_EXTS
         if bal is not None:
             balances.append(bal)
         if warn:
             warnings.append(warn)
+
+    if qfx_loaded and xlsx_loaded:
+        warnings.append(
+            "An .xlsx trade-log workbook was loaded together with a QFX statement: "
+            "the workbook's IBKR account id is masked and cannot be matched to the "
+            "QFX account, so trades present in both files are not deduplicated and "
+            "would be double counted. Load the workbook on its own."
+        )
 
     if not frames:
         return pd.DataFrame(), balances, warnings
@@ -376,11 +401,12 @@ def get_transaction_summary(
     deeper analysis.
 
     Args:
-        paths: Optional list of local file paths (CSV, QFX, or PDF).
+        paths: Optional list of local file paths (CSV, QFX, PDF, or XLSX).
         file_contents: Optional list of dicts, each with:
             - name (required): filename with extension for format detection
             - data_text (optional): raw text content for CSV/QFX files
-            - data_base64 (optional): base64-encoded bytes for PDFs or binary
+            - data_base64 (optional): base64-encoded bytes for PDFs, XLSX
+              trade-log workbooks, or other binary files
 
     Returns:
         Dict with total_rows, date_range, accounts, transaction_types,
@@ -435,7 +461,7 @@ def compute_daily_pnl(
     """Run the realized PnL pipeline and return daily performance series.
 
     Args:
-        paths: Optional list of local file paths (CSV, QFX, or PDF).
+        paths: Optional list of local file paths (CSV, QFX, PDF, or XLSX).
         file_contents: Optional list of dicts with name and data_text/data_base64.
         account_filter: Account ID to filter by, or "All" for all accounts.
         initial_capital: Starting capital in dollars. Auto-inferred from
@@ -630,7 +656,7 @@ def get_calendar_data(
     """Build weekly calendar matrix of daily PnL for heatmap visualization.
 
     Args:
-        paths: Optional list of local file paths (CSV, QFX, or PDF).
+        paths: Optional list of local file paths (CSV, QFX, PDF, or XLSX).
         file_contents: Optional list of dicts with name and data_text/data_base64.
 
     Returns:
@@ -693,7 +719,7 @@ def compute_risk_metrics(
     """Compute risk-adjusted performance metrics with optional SPX/VIX benchmarking.
 
     Args:
-        paths: Optional list of local file paths (CSV, QFX, or PDF).
+        paths: Optional list of local file paths (CSV, QFX, PDF, or XLSX).
         file_contents: Optional list of dicts with name and data_text/data_base64.
         account_filter: Account ID to filter by, or "All".
         initial_capital: Starting capital in dollars. Auto-inferred if omitted.
@@ -881,7 +907,7 @@ def compute_account_return(
     options) is treated as an external cash flow to/from the strategy.
 
     Args:
-        paths / file_contents: Transaction sources (CSV, QFX, or PDF).
+        paths / file_contents: Transaction sources (CSV, QFX, PDF, or XLSX).
         account_filter: "All" or a specific account id.
         method: "TWR", "MWR", or "Both".
         initial_capital / ending_capital: Optional overrides.  Defaults are
@@ -1052,41 +1078,60 @@ def generate_monthly_report(
     ytd_file_contents: list[dict[str, str]] | None = None,
     offline: bool = False,
     include_html: bool = False,
+    account_filter: str = "All",
+    initial_capital: float | None = None,
 ) -> dict[str, Any]:
-    """Generate the comprehensive monthly trading report for a QFX statement.
+    """Generate the monthly trading report from a QFX statement or a trade-log workbook.
 
     Combines the monthly performance report (daily PnL, weekly breakdown,
     risk-adjusted metrics at the risk-free rate, VIX regimes, SPX benchmark)
-    with the strategy-level edge & risk analysis (bull-put-credit-spread
-    structure, per-leg win rates, stops & re-entry, bootstrap significance,
-    spread-capped tail stress, Monte Carlo, Kelly) and optional cross-month
+    with the strategy-level edge & risk analysis and optional cross-month
     context. Returns the structured report data and writes a self-contained
     HTML report to ``reports/output/``.
 
+    A QFX statement carries intraday timestamps, so the report also includes
+    the bull-put-credit-spread structure, per-leg win rates, stops & re-entry,
+    spread-capped tail stress and Kelly. An ``.xlsx`` trade-log workbook has
+    dates only, so position direction cannot be recovered: the report covers
+    SPX/SPXW option rows at the day level (summary, daily/weekly PnL, risk,
+    VIX regimes, SPX benchmark, bootstrap, Monte Carlo) and shows a notice in
+    place of structure, stops/re-entry and Kelly (``unavailable_sections`` in
+    the result lists them).
+
     Args:
-        paths: Optional local QFX file path(s) for the target month.
+        paths: Optional local file path(s): a QFX statement or an
+            ``.xlsx`` / ``.xlsm`` trade-log workbook. Other types are rejected.
         file_contents: Optional in-memory files as dicts with ``name`` plus
-            ``data_text`` or ``data_base64``.
-        month: Optional calendar-month filter, e.g. ``"2026-06"`` when the
-            file spans several months.
+            ``data_text`` or ``data_base64`` (a workbook must use ``data_base64``).
+        month: Optional calendar-month filter, e.g. ``"2026-06"``. For a
+            workbook the earlier months in the same file feed the cross-month
+            table and pooled significance automatically.
         annual_rf_pct: Annual risk-free rate as a percentage (e.g. 5.0 = 5%).
         label: Report title, e.g. ``"July 2026"``.
-        ytd_paths / ytd_file_contents: Optional prior-month / YTD file for
-            cross-month context and pooled significance.
+        ytd_paths / ytd_file_contents: Optional prior-month / YTD QFX for
+            cross-month context and pooled significance. Not supported with a
+            workbook.
         offline: When True, use the bundled SPX/VIX CSVs without a network
             fetch. Default False -> fetches fresh SPX/VIX from Yahoo Finance
             (keeping the benchmark and VIX regimes up to date) and caches the
-            result back into the CSVs.
+            result back into the CSVs. The bundled cache ends 2026-07-31.
         include_html: When True, also return the full HTML report string.
+        account_filter: Workbook only: ``"All"`` (the combined book) or one
+            account id. Ignored, with a warning, for a QFX statement.
+        initial_capital: Workbook only: capital at the start of the workbook
+            (default 100,000, shown in the report as assumed). Ignored, with a
+            warning, for a QFX statement, which anchors capital on its balance.
 
     Returns:
         Dict with the structured report data (total_pnl, return_pct, risk,
         spreads, edge, stops, tail, takeaways, cross_month, ...) plus
-        ``html_path`` and ``warnings``.
+        ``html_path`` and ``warnings``; a workbook report adds ``source`` and
+        ``unavailable_sections``. On bad input: ``{"error": ..., "warnings": ...}``.
     """
     warnings: list[str] = []
     monthly_src: str | None = None
     ytd_src: str | None = None
+    display_names: dict[str, str] = {}
     tmpdir = tempfile.mkdtemp(prefix="report_")
     try:
         monthly_candidates = list(paths or [])
@@ -1094,6 +1139,7 @@ def generate_monthly_report(
             p = _materialize_file_contents(fc, tmpdir, i)
             if p:
                 monthly_candidates.append(p)
+                display_names[p] = fc.get("name", "?")
             else:
                 warnings.append(f"{fc.get('name', '?')}: could not materialize — skipped")
         if monthly_candidates:
@@ -1106,6 +1152,7 @@ def generate_monthly_report(
             p = _materialize_file_contents(fc, tmpdir, 100 + i)
             if p:
                 ytd_candidates.append(p)
+                display_names[p] = fc.get("name", "?")
         if ytd_candidates:
             ytd_src = ytd_candidates[0]
             if len(ytd_candidates) > 1:
@@ -1115,9 +1162,36 @@ def generate_monthly_report(
             return {"error": "No monthly file provided (pass paths or file_contents).",
                     "warnings": warnings}
 
-        ns = SimpleNamespace(monthly=monthly_src, month=month, ytd=ytd_src,
-                             rf=annual_rf_pct / 100.0, label=label, offline=bool(offline))
-        html_doc, report_data = build_report(ns)
+        try:
+            kind = report_source_kind(monthly_src, display_names.get(monthly_src))
+            if ytd_src:
+                if report_source_kind(ytd_src, display_names.get(ytd_src)) != "qfx":
+                    raise ValueError("ytd_paths / ytd_file_contents must be a QFX statement")
+                if kind == "ledger":
+                    raise ValueError(
+                        "ytd_paths / ytd_file_contents are not supported with a workbook: "
+                        "earlier months are read from the workbook itself")
+        except ValueError as exc:
+            return {"error": str(exc), "warnings": warnings}
+
+        if kind == "qfx":
+            if initial_capital is not None:
+                warnings.append(
+                    "initial_capital is ignored for a QFX statement (capital is anchored on its balance).")
+            if account_filter != "All":
+                warnings.append(
+                    "account_filter is ignored for a QFX statement (a QFX is a single account).")
+
+        ns = SimpleNamespace(
+            monthly=monthly_src, month=month, ytd=ytd_src, rf=annual_rf_pct / 100.0,
+            label=label, offline=bool(offline),
+            account=None if account_filter == "All" else account_filter,
+            initial_capital=initial_capital if kind == "ledger" else None,
+        )
+        try:
+            html_doc, report_data = build_report(ns)
+        except ValueError as exc:
+            return {"error": str(exc), "warnings": warnings}
 
         if report_data is None:
             return {"error": "No trades found in the provided monthly file.", "warnings": warnings}

@@ -275,6 +275,18 @@ Supported statement formats:
 | `.qfx` | IBKR | Perf & Reports → 3rd Party Reports → Quicken Web Connect. The only format that preserves intraday trade timestamps. |
 | `.csv` | IBKR | Perf & Reports → Transaction History, and E*Trade's trades download; the format is auto-detected from the header. |
 | `.pdf` | E*Trade (Morgan Stanley) | Monthly client statement. |
+| `.xlsx` | IBKR + E*Trade | A consolidated trade-log workbook: tabs `Index Options` / `Other Options` / `Stock & ETF` / `Other Transactions`, each with the header `Date, Source, Account, Underlying, Symbol, Description, Order Type, Quantity, Price, Commission, Net Amount`. Pass it by path, or as `data_base64` in `file_contents`. |
+
+The `.xlsx` workbook is read as a standalone ledger, so load it on its own. Its IBKR
+account id is masked (`U***12345`) and cannot be matched to a QFX statement's account, so
+loading both would double count; the server adds a warning when it sees that combination.
+E*Trade rows take the same account id as an E*Trade CSV (or the real id of a loaded E*Trade
+PDF, so those still dedup). The workbook carries no balances, so capital falls back to
+`initial_capital` or the $100,000 default, exactly as with an E*Trade CSV. Columns are
+matched by header name, so dashboard cells beside the ledger are ignored, and each tab's
+data ends at its first blank `Date`. The workbook has dates but no intraday timestamps, so
+`analyze_strategy_compliance` takes QFX statements only; `generate_monthly_report` accepts the
+workbook with the reduced content described below.
 
 What it computes: realized P&L per contract and per day, risk metrics (Sharpe, Sortino,
 drawdown, Net EV, commission drag, SPX/VIX benchmarks), TWR/MWR account returns,
@@ -282,6 +294,18 @@ the daily calendar matrix, and — for bull put spread books — spread reconstr
 per-leg win rates, bootstrap significance, spread-capped tail stress, Monte Carlo,
 Kelly sizing, and stop/re-entry behaviour. `generate_monthly_report` renders all of it
 as a self-contained HTML report under `reports/output/`.
+
+`generate_monthly_report` accepts a QFX statement or the `.xlsx` trade-log workbook (any other type is rejected
+with a clear message). A QFX report is the full analysis. A workbook report is day-level: it covers the
+SPX/SPXW option rows (stock, dividend and non-SPX rows are excluded) with the executive summary, daily and
+weekly P&L, risk-adjusted metrics, VIX regimes, SPX benchmark, bootstrap significance and Monte Carlo, and it
+shows a "Needs QFX timestamps" notice in place of strategy structure, stops/re-entry and Kelly, because a
+contract that was both bought and sold on one day cannot be classified as a short or a long from dates alone.
+`unavailable_sections` in the result lists them. Extra parameters for a workbook: `month="YYYY-MM"` slices one
+month (earlier months in the same file feed the cross-month table and pooled significance automatically),
+`account_filter` (default `"All"`, the combined book) and `initial_capital` (default 100,000, shown on the page
+as assumed, since the workbook has no balances). The bundled SPX/VIX cache ends 2026-07-31; later months need
+`offline=False`, which refreshes and rewrites that cache.
 
 ### Strategy compliance tagging
 
@@ -437,7 +461,7 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/sim/risk.py` | CVaR/exit breakdown/max-DD/bootstrap ruin metrics, SPX path fan |
 | `spx_trade_desk/sim/jobs.py` | Background job registry, progress, cancel, memoized calibration |
 | `spx_trade_desk/sim/tune.py` | Offline knob-tuning runner (`python -m spx_trade_desk.sim.tune`) |
-| `spx_trade_desk/tradelog/io/` | Statement parsers (IBKR QFX/CSV, E*Trade CSV/PDF) and the SPX/VIX market-data loaders |
+| `spx_trade_desk/tradelog/io/` | Statement parsers (IBKR QFX/CSV, E*Trade CSV/PDF, consolidated `.xlsx` trade-log workbook) and the SPX/VIX market-data loaders |
 | `spx_trade_desk/tradelog/domain/` | Realized-P&L engine, merge/dedup, SPX/SPXW filter, OCC symbol parse, risk metrics, TWR/MWR, calendar matrix |
 | `spx_trade_desk/tradelog/analysis/` | Spread reconstruction, edge/tail/Monte-Carlo/Kelly analysis, strategy-compliance tagging |
 | `spx_trade_desk/tradelog/report/` | Self-contained HTML monthly report builder |
