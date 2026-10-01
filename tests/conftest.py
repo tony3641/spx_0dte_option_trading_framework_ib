@@ -556,3 +556,8 @@ def log_capture():
     root.addHandler(handler)
     yield handler
     root.removeHandler(handler)
+
+
+def pytest_configure(config):
+    """Register markers used by the ported trade-log suite."""
+    config.addinivalue_line("markers", "slow: long-running integration test")
