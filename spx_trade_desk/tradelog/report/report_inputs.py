@@ -7,13 +7,14 @@ workbook carries dates only, so position direction cannot be recovered and ``pos
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
 from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
 from spx_trade_desk.tradelog.domain.pnl_engine import build_realized_pnl
+from spx_trade_desk.tradelog.domain.settlement import describe_settlements, load_settle_prices
 from spx_trade_desk.tradelog.domain.strategy_filter import filter_strategy_rows
 from spx_trade_desk.tradelog.io.load_qfx import load_transactions_qfx
 from spx_trade_desk.tradelog.io.load_xlsx import load_transactions_xlsx
@@ -40,6 +41,8 @@ class ReportInputs:
     prior_from_window: bool = False
     # Provenance for the HTML box and report_data; ``None`` for a QFX statement.
     source: dict | None = None
+    # Data-quality notes (e.g. cash settlements inferred or unpriced); shown above the report body.
+    notes: list = field(default_factory=list)
 
     @property
     def has_positions(self) -> bool:
@@ -64,19 +67,24 @@ def report_source_kind(path: str, display_name: str | None = None) -> str:
 def load_qfx_inputs(args) -> ReportInputs:
     """A QFX statement: daily P&L, reconstructed positions and spreads, balance-anchored capital."""
     monthly = str(Path(args.monthly))
-    daily = sa.load_daily(monthly)
-    positions = sa.load_positions(monthly)
-    spreads = sa.reconstruct_spreads(monthly)
-    df_raw, bal = load_transactions_qfx(monthly)
+    prices = load_settle_prices()
+    daily = sa.load_daily(monthly, prices)
+    positions = sa.load_positions(monthly, prices)
+    spreads = sa.reconstruct_spreads(monthly, prices)
+    df_raw, bal = load_transactions_qfx(monthly, settle_prices=prices)
+    # the balance already holds the settlement cash, so the inferred rows belong in the flow sum
     full_initial = bal.total - df_raw["net_amount"].fillna(0.0).sum()
     account_id = str(df_raw["account_id"].iloc[0]) if ("account_id" in df_raw and len(df_raw)) else "—"
+    notes = describe_settlements(df_raw, df_raw.attrs.get("unpriced_expiries", []))
 
     prior_daily = None
     prior_capital = None
     if getattr(args, "ytd", None):
-        prior_daily = sa.load_daily(args.ytd)
-        ytd_raw, ytd_bal = load_transactions_qfx(args.ytd)
+        prior_daily = sa.load_daily(args.ytd, prices)
+        ytd_raw, ytd_bal = load_transactions_qfx(args.ytd, settle_prices=prices)
         prior_capital = ytd_bal.total - ytd_raw["net_amount"].fillna(0.0).sum()
+        notes += [n for n in describe_settlements(ytd_raw, ytd_raw.attrs.get("unpriced_expiries", []))
+                  if n not in notes]
 
     return ReportInputs(
         daily=daily,
@@ -86,6 +94,7 @@ def load_qfx_inputs(args) -> ReportInputs:
         spreads=spreads,
         prior_daily=prior_daily,
         prior_capital=prior_capital,
+        notes=notes,
     )
 
 

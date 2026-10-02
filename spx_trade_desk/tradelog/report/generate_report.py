@@ -925,7 +925,8 @@ def build_report(args) -> tuple[str, dict]:
     P.append(section("12", "Key Takeaways & Recommendations", takeaways))
 
     # ---- Assemble page ----
-    body = (provenance_box(inputs.source) if inputs.source else "") + "".join(P)
+    notes_html = "".join(callout("warn", "Cash settlement", esc(n)) for n in (inputs.notes or []))
+    body = notes_html + (provenance_box(inputs.source) if inputs.source else "") + "".join(P)
     month_label = f"{label} · {span_text}" if label else span_text
     meta = (f"{inputs.account_label} · {month_start.strftime('%Y-%m-%d')} → {month_end.strftime('%Y-%m-%d')} · "
             f"{n_trades} trades · {n_contracts} contracts · risk-free {rf * 100:.0f}%")
@@ -1060,6 +1061,8 @@ def build_report(args) -> tuple[str, dict]:
         "cross_month": [_clean_dict(r) for r in cross_rows],
         "takeaways": [re.sub(r"<[^>]+>", "", x) for x in t],
     }
+    if inputs.notes:
+        report_data["notes"] = list(inputs.notes)
     if not positional:
         report_data["spreads"] = None
         report_data["stops"] = None

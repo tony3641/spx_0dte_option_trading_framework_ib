@@ -4,7 +4,33 @@ All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboa
 
 ---
 
+## Session: October 1, 2026 - Trade-log review fixes
+
+Fixes found while reviewing a live month of manual SPX put-spread trades.
+
+- **QFX ITM settlement** (`tradelog/domain/settlement.py`): an IBKR QFX omits the cash
+  settlement of an in-the-money expired SPXW leg, so P&L, daily series and the balance-anchored
+  capital were wrong for any month with an ITM expiry. QFX loads now infer the missing
+  `Cash Settlement` rows from the official SPX close (`reports/data/spx_closes.csv`), only for
+  contracts whose whole history is on their expiry day; a real settlement row wins, unpriced
+  expiries are warned about, and an ITM expiry is not counted as a stop. `reconstruct_spreads`
+  now takes the long leg's cost from what was paid (it used `abs(total_pnl)`, wrong once the long
+  is sold back or settled).
+- **Compliance delta** (`tagging`, `analyze_strategy_compliance`): the credit-implied delta used
+  the daily close as the spot; it now needs the spot at the entry time (`intraday_spot_path` CSV
+  or yfinance 1-minute bars) and is unverifiable otherwise.
+- **Engine** (`strategy/engine.py`): bracket stop-limit gets a cushion beyond the trigger so a
+  gap still fills; `classify_parent_close` reports `stop_loss` only when the stop order executed
+  (manual closes are `manual`, post-session closes `expire`); `parent_unrealized_pnl` water marks
+  are dollars over `credit x 100 x spreads` (they were dollars over the per-share credit).
+- **Simulator**: `parent_unrealized_pnl` now matches live (latches while the parent is open,
+  supports `gain_multiple`, scales by quantity, child starts after the parent exits); removed the
+  dead `_spread_rows`. A `time_of_day` child still starts without waiting for the parent.
+
+---
+
 ## Session: September 10, 2026 - Parallel sim execution (process pool)
+
 
 - Added `sim_parallel.py`: the sim's `(sweep cell, chunk)` work now runs on a
   spawn-context process pool instead of one core. Processes, not threads — the

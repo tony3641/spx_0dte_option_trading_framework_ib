@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, date
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Mapping, Optional, Union
 
 import pandas as pd
 
@@ -347,6 +347,8 @@ _EMPTY_COLUMNS = [
 
 def load_transactions_qfx(
     file_or_path: Union[bytes, str, Path, object],
+    settle_prices: Optional[Mapping[date, float]] = None,
+    as_of: Optional[date] = None,
 ) -> tuple[pd.DataFrame, InvBalance]:
     """
     Parse a QFX/OFX investment statement.
@@ -356,6 +358,15 @@ def load_transactions_qfx(
     file_or_path:
         Raw bytes, a file-like object (e.g. Streamlit UploadedFile), or a
         path (str / Path) to the .qfx file.
+    settle_prices:
+        Optional ``{expiry date: official SPX close}``. A QFX omits the cash settlement of an
+        in-the-money expiry, so when this is given the missing ``Cash Settlement`` rows are
+        inferred from it (see ``domain.settlement``). Left out, the ledger is exactly what the
+        file says. Expiries that have an open position but no price are listed in
+        ``df.attrs["unpriced_expiries"]``.
+    as_of:
+        "Today" for the settlement inference (expiries after it are skipped); defaults to the
+        current date.
 
     Returns
     -------
@@ -426,6 +437,11 @@ def load_transactions_qfx(
     else:
         df = pd.DataFrame(rows)
         df = df.sort_values("activity_date").reset_index(drop=True)
+
+    if settle_prices is not None:
+        from spx_trade_desk.tradelog.domain.settlement import infer_expiry_settlements
+        df, unpriced = infer_expiry_settlements(df, settle_prices, as_of=as_of)
+        df.attrs["unpriced_expiries"] = unpriced
 
     invbal = _parse_invbal(text)
     invbal.account_id = account_id

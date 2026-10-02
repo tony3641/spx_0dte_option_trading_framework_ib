@@ -133,7 +133,7 @@ def test_matrix_reports_pass_fail_and_unverifiable_per_strategy():
     market = pd.DataFrame([{"activity_date": date(2026, 7, 15),
                             "spx_close": 7405.0, "vix_close": 16.0}])
 
-    matrix = tagging.spread_condition_matrix(spread, strategies, market=market)
+    matrix = tagging.spread_condition_matrix(spread, strategies, market=market, spot_at=lambda dt: 7405.0)
     by_strategy = matrix.set_index("strategy")
 
     # `==` rather than `is`: pandas stores a None-free column as numpy bool, and
@@ -150,9 +150,42 @@ def test_a_strategy_narrower_than_the_implied_delta_fails_the_delta_check():
     strategies = {"too_low": _bull_put_strategy("too_low", delta=(0.90, 0.99))}
     market = pd.DataFrame([{"activity_date": date(2026, 7, 15), "spx_close": 7405.0}])
 
-    matrix = tagging.spread_condition_matrix(spread, strategies, market=market)
+    matrix = tagging.spread_condition_matrix(spread, strategies, market=market, spot_at=lambda dt: 7405.0)
 
     assert "short_delta" in matrix.iloc[0]["failed"]
+
+
+def test_delta_uses_the_spot_at_entry_not_the_daily_close():
+    """Regression: the daily close was used as the spot, so on a day SPX moved the short strike sat at
+    the wrong distance and the credit-implied delta (and its band check) was wrong."""
+    strategies = {"s": _bull_put_strategy("s", delta=(0.0, 1.0))}
+    market = pd.DataFrame([{"activity_date": date(2026, 7, 15), "spx_close": 7000.0}])   # close far from entry
+    seen = []
+
+    def spot_at(moment):
+        seen.append(moment)
+        return 7405.0
+
+    matrix = tagging.spread_condition_matrix(_spread(), strategies, market=market, spot_at=spot_at)
+    assert seen == [datetime(2026, 7, 15, 9, 30)]
+    assert "short_delta" not in matrix.iloc[0]["unverifiable"]
+    # a daily close alone no longer stands in for the spot
+    bare = tagging.spread_condition_matrix(_spread(), strategies, market=market)
+    assert "short_delta" in bare.iloc[0]["unverifiable"]
+    # and a lookup that cannot answer (data gap) is unverifiable, not failed
+    gap = tagging.spread_condition_matrix(_spread(), strategies, market=market, spot_at=lambda dt: None)
+    assert "short_delta" in gap.iloc[0]["unverifiable"] and "short_delta" not in gap.iloc[0]["failed"]
+
+
+def test_intraday_spot_lookup_takes_the_last_bar_within_tolerance():
+    bars = pd.DataFrame({"ts": pd.to_datetime(["2026-07-15 09:30", "2026-07-15 09:31", "2026-07-15 09:40"]),
+                         "close": [7400.0, 7402.0, 7390.0]})
+    spot_at = tagging.intraday_spot_lookup(bars, tolerance_minutes=2)
+    assert spot_at(datetime(2026, 7, 15, 9, 30, 45)) == 7400.0
+    assert spot_at(datetime(2026, 7, 15, 9, 32)) == 7402.0
+    assert spot_at(datetime(2026, 7, 15, 9, 36)) is None       # last bar is 5 min old
+    assert spot_at(datetime(2026, 7, 15, 9, 29)) is None       # before the first bar
+    assert tagging.intraday_spot_lookup(None) is None
 
 
 def test_unpaired_short_is_unverifiable_not_failed():
@@ -208,7 +241,7 @@ def test_matrix_carries_the_source_column_and_summary_groups_by_it():
     both = pd.concat([jan, feb], ignore_index=True)
     market = pd.DataFrame([{"activity_date": date(2026, 7, 15), "spx_close": 7405.0}])
 
-    matrix = tagging.spread_condition_matrix(both, strategies, market=market)
+    matrix = tagging.spread_condition_matrix(both, strategies, market=market, spot_at=lambda dt: 7405.0)
     summary = tagging.strategy_compliance_summary(matrix, strategies)
 
     assert set(matrix["source"]) == {"jan.qfx", "feb.qfx"}
@@ -266,22 +299,18 @@ def test_exit_audit_falls_back_to_the_short_leg_for_an_unpaired_trade():
     assert row["loss_ratio"] == pytest.approx(8.105, abs=0.01)
 
 
-def test_tool_evaluates_delta_from_market_data(tmp_path):
+def test_tool_evaluates_delta_from_the_intraday_spot_at_entry(tmp_path):
     """Finding 1 regression: the tool never passed a market frame, so the delta
-    was always unverifiable and NO strategy could ever match through the tool —
-    every strategy reported 'matched 0 real fills'.
+    was always unverifiable and NO strategy could ever match through the tool.
 
-    The band is derived from the seed market data the tool itself loads: the
-    fixture's strikes sit far OTM relative to the real 2026-07-15 close, so a
-    hand-picked band would be a guess about the market rather than a test of the
-    plumbing. The solver's own correctness is pinned by the round-trip test.
+    The delta now needs the spot at the entry time, supplied here as an invented
+    1-minute bar file (the daily close is deliberately not used). Without it the
+    delta must come back unverifiable.
     """
-    seed = pd.read_csv(REPORT_DATA_DIR / "spx_closes.csv")
-    spot = float(seed[pd.to_datetime(seed["activity_date"]).dt.date
-                      == date(2026, 7, 15)]["spx_close"].iloc[0])
+    spot = 7405.0
     t_years = tagging._year_fraction(datetime(2026, 7, 15, 9, 30), date(2026, 7, 15))
     expected_delta = tagging.short_delta_estimate(spot, 7400.0, 7350.0, t_years, 0.287, 0.04)
-    assert expected_delta is not None, "the seed data must admit a solution"
+    assert expected_delta is not None, "the fixture must admit a solution"
 
     cfg = tmp_path / "strategies.json"
     cfg.write_text(json.dumps({"T": {
@@ -296,15 +325,20 @@ def test_tool_evaluates_delta_from_market_data(tmp_path):
     }}), encoding="utf-8")
     qfx = tmp_path / "min.qfx"
     qfx.write_text(MINIMAL_QFX, encoding="latin-1")
+    bars = tmp_path / "bars.csv"
+    bars.write_text("ts,close\n2026-07-15 09:29:00,7404.0\n2026-07-15 09:30:00,7405.0\n", encoding="utf-8")
 
     from spx_trade_desk.mcp.server import analyze_strategy_compliance
     result = analyze_strategy_compliance(
-        paths=[str(qfx)], strategies_path=str(cfg), offline=True)
+        paths=[str(qfx)], strategies_path=str(cfg), offline=True, intraday_spot_path=str(bars))
 
     assert "error" not in result, result.get("traceback")
     row = result["condition_matrix"][0]
     assert "short_delta" not in row["unverifiable"]     # the delta was evaluated
     assert result["compliance"][0]["spreads_matching"] == 1
+
+    bare = analyze_strategy_compliance(paths=[str(qfx)], strategies_path=str(cfg), offline=True)
+    assert "short_delta" in bare["condition_matrix"][0]["unverifiable"]
 
 
 def test_tool_labels_each_spread_with_its_source_file(tmp_path):
@@ -394,7 +428,7 @@ def test_compliance_summary_counts_matches():
     strategies = {"passes": _bull_put_strategy("passes", delta=(0.0, 0.5))}
     market = pd.DataFrame([{"activity_date": date(2026, 7, 15),
                             "spx_close": 7405.0, "vix_close": 16.0}])
-    matrix = tagging.spread_condition_matrix(_spread(), strategies, market=market)
+    matrix = tagging.spread_condition_matrix(_spread(), strategies, market=market, spot_at=lambda dt: 7405.0)
 
     summary = tagging.strategy_compliance_summary(matrix, strategies)
 

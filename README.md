@@ -307,6 +307,21 @@ month (earlier months in the same file feed the cross-month table and pooled sig
 as assumed, since the workbook has no balances). The bundled SPX/VIX cache ends 2026-07-31; later months need
 `offline=False`, which refreshes and rewrites that cache.
 
+### ITM expiry settlement
+
+An IBKR QFX records a worthless 0DTE expiry as a `$0` closing trade but omits the cash
+settlement of an in-the-money one (only the transactions CSV carries it), so P&L built
+straight from a QFX overstates any month with an ITM expiry. The QFX paths (the MCP tools,
+`generate_monthly_report`, `strategy_analysis`) now infer the missing `Cash Settlement`
+rows: for each SPXW contract whose whole history sits on its expiry day and whose net
+quantity is non-zero, the cash flow is `net signed quantity × intrinsic × 100` at the official
+SPX close from `reports/data/spx_closes.csv`. A real settlement row (from a transactions CSV)
+always wins, an expiry with no close on file is listed in a warning instead of being guessed,
+and the day's own close is never trusted until the day is over. Inferred rows are labelled
+"Cash settlement (inferred ...)". The inference also keeps the balance-anchored starting
+capital consistent (ending balance minus all cash flows, settlement included). An ITM expiry
+is not counted as a stop in the stops/re-entry section: nothing was closed.
+
 ### Strategy compliance tagging
 
 `analyze_strategy_compliance` scores each reconstructed spread against the entry
@@ -316,11 +331,16 @@ conditions of the strategies in `config/strategies.json`. Every condition resolv
 counted as a failure.
 
 Only **QFX** statements are accepted: they are the one format carrying the intraday
-entry timestamps the `entry_window` check needs. SPX and VIX closes for the statement's
-date range are loaded alongside the trades — fresh from Yahoo Finance by default, or the
-cached CSVs under `reports/data/` with `offline=True` — so the delta and VIX gates are
-decidable. Where no close exists for an entry date, those conditions come back
-unverifiable rather than failing.
+entry timestamps the `entry_window` check needs. The VIX close for the statement's
+date range is loaded alongside the trades — fresh from Yahoo Finance by default, or the
+cached CSVs under `reports/data/` with `offline=True` — so the VIX gate is decidable.
+The credit-implied delta needs the SPX **spot at the entry time**, not the daily close
+(which can sit hundreds of points from where SPX traded at 10:00). Pass
+`intraday_spot_path` (a CSV with `ts` and `close` columns, naive ET, e.g. 1-minute bars)
+or, online, recent days come from yfinance 1-minute bars (about a week of history).
+Without a bar within 5 minutes of the entry, the delta check is unverifiable rather than
+scored against the close. Where no VIX close exists for an entry date, that gate comes
+back unverifiable rather than failing.
 
 Note that the default (`offline=False`) **rewrites** `reports/data/*.csv` as it merges
 the freshly fetched rows in — that is how the offline cache stays current, and it means
@@ -328,9 +348,9 @@ a default run modifies tracked files. Pass `offline=True` to leave them alone.
 
 The short delta is not recorded in any statement. It is inferred: the observed spread
 credit is used to back out the BSM implied volatility, and that vol gives the delta —
-so the `short_delta` band can be checked against real fills. The inference assumes the
-SPX **close** on the entry date (intraday spot is not in the statement, so big-move days
-carry the most error) and, where a statement has no timestamp, a 12:00 ET entry.
+so the `short_delta` band can be checked against real fills. The inference uses the SPX
+spot at the entry time (see above) and, where a statement has no timestamp, the delta is
+left unverifiable instead of assuming a 12:00 ET entry.
 
 `exit_audit` measures each trade's realized loss ratio against the strategy's stop
 multiple. For a paired spread it divides the **spread's** P&L by its net credit, which

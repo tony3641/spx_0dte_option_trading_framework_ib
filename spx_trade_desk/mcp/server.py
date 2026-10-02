@@ -36,6 +36,9 @@ from spx_trade_desk.resources import REPORT_DATA_DIR, REPORT_OUTPUT_DIR
 from spx_trade_desk.tradelog.analysis import strategy_analysis as sa
 from spx_trade_desk.tradelog.analysis import tagging as tg
 from spx_trade_desk.tradelog.domain.merge import merge_transaction_frames
+from spx_trade_desk.tradelog.domain.settlement import (
+    describe_settlements, infer_expiry_settlements, load_settle_prices,
+)
 from spx_trade_desk.tradelog.domain.parse_option_symbol import (
     ParsedOption,
     build_occ_symbol as _domain_build_occ_symbol,
@@ -238,6 +241,15 @@ def _load_and_merge(
         # Fall back to simple concatenation
         merged = pd.concat(frames, ignore_index=True)
         merged = merged.sort_values("activity_date").reset_index(drop=True)
+
+    if qfx_loaded:
+        # A QFX leaves out the cash settlement of an ITM expiry; settle those at the official
+        # close. Done after the merge so a real settlement row from a transactions CSV wins.
+        try:
+            merged, unpriced = infer_expiry_settlements(merged, load_settle_prices())
+            warnings.extend(describe_settlements(merged, unpriced))
+        except Exception as exc:
+            warnings.append(f"Cash-settlement inference skipped: {exc}")
 
     return merged, balances, warnings
 
@@ -1233,6 +1245,7 @@ def analyze_strategy_compliance(
     strategies_path: str | None = None,
     annual_rf_pct: float = 4.0,
     offline: bool = False,
+    intraday_spot_path: str | None = None,
 ) -> dict[str, Any]:
     """Score realized spreads against the conditions in config/strategies.json.
 
@@ -1241,9 +1254,13 @@ def analyze_strategy_compliance(
     Read-only: the strategy config is never modified.
 
     Only QFX statements are accepted — they are the one format that carries the
-    intraday timestamps the entry-window check needs. SPX and VIX closes for the
-    statement's date range are loaded (fresh by default; ``offline=True`` uses
-    the cached CSVs) so the credit-implied delta and the VIX gate are decidable.
+    intraday timestamps the entry-window check needs. The VIX close for the
+    statement's date range is loaded (fresh by default; ``offline=True`` uses
+    the cached CSVs) for the VIX gate. The credit-implied delta needs the SPX spot
+    at each entry time: pass ``intraday_spot_path`` (a CSV with ``ts`` and ``close``
+    columns, naive ET) or, online, recent days come from yfinance 1-minute bars.
+    With no spot at the entry time the delta check is reported unverifiable — the
+    daily close is not used as a stand-in.
     """
     try:
         strategies = tg.load_strategy_specs(strategies_path)
@@ -1296,11 +1313,13 @@ def analyze_strategy_compliance(
             first_day = min(pd.to_datetime(spreads["date"]).min() for _, spreads, _ in loaded)
             last_day = max(pd.to_datetime(spreads["date"]).max() for _, spreads, _ in loaded)
             market = _load_market_frame(first_day, last_day, offline=offline)
+            spot_at = tg.intraday_spot_lookup(
+                _load_intraday_spots(first_day, last_day, intraday_spot_path, offline=offline))
 
             matrices, summaries, audits = [], [], []
             for _qfx_path, spreads, positions in loaded:
                 matrix = tg.spread_condition_matrix(
-                    spreads, strategies, market=market, r=annual_rf_pct / 100.0)
+                    spreads, strategies, market=market, r=annual_rf_pct / 100.0, spot_at=spot_at)
                 matrices.append(matrix)
                 summaries.append(tg.strategy_compliance_summary(matrix, strategies))
                 audits.append(tg.exit_audit(spreads, positions, strategies))
@@ -1328,6 +1347,39 @@ def analyze_strategy_compliance(
         }
     except Exception as exc:
         return {"error": str(exc), "traceback": traceback.format_exc()}
+
+
+def _load_intraday_spots(first_day, last_day, csv_path: str | None = None, offline: bool = False):
+    """Intraday SPX bars (``ts``, ``close``; naive ET) for the entry-time spot, or None.
+
+    A user-supplied CSV (``ts`` + ``close`` columns, e.g. 1-minute bars) is preferred; otherwise
+    yfinance 1-minute bars are tried, which only reach back about a week. Failure is not fatal:
+    without a spot at the entry time the credit-implied delta stays unverifiable.
+    """
+    try:
+        if csv_path:
+            frame = pd.read_csv(csv_path)
+            frame.columns = [str(c).strip().lower() for c in frame.columns]
+            if "ts" not in frame.columns:
+                for alias in ("datetime", "timestamp", "time", "date"):
+                    if alias in frame.columns:
+                        frame = frame.rename(columns={alias: "ts"})
+                        break
+            return frame[["ts", "close"]]
+        if offline:
+            return None
+        import yfinance as yf
+        start = pd.Timestamp(first_day).normalize()
+        end = pd.Timestamp(last_day).normalize() + pd.Timedelta(days=1)
+        hist = yf.Ticker("^GSPC").history(start=start, end=end, interval="1m")
+        if hist is None or hist.empty:
+            return None
+        idx = hist.index
+        if getattr(idx, "tz", None) is not None:
+            idx = idx.tz_convert("America/New_York").tz_localize(None)
+        return pd.DataFrame({"ts": idx, "close": hist["Close"].to_numpy()})
+    except Exception:
+        return None
 
 
 def _load_market_frame(first_day, last_day, offline: bool = False):

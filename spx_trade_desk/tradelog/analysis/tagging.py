@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -205,8 +205,37 @@ def _bucket_state(value, params, base) -> str:
     return PASS if _passes_bucket(float(value), op, lo, hi) else FAIL
 
 
+def intraday_spot_lookup(bars: Optional[pd.DataFrame], tolerance_minutes: float = 5.0) -> Optional[Callable]:
+    """Build ``spot_at(datetime) -> float | None`` from intraday SPX bars.
+
+    ``bars`` has a timestamp column ``ts`` and a ``close`` column (naive ET, the same clock as the
+    statement's entry times). The lookup returns the last bar at or before the entry time, and
+    ``None`` when that bar is more than ``tolerance_minutes`` old, so a gap in the data reads as
+    unverifiable rather than as a stale price.
+    """
+    if bars is None or bars.empty or not {"ts", "close"} <= set(bars.columns):
+        return None
+    frame = bars[["ts", "close"]].copy()
+    frame["ts"] = pd.to_datetime(frame["ts"])
+    frame = frame.dropna().sort_values("ts").reset_index(drop=True)
+    if frame.empty:
+        return None
+    stamps = frame["ts"].to_numpy()
+    closes = frame["close"].to_numpy(dtype=float)
+    tol = np.timedelta64(int(tolerance_minutes * 60), "s")
+
+    def spot_at(moment: datetime) -> Optional[float]:
+        t = np.datetime64(pd.Timestamp(moment).to_datetime64())
+        i = int(np.searchsorted(stamps, t, side="right")) - 1
+        if i < 0 or (t - stamps[i]) > tol:
+            return None
+        return float(closes[i])
+
+    return spot_at
+
+
 def _evaluate(row, strategy: Strategy, market_row, assumed_entry: bool,
-              entry_dt: Optional[datetime], r: float) -> dict:
+              entry_dt: Optional[datetime], r: float, spot_at: Optional[Callable] = None) -> dict:
     checks: dict[str, str] = {}
     conds = {c.kind: c for c in strategy.conditions if c.enabled}
 
@@ -216,8 +245,12 @@ def _evaluate(row, strategy: Strategy, market_row, assumed_entry: bool,
     checks["spread_width"] = _range_state(row.get("width"), conds.get("spread_width"), DEFAULT_WIDTH_BAND)
     checks["credit"] = _range_state(_credit_per_share(row), conds.get("credit"), DEFAULT_CREDIT_BAND)
 
+    # The credit-implied delta needs the spot AT the entry time. The daily close is not a stand-in:
+    # on a day SPX moved, it puts the short strike at the wrong distance and mis-scores the delta
+    # band, so without an intraday spot the check is unverifiable.
     delta = None
-    if market_row is not None and entry_dt is not None and _finite(row.get("width")):
+    spot = spot_at(entry_dt) if (spot_at is not None and entry_dt is not None and not assumed_entry) else None
+    if _finite(spot) and _finite(row.get("width")):
         expiry = row.get("expiry")
         try:
             expiry_date = date.fromisoformat(str(expiry)[:10])
@@ -225,7 +258,7 @@ def _evaluate(row, strategy: Strategy, market_row, assumed_entry: bool,
             expiry_date = None
         if expiry_date is not None:
             delta = short_delta_estimate(
-                spot=float(market_row.get("spx_close")),
+                spot=float(spot),
                 k_short=float(row.get("short_strike")),
                 k_long=float(row.get("long_strike")),
                 t_years=_year_fraction(entry_dt, expiry_date),
@@ -275,12 +308,14 @@ def _evaluate(row, strategy: Strategy, market_row, assumed_entry: bool,
 
 def spread_condition_matrix(spreads: pd.DataFrame, strategies: dict[str, Strategy],
                             market: Optional[pd.DataFrame] = None,
-                            r: float = DEFAULT_RISK_FREE_RATE) -> pd.DataFrame:
+                            r: float = DEFAULT_RISK_FREE_RATE,
+                            spot_at: Optional[Callable] = None) -> pd.DataFrame:
     """One row per (spread × strategy) with pass / fail / unverifiable detail.
 
-    ``market`` is an optional frame with ``activity_date`` plus ``spx_close``
-    and/or ``vix_close``. Without it, spot-dependent checks come back
-    unverifiable rather than failed.
+    ``market`` is an optional frame with ``activity_date`` plus ``vix_close`` (and ``spx_close``,
+    which is not used for the delta). ``spot_at`` maps an entry datetime to the SPX spot then
+    (see ``intraday_spot_lookup``). Without it the credit-implied delta, which needs the spot at
+    the entry time, comes back unverifiable rather than failed.
     """
     rows = []
     for index, row in spreads.iterrows():
@@ -292,7 +327,7 @@ def spread_condition_matrix(spreads: pd.DataFrame, strategies: dict[str, Strateg
         entry_dt, assumed_entry = _entry_datetime(row)
         market_row = _market_row(market, row.get("date"))
         for name, strategy in strategies.items():
-            checks = _evaluate(row, strategy, market_row, assumed_entry, entry_dt, r)
+            checks = _evaluate(row, strategy, market_row, assumed_entry, entry_dt, r, spot_at)
             failed = sorted(k for k, v in checks.items() if v == FAIL)
             unverifiable = sorted(k for k, v in checks.items() if v == UNVERIFIABLE)
             if failed:

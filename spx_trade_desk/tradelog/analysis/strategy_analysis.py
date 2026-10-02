@@ -16,39 +16,56 @@ them.
 from __future__ import annotations
 
 import re as _re
-from datetime import datetime as _dt
+from datetime import date as _date, datetime as _dt, time as _time
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping, Optional
 
 import numpy as np
 import pandas as pd
 
 from spx_trade_desk.tradelog.domain.parse_option_symbol import parse_occ_option_symbol
+from spx_trade_desk.tradelog.domain.settlement import find_settlements, load_settle_prices
 from spx_trade_desk.tradelog.io.load_qfx import _build_security_map, load_transactions_qfx
 from spx_trade_desk.tradelog.domain.pnl_engine import build_realized_pnl
+
+SETTLE_TRANS_TYPE = "Settle"          # trans_type of a cash-settlement leg in load_options_with_time
+SETTLE_TIME = _time(16, 0)            # SPXW settles at the 16:00 ET close
 
 
 # ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
 
-def load_enriched(path: str) -> pd.DataFrame:
-    """Load a QFX file and return the pnl_engine enriched rows."""
-    df, _ = load_transactions_qfx(path)
+def _settle_prices(settle_prices: Optional[Mapping[_date, float]]) -> Mapping[_date, float]:
+    """``None`` -> official closes from the repo's market-data cache; pass ``{}`` to switch inference off."""
+    return load_settle_prices() if settle_prices is None else settle_prices
+
+
+def load_enriched(path: str, settle_prices: Optional[Mapping[_date, float]] = None) -> pd.DataFrame:
+    """Load a QFX file and return the pnl_engine enriched rows.
+
+    ITM expiries the QFX leaves out are settled at the official close (``settle_prices``, default
+    the repo's cached SPX closes; ``{}`` turns the inference off).
+    """
+    df, _ = load_transactions_qfx(path, settle_prices=_settle_prices(settle_prices))
     return build_realized_pnl(df).enriched_rows
 
 
-def load_daily(path: str) -> pd.DataFrame:
-    """Return the daily realized-PnL series for a QFX file."""
-    df, _ = load_transactions_qfx(path)
+def load_daily(path: str, settle_prices: Optional[Mapping[_date, float]] = None) -> pd.DataFrame:
+    """Return the daily realized-PnL series for a QFX file (ITM expiries settled, see ``load_enriched``)."""
+    df, _ = load_transactions_qfx(path, settle_prices=_settle_prices(settle_prices))
     return build_realized_pnl(df).daily
 
 
-def load_options_with_time(path: str) -> pd.DataFrame:
+def load_options_with_time(path: str, settle_prices: Optional[Mapping[_date, float]] = None) -> pd.DataFrame:
     """Re-parse QFX option transactions preserving true intra-day order.
 
     The project loader truncates DTTRADE to the date; here we keep the full
     timestamp so opening vs closing legs are correctly ordered.
+
+    A QFX omits the cash settlement of an in-the-money expiry, so each unclosed SPXW contract that
+    expired ITM gets a ``Settle`` leg at the 16:00 close carrying the settlement cash (see
+    ``domain.settlement``); ``settle_prices`` is as in ``load_enriched``.
     """
     text = Path(path).read_text(encoding="latin-1", errors="replace")
     sec_map = _build_security_map(text)
@@ -86,6 +103,7 @@ def load_options_with_time(path: str) -> pd.DataFrame:
         qty = units if tag == "BUYOPT" else -units
         rows.append({
             "ts": ts,
+            "symbol": sec.ticker,
             "contract_key": po.contract_key,
             "expiry": po.expiry_date.isoformat(),
             "strike": float(po.strike),
@@ -93,32 +111,66 @@ def load_options_with_time(path: str) -> pd.DataFrame:
             "net_amount": total,
             "trans_type": "Buy" if tag == "BUYOPT" else "Sell",
         })
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+
+    legs = pd.DataFrame({
+        "account_id": "",
+        "symbol": frame["symbol"],
+        "trade_date": [t.date() if (t is not None and not pd.isna(t)) else pd.NaT for t in frame["ts"]],
+        "signed_qty": np.where(frame["trans_type"] == "Buy", frame["qty"], -frame["qty"]),
+    })
+    found, _ = find_settlements(legs, _settle_prices(settle_prices), include_worthless=True)
+    if found:
+        extra = []
+        for s in found:
+            po = parse_occ_option_symbol(s.symbol)
+            extra.append({
+                "ts": _dt.combine(s.expiry, SETTLE_TIME),
+                "symbol": s.symbol,
+                "contract_key": po.contract_key,
+                "expiry": s.expiry.isoformat(),
+                "strike": float(s.strike),
+                "qty": abs(s.net_qty),
+                "net_amount": s.cash,
+                "trans_type": SETTLE_TRANS_TYPE,
+            })
+        frame = pd.concat([frame, pd.DataFrame(extra)], ignore_index=True)
+    return frame
 
 
-def load_positions(path: str) -> pd.DataFrame:
+def load_positions(path: str, settle_prices: Optional[Mapping[_date, float]] = None) -> pd.DataFrame:
     """One row per closed position (contract_key), direction from opening leg.
 
     Columns: contract_key, date, open_ts, direction (short/long), contracts,
-    total_pnl (net of commission), credit (short side: total premium received),
-    expiry, strike.
+    total_pnl (net of commission, including any cash settlement), trade_pnl (the same without the
+    settlement), settlement (cash settlement at expiry, 0 when none), credit (short side: total premium
+    received), debit (long side: total premium paid), expiry, strike.
     """
-    legs = load_options_with_time(path)
+    legs = load_options_with_time(path, settle_prices)
     out = []
     for key, g in legs.groupby("contract_key"):
         g = g.sort_values("ts", na_position="last")
-        opening = g.iloc[0]["trans_type"]
+        trades = g[g["trans_type"] != SETTLE_TRANS_TYPE]
+        settles = g[g["trans_type"] == SETTLE_TRANS_TYPE]
+        first = trades.iloc[0]
+        opening = first["trans_type"]
         out.append({
             "contract_key": key,
-            "date": pd.Timestamp(g.iloc[0]["ts"].date()) if g.iloc[0]["ts"] else None,
-            "open_ts": g.iloc[0]["ts"],
+            "date": pd.Timestamp(first["ts"].date()) if first["ts"] else None,
+            "open_ts": first["ts"],
             "direction": "short" if opening == "Sell" else "long",
             "contracts": g["qty"].abs().sum() / 2.0,
             "total_pnl": g["net_amount"].sum(),
-            "credit": g.loc[g["trans_type"] == "Sell", "net_amount"].sum()
+            "trade_pnl": trades["net_amount"].sum(),
+            "settlement": settles["net_amount"].sum(),
+            "credit": trades.loc[trades["trans_type"] == "Sell", "net_amount"].sum()
                       if opening == "Sell" else None,
-            "expiry": g.iloc[0]["expiry"],
-            "strike": float(g.iloc[0]["strike"]),
+            "debit": -trades.loc[trades["trans_type"] == "Buy", "net_amount"].sum()
+                     if opening == "Buy" else None,
+            "expiry": first["expiry"],
+            "strike": float(first["strike"]),
         })
     return pd.DataFrame(out)
 
@@ -127,7 +179,7 @@ def load_positions(path: str) -> pd.DataFrame:
 # Spread reconstruction
 # ---------------------------------------------------------------------------
 
-def reconstruct_spreads(path: str) -> pd.DataFrame:
+def reconstruct_spreads(path: str, settle_prices: Optional[Mapping[_date, float]] = None) -> pd.DataFrame:
     """Pair short positions with lower-strike longs into bull put spreads.
 
     Returns one row per short position: date, expiry, short_strike, qty,
@@ -135,11 +187,13 @@ def reconstruct_spreads(path: str) -> pd.DataFrame:
     long_strike, width, credit_ct (net spread credit = short - long cost),
     max_loss_ct (width*100 - credit_ct).  Unpaired shorts are flagged.
     """
-    pos = load_positions(path)
+    pos = load_positions(path, settle_prices)
     rows = []
     for (d, exp), g in pos.groupby(["date", "expiry"]):
         shorts = g[g["direction"] == "short"].copy()
         longs = g[g["direction"] == "long"].copy()
+        # cost of the long as bought: its P&L is not the cost once it was sold back or settled ITM
+        longs["cost_ct"] = longs["debit"] / longs["contracts"]
         for _, s in shorts.iterrows():
             s_qty = int(s["contracts"])
             s_prem_ct = (s["credit"] or 0.0) / s_qty
@@ -156,7 +210,7 @@ def reconstruct_spreads(path: str) -> pd.DataFrame:
                 if use > 0:
                     matched_qty += use
                     width = float(s["strike"] - lo["strike"])
-                    long_cost_ct = abs(lo["total_pnl"]) / lo["contracts"]
+                    long_cost_ct = float(lo["cost_ct"])
                     longs.loc[lo.name, "contracts"] -= use
                     s_qty -= use
             credit_ct = (s_prem_ct - long_cost_ct) if (matched_qty and long_cost_ct is not None) else s_prem_ct
@@ -314,7 +368,11 @@ def gap_stress(spreads: pd.DataFrame, spx_map: dict,
 # ---------------------------------------------------------------------------
 
 def stop_events(positions: pd.DataFrame, stop_multiple: float = 5.0) -> pd.DataFrame:
-    """Flag short positions closed at >= stop_multiple x credit (default 5x)."""
+    """Flag short positions closed at >= stop_multiple x credit (default 5x).
+
+    Uses the trade P&L only: an ITM expiry settled in cash is not a stop (nothing was closed), so
+    its settlement is left out here and shows up in the daily and per-leg figures instead.
+    """
     stops = []
     for _, r in positions.iterrows():
         if r["direction"] != "short":
@@ -322,12 +380,13 @@ def stop_events(positions: pd.DataFrame, stop_multiple: float = 5.0) -> pd.DataF
         credit = r["credit"]
         if credit is None or credit <= 0:
             continue
-        loss_ratio = (-r["total_pnl"]) / credit if r["total_pnl"] < 0 else 0.0
+        pnl = r["trade_pnl"] if "trade_pnl" in r.index else r["total_pnl"]
+        loss_ratio = (-pnl) / credit if pnl < 0 else 0.0
         stops.append({
             "date": r["date"],
             "open_ts": r["open_ts"],
             "strike": float(r["strike"]),
-            "total_pnl": float(r["total_pnl"]),
+            "total_pnl": float(pnl),
             "credit": float(credit),
             "loss_ratio": float(loss_ratio),
             "is_stop": bool(loss_ratio >= stop_multiple),
