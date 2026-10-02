@@ -18,6 +18,13 @@ from spx_trade_desk.market.hours import (
 
 logger = logging.getLogger(__name__)
 
+# The stop bracket's limit is placed this far beyond its trigger (spread points: the larger
+# of the fixed floor and the fraction of the trigger) so the stop can still fill after a gap.
+STOP_LIMIT_CUSHION_MIN = 0.50
+STOP_LIMIT_CUSHION_PCT = 0.25
+# A parent's close is "expire" only once the regular session is over on its expiry day.
+EXPIRY_CLOSE_HHMM = "16:00"
+
 
 @dataclass
 class Candidate:
@@ -470,17 +477,25 @@ def _build_entry_payload(strategy: Strategy, candidate: Candidate, state, qty=1)
          "right": right, "action": "BUY", "qty": 1, "lmtPrice": float(long_lmt or 0.01),
          "secType": "OPT", "trading_class": trading_class},
     ]
-    # Stop-loss bracket: the trigger/limit price = |credit| * multiplier
-    # (signed negative, e.g. credit -0.30 with 5x -> -1.50). order_manager
-    # abs()s the stop/limit, so the sign is for clarity.
+    # Stop-loss bracket: the trigger price = |credit| * multiplier (signed
+    # negative, e.g. credit -0.30 with 5x -> -1.50). order_manager abs()s the
+    # stop/limit, so the sign is for clarity. The limit sits STOP_LIMIT_CUSHION
+    # beyond the trigger: a limit equal to the trigger rests unfilled whenever the
+    # spread gaps through it, which leaves the position without a working stop
+    # exactly when it is needed.
     sl = strategy.exit_rules.stop_loss
     payload_stop_loss = None
     if sl is not None:
         stop_mag = abs(candidate.credit_mid) * sl.multiplier
-        stop_tick = spx_tick_for_price(stop_mag)
+        cushion = max(STOP_LIMIT_CUSHION_MIN, STOP_LIMIT_CUSHION_PCT * stop_mag)
+        # A vertical never costs more than its width to close, so a limit past the width buys nothing.
+        width = float(getattr(candidate, "width_points", 0.0) or 0.0)
+        limit_mag = stop_mag + cushion
+        if width > 0:
+            limit_mag = max(stop_mag, min(limit_mag, width))
         payload_stop_loss = {
-            "stopPrice": round_signed_to_tick(-stop_mag, stop_tick),
-            "limitPrice": round_signed_to_tick(-stop_mag, stop_tick),
+            "stopPrice": round_signed_to_tick(-stop_mag, spx_tick_for_price(stop_mag)),
+            "limitPrice": round_signed_to_tick(-limit_mag, spx_tick_for_price(limit_mag)),
         }
 
     gth = getattr(strategy, "gth", False)
@@ -608,6 +623,8 @@ async def strategy_evaluation_loop(ib, state, broadcast_fn):
                             rt.trade = {
                                 "candidate": best.to_dict(),
                                 "credit": float(best.credit_mid),
+                                "qty": qty,
+                                "stop_order_id": (resp.get("data") or {}).get("stopOrderId"),
                                 "open_ts": time.monotonic(),
                                 "close_ts": None,
                                 "close_reason": None,
@@ -636,15 +653,55 @@ def find_strategy_positions(candidate, state) -> list:
     return out
 
 
-def classify_parent_close(strat: Strategy, cand: Candidate, state) -> str:
-    """Why did the parent's trade close? TP is set by take_profit_loop; here we
-    infer the fallback: the IB stop bracket if configured, else expire/manual."""
-    if strat.exit_rules.stop_loss is not None:
+def _stop_order_filled(state, stop_order_id) -> bool:
+    """True when the bracket stop with this order id has executed.
+
+    Checks the order handle's status as well as the executions list: the status
+    arrives with the fill, while ``state.executions`` is only re-serialized on the
+    account refresh and can lag the position disappearing by a tick.
+    """
+    if stop_order_id is None:
+        return False
+    for ex in getattr(state, "executions", None) or []:
+        if ex.get("orderId") == stop_order_id:
+            return True
+    handle = (getattr(state, "active_trades", None) or {}).get(stop_order_id)
+    return str(getattr(handle, "status", "") or "") == "Filled"
+
+
+def classify_parent_close(strat: Strategy, cand: Candidate, state, trade: Optional[dict] = None) -> str:
+    """Why did the parent's trade close? TP is set by take_profit_loop; for every
+    other close the position just disappears, so the reason is inferred from evidence:
+
+    * ``stop_loss`` — the stop bracket order itself executed (a configured stop is
+      not enough: the user can flatten the position by hand before it fires);
+    * ``expire`` — the expiry day's regular session is over, so it settled;
+    * ``manual`` — anything else.
+    """
+    stop_id = (trade or {}).get("stop_order_id")
+    if strat.exit_rules.stop_loss is not None and _stop_order_filled(state, stop_id):
         return "stop_loss"
     exp = getattr(state, "expiration", "")
-    if exp and exp <= now_et().strftime("%Y%m%d"):
-        return "expire"
+    if exp:
+        now = now_et()
+        today = now.strftime("%Y%m%d")
+        if exp < today or (exp == today and now.strftime("%H:%M") >= EXPIRY_CLOSE_HHMM):
+            return "expire"
     return "manual"
+
+
+def _spreads_held(positions: list, trade: dict) -> int:
+    """Spreads the parent holds: the size of its smaller leg (IB reports signed position
+    sizes), else the size recorded at entry, else 1."""
+    sizes = []
+    for p in positions:
+        try:
+            sizes.append(abs(float(p.get("position"))))
+        except (TypeError, ValueError):
+            continue
+    if sizes:
+        return max(1, int(round(min(sizes))))
+    return max(1, int(trade.get("qty") or 1))
 
 
 def _refresh_trade_credit(state, trade: dict) -> None:
@@ -710,14 +767,16 @@ async def _update_parent_role(name: str, state, broadcast_fn=None) -> None:
         net_pnl = sum(float(p.get("unrealizedPNL", 0) or 0) for p in positions)
         credit = float(trade.get("credit") or 0.0)
         if credit > 0:
-            mult = net_pnl / credit
+            # unrealizedPNL is dollars for the whole position, the credit is per share and
+            # per spread: scale it to dollars (x100 shares, x spreads held) before dividing.
+            mult = net_pnl / (credit * 100.0 * _spreads_held(positions, trade))
             trade["high_water_mult"] = max(float(trade.get("high_water_mult", 0.0)), mult)
             trade["low_water_mult"] = min(float(trade.get("low_water_mult", 0.0)), mult)
         _latch_time_triggers(strat, state)
         return
     # closed
     trade["close_ts"] = time.monotonic()
-    trade["close_reason"] = classify_parent_close(strat, cand, state)
+    trade["close_reason"] = classify_parent_close(strat, cand, state, trade)
     rt.done = True
     await fire_children(strat, state, broadcast_fn)
 

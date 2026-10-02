@@ -82,6 +82,15 @@ async def test_single_leg_with_stop_loss(mock_ib, app_state, sample_legs_single,
     assert stop.order.action == "SELL"  # opposite of parent BUY
     assert stop.order.auxPrice == 1.50  # stopPrice rounded to tick
     assert stop.order.lmtPrice == 1.40  # limitPrice rounded to tick
+    # The response names the stop so the strategy engine can tell a stop fill from a manual close.
+    assert data["stopOrderId"] == stop.order.orderId
+
+
+@pytest.mark.asyncio
+async def test_response_has_no_stop_order_id_without_a_stop(mock_ib, app_state, sample_legs_single):
+    result = await handle_place_order(mock_ib, app_state, sample_legs_single)
+
+    assert "stopOrderId" not in result["data"]
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +151,7 @@ async def test_combo_bag_with_stop_loss(mock_ib, app_state, sample_legs_combo, s
     assert stop_bag.order.transmit is True
     assert stop_bag.order.parentId == parent_bag.order.orderId
     assert stop_bag.order.action == "SELL"  # opposite of BUY parent
+    assert data["stopOrderId"] == stop_bag.order.orderId
 
 
 @pytest.mark.asyncio

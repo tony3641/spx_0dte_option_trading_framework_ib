@@ -197,7 +197,41 @@ def test_build_entry_payload_stop_loss_multiplier():
     p = _build_entry_payload(strat, cand, _state_t8())
     assert p["stopLoss"] is not None
     assert p["stopLoss"]["stopPrice"] == pytest.approx(-1.5, abs=0.01)
-    assert p["stopLoss"]["limitPrice"] == pytest.approx(-1.5, abs=0.01)
+    # The limit sits a cushion past the trigger (max(0.50, 25% of 1.50) = 0.50) so a gap
+    # through the trigger still fills; a limit equal to the trigger would rest unfilled.
+    assert p["stopLoss"]["limitPrice"] == pytest.approx(-2.0, abs=0.01)
+
+
+def _stop_payload(credit, multiplier, width):
+    from spx_trade_desk.strategy.models import StopLoss, ExitRules
+    from spx_trade_desk.strategy.engine import Candidate
+    strat = Strategy(
+        name="t", direction="bull_put",
+        conditions=[Condition(kind="short_delta", params={"min": 0.03, "max": 0.05})],
+        exit_rules=ExitRules(stop_loss=StopLoss(multiplier=multiplier)),
+    )
+    cand = Candidate(direction="bull_put", short_strike=5100.0, long_strike=5100.0 - width, width_points=width,
+                     margin=width * 100.0, credit_bid=credit - 0.05, credit_ask=credit + 0.05, credit_mid=credit,
+                     short_delta=0.04, long_delta=0.01, atm_iv=18.0)
+    return _build_entry_payload(strat, cand, _state_t8())["stopLoss"]
+
+
+def test_stop_limit_cushion_scales_with_a_large_trigger():
+    # 0.35 credit x 6 = 2.10 trigger; the 25% cushion (0.525) beats the 0.50 floor -> limit ~2.63 -> 2.6 tick
+    sl = _stop_payload(credit=0.35, multiplier=6.0, width=55.0)
+    assert sl["stopPrice"] == pytest.approx(-2.1, abs=0.001)
+    assert sl["limitPrice"] == pytest.approx(-2.6, abs=0.001)
+    assert sl["limitPrice"] < sl["stopPrice"]          # a worse (more negative) price than the trigger
+
+
+def test_stop_limit_never_exceeds_the_spread_width():
+    sl = _stop_payload(credit=0.35, multiplier=6.0, width=2.4)   # cushioned limit 2.63 > width 2.4
+    assert sl["limitPrice"] == pytest.approx(-2.4, abs=0.001)
+
+
+def test_stop_limit_is_never_inside_the_trigger():
+    sl = _stop_payload(credit=0.60, multiplier=6.0, width=2.0)   # trigger 3.6 is already past the width
+    assert sl["limitPrice"] == sl["stopPrice"]
 
 
 def test_build_entry_payload_includes_trading_class():
@@ -690,10 +724,52 @@ def _cand():
                      short_delta=0.3, long_delta=0.1, atm_iv=18.0)
 
 
-def test_classify_stop_loss_when_configured():
-    strat = Strategy(name="p", direction="bull_put", conditions=[],
-                     exit_rules=ExitRules(stop_loss=StopLoss(multiplier=5.0)))
-    assert classify_parent_close(strat, _cand(), _pos_state()) == "stop_loss"
+def _stop_strat():
+    return Strategy(name="p", direction="bull_put", conditions=[],
+                    exit_rules=ExitRules(stop_loss=StopLoss(multiplier=5.0)))
+
+
+def _future_expiry(st):
+    from datetime import timedelta
+    from spx_trade_desk.market.hours import now_et
+    st.expiration = (now_et().date() + timedelta(days=1)).strftime("%Y%m%d")
+    return st
+
+
+def test_classify_stop_loss_when_the_stop_order_filled():
+    st = _future_expiry(_pos_state(executions=[{"orderId": 77, "side": "BOT", "strike": 5100.0, "right": "P"}]))
+    assert classify_parent_close(_stop_strat(), _cand(), st, {"stop_order_id": 77}) == "stop_loss"
+
+
+def test_classify_stop_loss_when_the_stop_handle_reports_filled():
+    st = _future_expiry(_pos_state())   # executions list lags the fill; the order handle already says Filled
+    st.active_trades = {77: type("T", (), {"status": "Filled"})()}
+    assert classify_parent_close(_stop_strat(), _cand(), st, {"stop_order_id": 77}) == "stop_loss"
+
+
+def test_classify_manual_close_with_a_stop_configured_is_not_stop_loss():
+    """A configured stop is not evidence that it fired: the trader can flatten by hand."""
+    st = _future_expiry(_pos_state())
+    st.active_trades = {77: type("T", (), {"status": "Cancelled"})()}
+    assert classify_parent_close(_stop_strat(), _cand(), st, {"stop_order_id": 77}) == "manual"
+    assert classify_parent_close(_stop_strat(), _cand(), st) == "manual"   # no stop id recorded either
+
+
+def test_classify_other_orders_executions_do_not_count_as_the_stop():
+    st = _future_expiry(_pos_state(executions=[{"orderId": 5, "side": "BOT", "strike": 5100.0, "right": "P"}]))
+    assert classify_parent_close(_stop_strat(), _cand(), st, {"stop_order_id": 77}) == "manual"
+
+
+def test_classify_expire_only_after_the_expiry_day_close(monkeypatch):
+    import datetime as _dt
+    import spx_trade_desk.strategy.engine as eng
+    st = _pos_state()
+    st.expiration = "20260821"
+    strat = Strategy(name="p", direction="bull_put", conditions=[])
+    monkeypatch.setattr(eng, "now_et", lambda: _dt.datetime(2026, 8, 21, 15, 59))
+    assert classify_parent_close(strat, _cand(), st) == "manual"      # still the live session
+    monkeypatch.setattr(eng, "now_et", lambda: _dt.datetime(2026, 8, 21, 16, 5))
+    assert classify_parent_close(strat, _cand(), st) == "expire"      # settled
 
 
 def test_classify_manual_when_no_stop_and_future_expiry():
@@ -737,10 +813,10 @@ async def test_update_parent_role_marks_done_and_fires_children():
                           subsequent_triggers=[TriggerSpec(kind="parent_exit_reason", params={"reason": "stop_loss"})]),
     }
     state.positions = []   # no matching positions -> parent is closed
-    state.executions = []
+    state.executions = [{"orderId": 91, "side": "BOT", "strike": 5100.0, "right": "P"}]   # the stop executed
     state.expiration = "20260821"
     state.runtime = {"master": RuntimeState(entered=True)}
-    state.runtime["master"].trade = {"candidate": _cand().to_dict(), "credit": 0.30,
+    state.runtime["master"].trade = {"candidate": _cand().to_dict(), "credit": 0.30, "stop_order_id": 91,
                                      "high_water_mult": 0.0, "low_water_mult": 0.0}
     state.runtime["child"] = RuntimeState()
     fired = []
@@ -760,8 +836,9 @@ async def test_update_parent_role_updates_water_marks_while_open():
     state.strategies = {"master": Strategy(name="master", direction="bull_put", conditions=[]),
                         "child": Strategy(name="child", direction="bull_put", conditions=[],
                                           parent_name="master")}
-    state.positions = [{"contract": {"strike": 5100.0, "right": "P"}, "unrealizedPNL": 0.45},
-                       {"contract": {"strike": 5000.0, "right": "P"}, "unrealizedPNL": 0.15}]
+    # IB reports whole-position dollar P&L and signed sizes: 2 spreads held, +$60 total.
+    state.positions = [{"contract": {"strike": 5100.0, "right": "P"}, "position": -2.0, "unrealizedPNL": 45.0},
+                       {"contract": {"strike": 5000.0, "right": "P"}, "position": 2.0, "unrealizedPNL": 15.0}]
     state.executions = []
     state.expiration = "20260821"
     cd = _cand().to_dict()
@@ -771,8 +848,50 @@ async def test_update_parent_role_updates_water_marks_while_open():
     state.runtime["child"] = RuntimeState()
     await _update_parent_role("master", state)   # still open -> no close
     assert state.runtime["master"].done is False
-    mult = (0.45 + 0.15) / 0.30
+    mult = 60.0 / (0.30 * 100.0 * 2)   # +$60 on 2 spreads that collected $60 each = +1.0x credit
     assert state.runtime["master"].trade["high_water_mult"] == pytest.approx(mult)
+    assert state.runtime["master"].trade["low_water_mult"] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_water_marks_scale_dollars_to_credit_multiples_for_a_one_lot():
+    """Regression: dollars were divided by the per-share credit, so a -$20 mark on a 1-lot at a
+    0.35 credit read as -57x credit and fired a 1.5x loss_multiple trigger."""
+    state = type("S", (), {})()
+    state.strategies = {"master": Strategy(name="master", direction="bull_put", conditions=[]),
+                        "child": Strategy(name="child", direction="bull_put", conditions=[],
+                                          parent_name="master",
+                                          subsequent_triggers=[TriggerSpec(kind="parent_unrealized_pnl",
+                                                                           params={"loss_multiple": 1.5})])}
+    state.positions = [{"contract": {"strike": 5100.0, "right": "P"}, "position": -1.0, "unrealizedPNL": -15.0},
+                       {"contract": {"strike": 5000.0, "right": "P"}, "position": 1.0, "unrealizedPNL": -5.0}]
+    state.executions = []
+    state.expiration = "20260821"
+    state.runtime = {"master": RuntimeState(entered=True)}
+    state.runtime["master"].trade = {"candidate": _cand().to_dict(), "credit": 0.35,
+                                     "high_water_mult": 0.0, "low_water_mult": 0.0}
+    state.runtime["child"] = RuntimeState()
+    await _update_parent_role("master", state)
+    assert state.runtime["master"].trade["low_water_mult"] == pytest.approx(-20.0 / 35.0)   # -0.57x, not -57x
+    from spx_trade_desk.strategy.engine import _trigger_aggregate
+    # the loss trigger only evaluates once the parent is closed; a -0.57x excursion must not satisfy 1.5x
+    state.runtime["master"].done = True
+    assert _trigger_aggregate(state.strategies["child"], state) is False
+
+
+@pytest.mark.asyncio
+async def test_water_marks_fall_back_to_the_recorded_qty_without_position_sizes():
+    state = type("S", (), {})()
+    state.strategies = {"master": Strategy(name="master", direction="bull_put", conditions=[])}
+    state.positions = [{"contract": {"strike": 5100.0, "right": "P"}, "unrealizedPNL": 30.0},
+                       {"contract": {"strike": 5000.0, "right": "P"}, "unrealizedPNL": 30.0}]
+    state.executions = []
+    state.expiration = "20260821"
+    state.runtime = {"master": RuntimeState(entered=True)}
+    state.runtime["master"].trade = {"candidate": _cand().to_dict(), "credit": 0.30, "qty": 2,
+                                     "high_water_mult": 0.0, "low_water_mult": 0.0}
+    await _update_parent_role("master", state)
+    assert state.runtime["master"].trade["high_water_mult"] == pytest.approx(60.0 / 60.0)
 
 
 def test_daily_reset_preserves_open_position():

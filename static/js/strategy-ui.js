@@ -96,7 +96,7 @@
             ],
         },
         parent_unrealized_pnl: {
-            help: 'Fire when the parent trade is up gain_multiple× or down loss_multiple× the credit it actually collected.',
+            help: 'Fire when the parent trade was up gain_multiple× or down loss_multiple× the credit it actually collected (position P&L over credit × 100 × spreads). The child still waits until the parent has closed.',
             opDriven: false,
             fields: [
                 { key: 'gain_multiple', label: 'Gain × credit', type: 'number', step: '0.1', optional: true },

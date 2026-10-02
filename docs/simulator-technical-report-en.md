@@ -393,6 +393,12 @@ across sweep rows, plus a spread MTM quantile fan.
   is invisible at 1m. Finer bars (CSV 5s) shrink that blind spot.
 - One entry per strategy per day. There is no re-entry beyond the family child
   mechanism, and family mode does not support SL/k sweeps.
+- A `parent_unrealized_pnl` trigger mirrors the live engine: the parent's mark-to-market
+  (scaled by `fill_credit × 100 × qty`) is latched while the parent is open, `gain_multiple`
+  and `loss_multiple` are both honored, and the child starts only on the bar after the parent
+  has exited by stop or take-profit. Earlier versions started the child on the breach bar while
+  the parent was still held, a state the live engine forbids. A `time_of_day` trigger still
+  starts the child at its latch bar without waiting for the parent to exit.
 - trend, pmove, RSI and atm_iv gates are not simulated. A strategy that enables one
   is rejected rather than mis-simulated.
 - bear_call is not simulated. Non-`bull_put` strategies are refused.

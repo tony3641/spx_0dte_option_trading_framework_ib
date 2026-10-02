@@ -496,12 +496,15 @@ async def _place_single_leg(ib, state, payload, leg,
             )
         else:
             stop_msg = f" | STP LMT stop={stop_loss_price} orderId={stop_handle.order.orderId}"
-    return {"type": "order_status", "data": {
+    data = {
         "status": final_status,
         "orderId": order.orderId,
         "message": f"Order {final_status}: {leg['action']} {leg['qty']} "
                    f"{user_contract_desc}{stop_msg}",
-    }}
+    }
+    if stop_handle:
+        data["stopOrderId"] = stop_handle.order.orderId   # lets the strategy engine tell a stop fill from a manual close
+    return {"type": "order_status", "data": data}
 
 
 async def _place_multi_leg(ib, state, payload, legs,
@@ -741,11 +744,14 @@ async def _place_multi_leg(ib, state, payload, legs,
         f"legs=[{leg_desc}] orderId={order.orderId} outsideRth={outside_rth}"
     )
 
-    return {"type": "order_status", "data": {
+    data = {
         "status": bag_status,
         "orderId": order.orderId,
         "message": f"Combo order {bag_status}: {leg_desc}{stop_combo_msg}{session_note}",
-    }}
+    }
+    if bag_stop_handle:
+        data["stopOrderId"] = bag_stop_handle.order.orderId   # lets the strategy engine tell a stop fill from a manual close
+    return {"type": "order_status", "data": data}
 
 
 async def handle_cancel_order(ib, state, order_id: int,

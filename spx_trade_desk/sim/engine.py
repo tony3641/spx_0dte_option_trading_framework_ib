@@ -284,16 +284,6 @@ class TrialResult:
     mtm: Optional[np.ndarray] = None
 
 
-def _spread_rows(model, cfg, paths, ladder, t, dyn: Optional[SmileDynamics] = None):
-    """Put mids + half-spreads for every path at bar t -> (mid, bid, ask) each (n, M)."""
-    dyn = _ensure_dyn(model, cfg, dyn)
-    m = np.log(ladder / paths.spots[:, t:t + 1])
-    iv_t = smile_iv(m, model.smile, paths.sigmas[:, t:t + 1], dyn, t)
-    put = bsm_put(paths.spots[:, t:t + 1], ladder[None, :], t, RISK_FREE_RATE, iv_t)
-    hs = half_spread(m, model.smile.half_spread_atm)
-    return put, put - hs, put + hs
-
-
 def run_exits(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
               paths, ladder: np.ndarray, entry: EntryState,
               sl_multiplier: Optional[float] = None,
@@ -395,18 +385,26 @@ def trigger_minutes(parent_results: List[TrialResult], child: Strategy,
                     if fired[p] < 0 or cand < fired[p]:
                         fired[p] = cand
             elif trig.kind == "parent_unrealized_pnl":
-                mult = float(trig.params.get("loss_multiple", 1.0))
-                threshold = -mult * res.fill_credit * 100.0
+                # Live semantics (engine._trigger_aggregate / _child_is_eligible): the parent's
+                # high/low water marks latch while it is open, and the child only becomes
+                # eligible once the parent has closed and is flat. A parent held to expiry
+                # leaves no session for the child, so it never fires.
+                gain = trig.params.get("gain_multiple")
+                loss = trig.params.get("loss_multiple")
                 mtm = res.mtm
-                if mtm is None:
+                start = res.exit_minute + 1
+                if (gain is None and loss is None) or mtm is None or res.exit_minute < 0 or start >= steps:
                     continue
-                upto = res.exit_minute if res.exit_minute > 0 else steps   # only while the parent is OPEN
-                active = np.nonzero(~np.isnan(mtm[:upto]))[0]
-                for t in active:
-                    if t > res.entry_minute and mtm[t] <= threshold:
-                        if fired[p] < 0 or t + 1 < fired[p]:
-                            fired[p] = t + 1
-                        break
+                # mtm is the whole position in dollars; the live multiple is that over the
+                # credit collected for every spread held (credit x 100 x qty).
+                window = mtm[res.entry_minute + 1:res.exit_minute + 1] / (res.fill_credit * 100.0 * max(res.qty, 1))
+                window = window[~np.isnan(window)]
+                if window.size == 0:
+                    continue
+                hit = (gain is not None and window.max() >= float(gain)) or \
+                      (loss is not None and window.min() <= -float(loss))
+                if hit and (fired[p] < 0 or start < fired[p]):
+                    fired[p] = start
             elif trig.kind == "time_of_day":
                 latch = _parse_hhmm_to_bar(trig.params.get("time", "12:00"), bar_seconds)
                 if res.entry_minute <= latch:

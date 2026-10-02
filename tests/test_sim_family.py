@@ -3,7 +3,7 @@ import numpy as np
 
 from spx_trade_desk.sim.calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
 from spx_trade_desk.sim.config import SimRunConfig
-from spx_trade_desk.sim.engine import run_family
+from spx_trade_desk.sim.engine import TrialResult, run_family, trigger_minutes
 from spx_trade_desk.sim.paths import SimPaths
 from spx_trade_desk.strategy.models import (Condition, ExitRules, StopLoss, Strategy, TriggerSpec)
 
@@ -89,10 +89,74 @@ def test_family_unrealized_pnl_trigger():
     cfg = SimRunConfig(strategy_name="P", bar_size="1m")
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
     child = _child(TriggerSpec(kind="parent_unrealized_pnl", params={"loss_multiple": 0.05}))
-    results, total = run_family(_model(), cfg, _parent(), [child], _paths(), ladder)
-    # _parent() keeps mult 6.0, so the parent carries the loss through the crash (no stop);
-    # the unrealized trigger sees the deeply-negative MTM bar and re-enters the child (K-e)
-    assert results["C"][0].entered and results["C"][1].entered
+    results, total = run_family(_model(), cfg, _parent(mult=2.0), [child], _paths(), ladder)
+    parent = results["P"]
+    # The crash drives the parent's MTM far past -0.05x credit and stops it out (K-e); the
+    # child re-enters only AFTER that exit (live: a child waits for the parent to be flat).
+    for p in (0, 1):
+        assert parent[p].exit_reason == "stop"
+        assert results["C"][p].entered
+        assert results["C"][p].entry_minute > parent[p].exit_minute
+    for p in range(2, 6):
+        assert not results["C"][p].entered
+
+
+def test_family_unrealized_pnl_trigger_never_fires_while_the_parent_stays_open():
+    """Regression: the sim used to start the child on the breach bar while the parent was
+    still held, a state the live engine never allows. _parent() keeps mult 6.0 and rides the
+    crash to expiry, so no session is left for the child."""
+    cfg = SimRunConfig(strategy_name="P", bar_size="1m")
+    ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
+    child = _child(TriggerSpec(kind="parent_unrealized_pnl", params={"loss_multiple": 0.05}))
+    results, _ = run_family(_model(), cfg, _parent(), [child], _paths(), ladder)
+    assert results["P"][0].exit_reason == "expired"
+    assert not any(r.entered for r in results["C"])
+
+
+def _held(exit_reason, exit_minute, mtm_by_bar, *, fc=0.40, qty=1, entry=5, steps=60):
+    mtm = np.full(steps, np.nan)
+    for t, v in mtm_by_bar.items():
+        mtm[t] = v
+    return TrialResult(entered=True, entry_minute=entry, exit_minute=exit_minute, exit_reason=exit_reason,
+                       short_strike=6000.0, long_strike=5995.0, width=5.0, qty=qty, fill_credit=fc,
+                       exit_debit=0.0, pnl=0.0, mtm=mtm)
+
+
+def _unrealized(**params):
+    return _child(TriggerSpec(kind="parent_unrealized_pnl", params=params))
+
+
+def test_unrealized_trigger_starts_the_child_the_bar_after_the_parent_exit():
+    res = _held("stop", 20, {6: -10.0, 12: -50.0, 20: -90.0})        # breach at bar 12, exit at 20
+    fired = trigger_minutes([res], _unrealized(loss_multiple=1.0), steps=60)
+    assert fired[0] == 21
+
+
+def test_unrealized_trigger_scales_the_threshold_by_the_spreads_held():
+    # fc 0.40 x 100 x 3 spreads = $120 of credit: -$60 is 0.5x, -$130 is 1.08x
+    shallow = _held("stop", 20, {10: -60.0, 20: -60.0}, qty=3)
+    deep = _held("stop", 20, {10: -130.0, 20: -130.0}, qty=3)
+    child = _unrealized(loss_multiple=1.0)
+    assert trigger_minutes([shallow], child, steps=60)[0] == -1
+    assert trigger_minutes([deep], child, steps=60)[0] == 21
+
+
+def test_unrealized_trigger_supports_gain_multiple():
+    winner = _held("take_profit", 30, {10: 20.0, 30: 50.0})            # +$50 on $40 credit = 1.25x
+    assert trigger_minutes([winner], _unrealized(gain_multiple=1.0), steps=60)[0] == 31
+    assert trigger_minutes([winner], _unrealized(gain_multiple=2.0), steps=60)[0] == -1
+
+
+def test_unrealized_trigger_ignores_the_entry_bar_and_needs_a_threshold():
+    res = _held("stop", 20, {5: -500.0, 10: -1.0, 20: -2.0})            # only the entry bar is deep
+    assert trigger_minutes([res], _unrealized(loss_multiple=1.0), steps=60)[0] == -1
+    breach = _held("stop", 20, {10: -500.0, 20: -2.0})
+    assert trigger_minutes([breach], _unrealized(), steps=60)[0] == -1  # neither gain nor loss given
+
+
+def test_unrealized_trigger_never_fires_for_a_parent_held_to_expiry():
+    res = _held("expired", 59, {10: -500.0, 59: -500.0}, steps=60)     # exit bar is the last bar
+    assert trigger_minutes([res], _unrealized(loss_multiple=1.0), steps=60)[0] == -1
 
 
 def test_family_all_logic_raises():
