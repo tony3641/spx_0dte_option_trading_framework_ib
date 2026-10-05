@@ -102,7 +102,6 @@ IB_CLIENT_ID = _get_setting("IB_CLIENT_ID", 1, int)
 CHAIN_REFRESH_SECONDS = _get_setting("CHAIN_REFRESH_SECONDS", 10, int)
 DASHBOARD_CHAIN_REFRESH_SECONDS = _get_setting("DASHBOARD_CHAIN_REFRESH_SECONDS", 300, int)
 CHAIN_TAB_FULL_REFRESH_SECONDS = _get_setting("CHAIN_TAB_FULL_REFRESH_SECONDS", 300, int)
-SNAPSHOT_REFRESH_SECONDS = _get_setting("SNAPSHOT_REFRESH_SECONDS", 300, int)
 PRICE_PUSH_INTERVAL = _get_setting("PRICE_PUSH_INTERVAL", 1.0, float)
 
 # ---------------------------------------------------------------------------
@@ -121,7 +120,6 @@ SIM_WORKERS = _get_setting("SIM_WORKERS", 0, int)
 # ---------------------------------------------------------------------------
 # Chain streaming
 # ---------------------------------------------------------------------------
-CHAIN_STREAM_MAX_LINES = _get_setting("CHAIN_STREAM_MAX_LINES", 96, int)
 # Market-data line budget (ib/line_budget.py). MARKET_DATA_LINES is the account's IB
 # allowance shared by every API client; the split into shares is computed at startup.
 MARKET_DATA_LINES = _get_setting("MARKET_DATA_LINES", 100, int)

@@ -13,11 +13,10 @@ Source: spx_trade_desk/core/config.py
 - CHAIN_REFRESH_SECONDS = 10
 - DASHBOARD_CHAIN_REFRESH_SECONDS = 300
 - CHAIN_TAB_FULL_REFRESH_SECONDS = 300
-- SNAPSHOT_REFRESH_SECONDS = 300
 - PRICE_PUSH_INTERVAL = 1.0
 - SERVER_HOST = "0.0.0.0"
 - SERVER_PORT = 8000
-- CHAIN_STREAM_MAX_LINES = 96
+- MARKET_DATA_LINES = 100 (account IB line allowance; split into fixed/order/poll/stream shares at startup)
 - CHAIN_STREAM_UPDATE_INTERVAL = 0.5
 - VIEWPORT_CENTER_MIN_INTERVAL = 0.2
 
@@ -172,10 +171,9 @@ Source: spx_trade_desk/core/config.py
 ## 4) Duplicate/overlap notes
 
 - There are existing env keys in spx_trade_desk/core/config.py that appear to be legacy/unused in current runtime path:
-  - CHAIN_REFRESH_SECONDS
   - DASHBOARD_CHAIN_REFRESH_SECONDS
   - CHAIN_TAB_FULL_REFRESH_SECONDS
-- The active periodic snapshot loop currently keys off SNAPSHOT_REFRESH_SECONDS.
+- The chain publisher keys off CHAIN_REFRESH_SECONDS; the wing poller runs continuously on the 'poll' line share.
 
 ## 5) Suggested normalization path (optional next step)
 

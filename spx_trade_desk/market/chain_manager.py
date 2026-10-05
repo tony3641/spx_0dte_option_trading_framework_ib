@@ -8,23 +8,18 @@ All long-running loops accept `ib`, `state`, and `broadcast_fn`.
 import asyncio
 import math
 import logging
+import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from spx_trade_desk.ib.orders import _option_contract
+from spx_trade_desk.ib.line_budget import LineBudgetExceeded
 
 from spx_trade_desk.core.config import (
-    CHAIN_STREAM_MAX_LINES, CHAIN_STREAM_UPDATE_INTERVAL,
-    SNAPSHOT_REFRESH_SECONDS, MONTHLY_CACHE_TTL,
+    CHAIN_QUOTE_MAX_AGE_S, CHAIN_STREAM_UPDATE_INTERVAL, MONTHLY_CACHE_TTL,
 )
-from spx_trade_desk.market.hours import (
-    now_et, is_within_rth, is_cboe_options_open, ET,
-    find_next_expiration, get_expiration_display,
-    resolve_trading_expiration,
-)
-from spx_trade_desk.market.chain_fetcher import fetch_option_chain, clear_qualification_cache
+from spx_trade_desk.market.hours import now_et, is_cboe_options_open
+from spx_trade_desk.market.chain_fetcher import fetch_option_chain
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict, GEXResult, OptionData
-from spx_trade_desk.market.bars import compute_annual_vol, fetch_historical_bars
 from spx_trade_desk.market.qualification import norm_key, unknown_retry_due  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
@@ -216,225 +211,84 @@ def build_chain_quotes(options: List[OptionData], spot_price: float,
     }
 
 
-async def chain_fetch_loop(ib, state, broadcast_fn):
-    """Periodically fetch full-chain snapshot for dashboard/GEX state."""
-    await asyncio.sleep(1)
-
-    if state.force_chain_fetch_event is None:
-        state.force_chain_fetch_event = asyncio.Event()
-
-    while True:
-        try:
-            force_manual_refresh = state.manual_refresh_requested
-            state.manual_refresh_requested = False
-
-            if not state.connected or not state.expiration:
-                logger.info("Waiting for connection/expiration...")
-                await asyncio.sleep(10)
-                continue
-
-            if state.spx_price <= 0:
-                logger.info("No reference price yet, fetching historical bars...")
-                await fetch_historical_bars(ib, state)
-                if state.spx_price <= 0:
-                    await asyncio.sleep(30)
-                    continue
-
-            # Prefer today's PM SPXW (0DTE); fall back to today's PM SPX monthly;
-            # otherwise roll to the next available SPXW day for display/scanning.
-            resolved = resolve_trading_expiration(state)
-            if resolved:
-                state.expiration, state.trading_class = resolved
-            else:
-                new_exp = find_next_expiration(state.expirations)
-                state.trading_class = "SPXW"
-                if new_exp and new_exp != state.expiration:
-                    state.expiration = new_exp
-                    state.trading_class = "SPXW"
-            logger.info(f"Expiration updated to: {get_expiration_display(state.expiration)}" if state.expiration else "No expiration available")
-
-            if not is_cboe_options_open():
-                logger.info("SPX options in daily gap (5:00–8:15 PM ET) — skipping chain fetch")
-                await asyncio.sleep(10)
-                continue
-
-            state.chain_fetching = True
-
-            # Pause live chain streaming to free market data lines
-            if state.chain_fetch_active is not None:
-                state.chain_fetch_active.clear()
-                _cancel_stream_subs(ib, state)
-
-            mode_label = "LIVE" if state.data_mode == "live" else "HIST"
-            logger.info(
-                f"[{mode_label}] Starting chain fetch: exp={state.expiration}, "
-                f"spot={state.spx_price:.2f}, "
-                f"{len(state.strikes)} total strikes available"
-            )
-
-            if state.active_tab != "chain":
-                await broadcast_fn({"type": "chain_progress", "data": {
-                    "phase": "starting", "batch": 0, "total_batches": 1, "pct": 0
-                }})
-
-            async def _on_progress(phase, batch, total_batches, pct):
-                if state.active_tab != "chain":
-                    await broadcast_fn({"type": "chain_progress", "data": {
-                        "phase": phase, "batch": batch,
-                        "total_batches": total_batches, "pct": pct,
-                    }})
-
-            await compute_annual_vol(ib, state, lookback_days=30)
-
-            options = await fetch_option_chain(
-                ib=ib,
-                underlying=state.spx_contract,
-                expiration=state.expiration,
-                strikes=state.strikes,
-                spot_price=state.spx_price,
-                std_dev_range=8.0,
-                annual_vol=state.annual_vol,
-                progress_callback=_on_progress,
-                force_requalify=force_manual_refresh,
-                allow_unknown_retry=force_manual_refresh,
-                trading_class=state.trading_class,
-            )
-
-            if options:
-                total_oi = sum(o.open_interest for o in options)
-                if total_oi == 0:
-                    logger.info("OI is all zeros, using volume as proxy for GEX weight")
-                    for o in options:
-                        o.open_interest = o.volume
-
-                tte_years = 0.0
-                if state.expiration:
-                    try:
-                        exp_date = datetime.strptime(state.expiration, "%Y%m%d").date()
-                        now = now_et()
-                        if exp_date == now.date():
-                            close_dt = now.replace(hour=16, minute=0, second=0, microsecond=0)
-                            mins_left = max((close_dt - now).total_seconds() / 60.0, 1.0)
-                            tte_years = mins_left / (390.0 * 252.0)
-                        else:
-                            days_left = (exp_date - now.date()).days
-                            tte_years = max(days_left, 1) * 390.0 / (390.0 * 252.0)
-                    except Exception:
-                        tte_years = 0.0
-
-                gex_result = compute_gex(options, state.spx_price,
-                                         time_to_expiry_years=tte_years,
-                                         risk_free_rate=state.risk_free_rate)
-                gex_result.expiration = state.expiration
-                gex_result.timestamp = now_et().isoformat()
-
-                state.gex_result = gex_result
-                state.latest_gex = gex_result_to_dict(gex_result)
-                state.last_chain_update = now_et().strftime("%H:%M:%S")
-
-                logger.info(
-                    f"GEX computed: Call Wall={gex_result.call_wall}, "
-                    f"Put Wall={gex_result.put_wall}, "
-                    f"Gamma Flip={gex_result.gamma_flip}, "
-                    f"Max Pain={gex_result.max_pain}"
-                )
-
-                gex_payload = dict(state.latest_gex)
-                gex_payload["es_derived"] = state.es_derived
-                await broadcast_fn({"type": "gex", "data": gex_payload})
-
-                state.chain_data = options
-                state.chain_quotes_cache = build_chain_quotes(
-                    options, state.spx_price, gex_result, state.annual_vol, state.expiration,
-                    trading_class=state.trading_class)
-                state.chain_quotes_cache["scope"] = "full"
-                logger.info(
-                    f"Broadcasting full chain_quotes: rows={len(state.chain_quotes_cache.get('strikes', []))}, "
-                    f"spot={state.chain_quotes_cache.get('spot_price')}"
-                )
-                await broadcast_fn({"type": "chain_quotes", "data": state.chain_quotes_cache})
-            else:
-                logger.warning("No option data returned from chain fetch")
-
-            if state.active_tab != "chain":
-                await broadcast_fn({"type": "chain_progress", "data": {
-                    "phase": "done", "batch": 1, "total_batches": 1, "pct": 100
-                }})
-            state.chain_fetching = False
-
-            if state.chain_fetch_active is not None:
-                state.chain_fetch_active.set()
-
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Chain fetch error: {e}", exc_info=True)
-            state.chain_fetching = False
-            if state.chain_fetch_active is not None:
-                state.chain_fetch_active.set()
-
-        refresh_timeout = SNAPSHOT_REFRESH_SECONDS
-        try:
-            await asyncio.wait_for(state.force_chain_fetch_event.wait(), timeout=refresh_timeout)
-            state.force_chain_fetch_event.clear()
-            logger.info("Manual chain refresh triggered")
-        except asyncio.TimeoutError:
-            pass
+def _stream_num(val):
+    """Finite float, or None for missing / NaN / IB's -1 'unavailable' sentinel."""
+    f = _safe_stream_float(val)
+    if f is None or f == -1.0:
+        return None
+    return f
 
 
-async def initial_dashboard_snapshot(ib, state):
-    """Load one full snapshot before starting live option-chain streaming."""
-    if not state.connected or not state.expiration:
-        return
-    if state.spx_price <= 0:
-        await fetch_historical_bars(ib, state)
-    state.manual_refresh_requested = True
-    if state.force_chain_fetch_event is None:
-        state.force_chain_fetch_event = asyncio.Event()
-    state.force_chain_fetch_event.set()
+def _stream_int(val) -> int:
+    f = _stream_num(val)
+    return int(f) if f is not None else 0
+
+
+def _collect_stream_quotes(tickers: dict, oi_fallback: dict):
+    """Turn live chain-stream TickStreams into (tick payloads, rows, rows for the book).
+
+    Only streams that have received a tick go to the quote book: a fresh subscription
+    with no data yet must not stamp an older polled quote as current.
+    """
+    ticks, live_options, book_options = [], [], []
+    for (strike, right), stream in tickers.items():
+        bid = _stream_num(stream.bid)
+        ask = _stream_num(stream.ask)
+        last_val = _stream_num(stream.last)
+        bid_sz, ask_sz, vol = (_stream_int(stream.bid_size), _stream_int(stream.ask_size),
+                               _stream_int(stream.volume))
+        delta_raw, gamma_raw, iv_dec = _extract_stream_greeks(stream)
+        delta = round(delta_raw, 4) if delta_raw is not None else None
+        gamma = round(gamma_raw, 6) if gamma_raw is not None else None
+        iv = round(iv_dec * 100, 2) if iv_dec is not None else None
+        oi_raw = _stream_num(stream.call_oi if right == "C" else stream.put_oi)
+        # TickStream defaults OI to 0, so a non-positive value means 'not reported yet':
+        # fall back to the last chain value (same rule as the book: a 0 never wipes a positive).
+        oi = int(oi_raw) if oi_raw is not None and oi_raw > 0 else oi_fallback.get((strike, right), 0)
+        ticks.append({
+            "strike": strike, "right": right,
+            "bid": round(bid, 2) if bid is not None else None,
+            "ask": round(ask, 2) if ask is not None else None,
+            "bid_size": bid_sz, "ask_size": ask_sz,
+            "last": round(last_val, 2) if last_val is not None else None,
+            "volume": vol, "delta": delta, "gamma": gamma, "iv": iv,
+        })
+        opt = OptionData(
+            strike=strike, right=right, delta=delta, gamma=gamma, implied_vol=iv_dec,
+            open_interest=oi, volume=vol,
+            bid=round(bid, 2) if bid is not None else None,
+            ask=round(ask, 2) if ask is not None else None,
+            last=round(last_val, 2) if last_val is not None else None,
+            bid_size=bid_sz, ask_size=ask_sz,
+        )
+        live_options.append(opt)
+        if stream.received_any_tick():
+            book_options.append(opt)
+    return ticks, live_options, book_options
 
 
 async def chain_stream_loop(ib, state, broadcast_fn):
-    """Maintain persistent market data subscriptions for nearest strikes."""
-    state.chain_fetch_active = asyncio.Event()
-    state.chain_fetch_active.set()
+    """Maintain persistent market-data subscriptions for the strikes nearest the focus.
 
+    Uses the line budget's 'stream' share and is never paused: the wing poller works
+    from its own share (chain_poller.py). Ticked rows are merged into the quote book.
+    """
     await asyncio.sleep(2)
     last_expiration = ""
     last_sub_count = -1
     last_tick_log_ts = 0.0
     last_center_log = ""
 
-    def _norm_key(strike: float, right: str):
-        return (round(float(strike), 1), str(right).upper())
-
-    def _finite_or_none(val):
-        if val is None:
-            return None
-        try:
-            f = float(val)
-        except (TypeError, ValueError):
-            return None
-        if not math.isfinite(f):
-            return None
-        if f == -1.0:
-            return None
-        return f
-
     while True:
         try:
-            await state.chain_fetch_active.wait()
-
             if not state.connected or not state.expiration or state.spx_price <= 0:
                 await asyncio.sleep(5)
                 continue
-
             if not is_cboe_options_open():
                 await asyncio.sleep(5)
                 continue
 
             if state.expiration != last_expiration:
-                state.chain_stream_unknown_keys.clear()
                 _cancel_stream_subs(ib, state)
                 last_expiration = state.expiration
                 logger.info(f"Chain stream expiration switched to {state.expiration}; reset subscriptions")
@@ -442,15 +296,12 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             spot = state.spx_price
             viewport_center = state.viewport_center_strike if state.active_tab == "chain" else 0.0
             focus_center = viewport_center if viewport_center > 0 else spot
-            center_source = "viewport" if viewport_center > 0 else "spot"
-            center_log = f"{center_source}:{focus_center:.1f}"
+            center_log = f"{'viewport' if viewport_center > 0 else 'spot'}:{focus_center:.1f}"
             if center_log != last_center_log:
                 last_center_log = center_log
-                logger.info(f"Chain stream center -> {center_source} {focus_center:.1f}")
+                logger.info(f"Chain stream center -> {center_log}")
 
-            available_pairs = {
-                _norm_key(o.strike, o.right) for o in state.chain_data
-            }
+            available_pairs = {norm_key(o.strike, o.right) for o in state.chain_data}
             avail = sorted({s for (s, _) in available_pairs if s % 5 == 0})
             if not avail:
                 avail = [s for s in state.strikes if s % 5 == 0]
@@ -458,26 +309,13 @@ async def chain_stream_loop(ib, state, broadcast_fn):
                 await asyncio.sleep(10)
                 continue
 
-            max_strikes = max(1, CHAIN_STREAM_MAX_LINES // 2)
-            nearest_strikes = sorted(avail, key=lambda s: (abs(s - focus_center), s))[:max_strikes]
-            desired = set(nearest_strikes)
-
-            current_keys = set(state.chain_stream_tickers.keys())
-            desired_keys = set()
-            for s in desired:
-                desired_keys.add(_norm_key(s, 'C'))
-                desired_keys.add(_norm_key(s, 'P'))
-
+            max_strikes = max(1, ib.line_budget.capacity("stream") // 2)
+            nearest = sorted(avail, key=lambda s: (abs(s - focus_center), s))[:max_strikes]
+            desired_keys = {norm_key(s, r) for s in nearest for r in ("C", "P")}
             if available_pairs:
                 desired_keys = {k for k in desired_keys if k in available_pairs}
-            # Unknown keys are a cooldown, not permanent: retry them so a
-            # transient sec-def farm outage (2157) self-heals.
-            retryable = unknown_retry_due(state.chain_stream_unknown_keys,
-                                           asyncio.get_event_loop().time())
-            desired_keys = {k for k in desired_keys
-                            if k not in state.chain_stream_unknown_keys
-                            or k in retryable}
 
+            current_keys = set(state.chain_stream_tickers.keys())
             for key in current_keys - desired_keys:
                 stream = state.chain_stream_tickers.pop(key, None)
                 state.chain_stream_contracts.pop(key, None)
@@ -487,131 +325,63 @@ async def chain_stream_loop(ib, state, broadcast_fn):
                     except Exception:
                         pass
 
-            new_keys = desired_keys - current_keys
+            new_keys = sorted(desired_keys - current_keys,
+                              key=lambda k: (abs(k[0] - focus_center), k))
             if new_keys:
-                new_contracts = []
-                for (strike, right) in new_keys:
-                    c = _option_contract(
-                        symbol='SPX',
-                        expiry=state.expiration,
-                        strike=strike,
-                        right=right,
-                        exchange='SMART',
-                        trading_class='SPXW',
-                    )
-                    new_contracts.append(((strike, right), c))
-
-                try:
-                    batch_size = 40
-                    for i in range(0, len(new_contracts), batch_size):
-                        batch = new_contracts[i:i + batch_size]
-                        raw = [c for _, c in batch]
-                        results = await asyncio.gather(*(ib.req_contract_details(c) for c in raw))
-                        qualified_count = 0
-                        for (key, _), res in zip(batch, results):
-                            qc = res[0].contract if res and res[0].contract.conId > 0 else None
-                            if qc is None:
-                                state.chain_stream_unknown_keys[key] = asyncio.get_event_loop().time()
-                                continue
-                            stream = ib.subscribe_tick(qc, "101")
-                            state.chain_stream_tickers[key] = stream
-                            state.chain_stream_contracts[key] = qc
-                            state.chain_stream_unknown_keys.pop(key, None)
-                            qualified_count += 1
-
-                        if qualified_count:
-                            logger.info(
-                                f"Chain stream subscribed {qualified_count}/{len(batch)} in batch; "
-                                f"active_subs={len(state.chain_stream_tickers)}"
-                            )
-                        await asyncio.sleep(0.05)
-                except Exception as e:
-                    logger.warning(f"Chain stream subscribe error: {e}")
+                qualified = await state.qual_cache.qualify(
+                    ib, state.expiration, state.trading_class, new_keys, time.monotonic())
+                subscribed = 0
+                for key in new_keys:
+                    qc = qualified.get(key)
+                    if qc is None:
+                        continue
+                    try:
+                        stream = ib.subscribe_tick(qc, "101", share="stream")
+                    except LineBudgetExceeded as e:
+                        logger.warning(f"Chain stream: {e}")
+                        break
+                    state.chain_stream_tickers[key] = stream
+                    state.chain_stream_contracts[key] = qc
+                    subscribed += 1
+                if subscribed:
+                    logger.info(f"Chain stream subscribed {subscribed}/{len(new_keys)}; "
+                                f"active_subs={len(state.chain_stream_tickers)}")
 
             if len(state.chain_stream_tickers) != last_sub_count:
                 last_sub_count = len(state.chain_stream_tickers)
-                logger.info(
-                    f"Chain stream active subscriptions: {last_sub_count} "
-                    f"(unknown_blacklist={len(state.chain_stream_unknown_keys)})"
-                )
+                logger.info(f"Chain stream active subscriptions: {last_sub_count} "
+                            f"(unknown_blacklist={len(state.qual_cache.unknown)})")
 
             await asyncio.sleep(CHAIN_STREAM_UPDATE_INTERVAL)
 
-            ticks = []
-            live_options: List[OptionData] = []
-            oi_fallback = {
-                (o.strike, o.right): o.open_interest
-                for o in state.chain_data
-            }
-            for (strike, right), stream in state.chain_stream_tickers.items():
-                bid = _finite_or_none(stream.bid)
-                ask = _finite_or_none(stream.ask)
-                last_val = _finite_or_none(stream.last)
-                bid_sz = int(stream.bid_size) if stream.bid_size not in (None, -1) and not (isinstance(stream.bid_size, float) and math.isnan(stream.bid_size)) else 0
-                ask_sz = int(stream.ask_size) if stream.ask_size not in (None, -1) and not (isinstance(stream.ask_size, float) and math.isnan(stream.ask_size)) else 0
-                vol = int(stream.volume) if stream.volume not in (None, -1) and not (isinstance(stream.volume, float) and math.isnan(stream.volume)) else 0
-
-                delta_raw, gamma_raw, iv_dec = _extract_stream_greeks(stream)
-                delta = round(delta_raw, 4) if delta_raw is not None else None
-                gamma = round(gamma_raw, 6) if gamma_raw is not None else None
-                iv = round(iv_dec * 100, 2) if iv_dec is not None else None
-
-                if right == 'C':
-                    oi_raw = stream.call_oi
-                else:
-                    oi_raw = stream.put_oi
-                oi = int(oi_raw) if oi_raw not in (None, -1) and not (isinstance(oi_raw, float) and math.isnan(oi_raw)) else oi_fallback.get((strike, right), 0)
-
-                ticks.append({
-                    "strike": strike, "right": right,
-                    "bid": round(bid, 2) if bid is not None else None,
-                    "ask": round(ask, 2) if ask is not None else None,
-                    "bid_size": bid_sz, "ask_size": ask_sz,
-                    "last": round(last_val, 2) if last_val is not None else None,
-                    "volume": vol,
-                    "delta": delta, "gamma": gamma, "iv": iv,
-                })
-
-                live_options.append(OptionData(
-                    strike=strike, right=right,
-                    delta=delta, gamma=gamma,
-                    implied_vol=iv_dec,
-                    open_interest=oi, volume=vol,
-                    bid=round(bid, 2) if bid is not None else None,
-                    ask=round(ask, 2) if ask is not None else None,
-                    last=round(last_val, 2) if last_val is not None else None,
-                    bid_size=bid_sz, ask_size=ask_sz,
-                ))
+            oi_fallback = {(o.strike, o.right): o.open_interest for o in state.chain_data}
+            ticks, live_options, book_options = _collect_stream_quotes(
+                state.chain_stream_tickers, oi_fallback)
+            if state.quote_book.expiry != state.expiration:
+                state.quote_book.reset(state.expiration)
+            state.quote_book.update(book_options, "stream", time.monotonic())
 
             if ticks:
                 now_iso = now_et().isoformat()
-                await broadcast_fn({
-                    "type": "chain_tick",
-                    "data": {"ticks": ticks, "timestamp_iso": now_iso}
-                })
-
+                await broadcast_fn({"type": "chain_tick",
+                                    "data": {"ticks": ticks, "timestamp_iso": now_iso}})
                 live_quotes = build_chain_quotes(
-                    options=live_options,
-                    spot_price=state.spx_price,
-                    gex_result=state.gex_result,
-                    annual_vol=state.annual_vol,
-                    expiration=state.expiration,
-                )
+                    options=live_options, spot_price=state.spx_price,
+                    gex_result=state.gex_result, annual_vol=state.annual_vol,
+                    expiration=state.expiration, trading_class=state.trading_class,
+                    ages={norm_key(o.strike, o.right): 0.0 for o in book_options},
+                    max_age_s=CHAIN_QUOTE_MAX_AGE_S)
                 live_quotes["timestamp_iso"] = now_iso
                 live_quotes["scope"] = "stream"
                 state.last_chain_update = now_et().strftime("%H:%M:%S")
 
-                now_monotonic = asyncio.get_event_loop().time()
+                now_monotonic = time.monotonic()
                 if now_monotonic - last_tick_log_ts >= 10.0:
                     last_tick_log_ts = now_monotonic
-                    with_quotes = sum(1 for t in ticks if t.get("bid") is not None or t.get("ask") is not None or t.get("last") is not None)
+                    with_quotes = sum(1 for t in ticks if t.get("bid") is not None
+                                      or t.get("ask") is not None or t.get("last") is not None)
                     logger.info(chain_stream_status_line(
                         len(ticks), with_quotes, len(state.chain_stream_tickers)))
-
-                logger.debug(
-                    f"Broadcasting stream chain_quotes: rows={len(live_quotes.get('strikes', []))}, "
-                    f"active_subs={len(state.chain_stream_tickers)}"
-                )
                 await broadcast_fn({"type": "chain_quotes", "data": live_quotes})
 
         except asyncio.CancelledError:

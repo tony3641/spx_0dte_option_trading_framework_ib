@@ -69,3 +69,25 @@ class TestBuildChainQuotesAges:
         q = build_chain_quotes([OptionData(7700, "P", bid=1.0)], 7700.0)
         assert "put_age_s" not in q["strikes"][0]
         assert q["max_age_s"] is None
+
+
+from spx_trade_desk.ib.client import TickStream
+from spx_trade_desk.market.chain_manager import _collect_stream_quotes
+
+
+class TestCollectStreamQuotes:
+    def _stream(self, req_id, ticked, bid=None):
+        s = TickStream(req_id, contract=None)
+        s.bid = bid
+        if ticked:
+            s._mark(has_quote=bid is not None)
+        return s
+
+    def test_collect_stream_quotes_skips_streams_without_ticks(self):
+        tickers = {(7700.0, "P"): self._stream(1, True, bid=1.25),
+                   (7705.0, "P"): self._stream(2, False)}
+        ticks, live, book = _collect_stream_quotes(tickers, {(7705.0, "P"): 300})
+        assert [t["strike"] for t in ticks] == [7700.0, 7705.0]
+        assert [o.strike for o in live] == [7700.0, 7705.0]
+        assert [(o.strike, o.bid) for o in book] == [(7700.0, 1.25)]
+        assert live[1].open_interest == 300            # OI falls back to the last chain value
