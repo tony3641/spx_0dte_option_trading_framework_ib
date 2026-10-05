@@ -224,11 +224,14 @@ def _stream_int(val) -> int:
     return int(f) if f is not None else 0
 
 
-def _collect_stream_quotes(tickers: dict, oi_fallback: dict):
+def _collect_stream_quotes(tickers: dict, oi_fallback: dict, seen: Optional[dict] = None):
     """Turn live chain-stream TickStreams into (tick payloads, rows, rows for the book).
 
     Only streams that have received a tick go to the quote book: a fresh subscription
-    with no data yet must not stamp an older polled quote as current.
+    with no data yet must not stamp an older polled quote as current. With ``seen``
+    (key -> the last tick time already merged), only streams that ticked since the
+    previous pass go to the book, so a silent data farm lets the rows age instead of
+    being restamped fresh every pass. ``seen`` is updated in place.
     """
     ticks, live_options, book_options = [], [], []
     for (strike, right), stream in tickers.items():
@@ -263,6 +266,11 @@ def _collect_stream_quotes(tickers: dict, oi_fallback: dict):
         )
         live_options.append(opt)
         if stream.received_any_tick():
+            tick_mono = getattr(stream, "last_tick_mono", 0.0)
+            if seen is not None:
+                if tick_mono <= seen.get((strike, right), -1.0):
+                    continue
+                seen[(strike, right)] = tick_mono
             book_options.append(opt)
     return ticks, live_options, book_options
 
@@ -278,6 +286,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
     last_sub_count = -1
     last_tick_log_ts = 0.0
     last_center_log = ""
+    seen_ticks: Dict[tuple, float] = {}     # key -> last stream tick time merged into the book
 
     while True:
         try:
@@ -290,6 +299,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
 
             if state.expiration != last_expiration:
                 _cancel_stream_subs(ib, state)
+                seen_ticks.clear()
                 last_expiration = state.expiration
                 logger.info(f"Chain stream expiration switched to {state.expiration}; reset subscriptions")
 
@@ -355,11 +365,14 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             await asyncio.sleep(CHAIN_STREAM_UPDATE_INTERVAL)
 
             oi_fallback = {(o.strike, o.right): o.open_interest for o in state.chain_data}
+            for k in [k for k in seen_ticks if k not in state.chain_stream_tickers]:
+                del seen_ticks[k]
             ticks, live_options, book_options = _collect_stream_quotes(
-                state.chain_stream_tickers, oi_fallback)
+                state.chain_stream_tickers, oi_fallback, seen_ticks)
             if state.quote_book.expiry != state.expiration:
                 state.quote_book.reset(state.expiration)
             state.quote_book.update(book_options, "stream", time.monotonic())
+            book_ages = state.quote_book.ages(time.monotonic())
 
             if ticks:
                 now_iso = now_et().isoformat()
@@ -369,7 +382,8 @@ async def chain_stream_loop(ib, state, broadcast_fn):
                     options=live_options, spot_price=state.spx_price,
                     gex_result=state.gex_result, annual_vol=state.annual_vol,
                     expiration=state.expiration, trading_class=state.trading_class,
-                    ages={norm_key(o.strike, o.right): 0.0 for o in book_options},
+                    ages={k: book_ages[k] for k in (norm_key(o.strike, o.right)
+                                                    for o in live_options) if k in book_ages},
                     max_age_s=CHAIN_QUOTE_MAX_AGE_S)
                 live_quotes["timestamp_iso"] = now_iso
                 live_quotes["scope"] = "stream"

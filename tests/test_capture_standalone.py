@@ -144,6 +144,47 @@ async def test_capture_gives_up_after_five_consecutive_failures(tmp_path, app_st
     assert n == 0
     assert calls["n"] == 5
     assert clock.t.time() < datetime(2026, 10, 5, 16, 0).time()      # returned early
+    # failed sweeps wait a record interval (60 s here) before the next attempt
+    assert clock.t >= datetime(2026, 10, 5, 15, 54, tzinfo=ET)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_sweep_is_not_retried_before_the_record_interval(tmp_path, app_state):
+    clock = FakeClock(datetime(2026, 10, 5, 15, 50, tzinfo=ET))
+    stamps = []
+
+    async def broken(*a, **k):
+        stamps.append(clock.t)
+        raise RuntimeError("pacing violation")
+
+    rec = ChainRecorder(tmp_path, source="standalone")
+    await cap.capture_session(None, _state(app_state), rec, tmp_path / ".heartbeat-dashboard",
+                              clock=clock.now, epoch=clock.epoch, mono=clock.mono,
+                              sleep=clock.sleep, fetch=broken)
+    gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])]
+    assert gaps and all(g >= 60 for g in gaps)
+
+
+@pytest.mark.asyncio
+async def test_the_failure_count_resets_after_an_idle_spell(tmp_path, app_state):
+    clock = FakeClock(datetime(2026, 10, 5, 15, 20, tzinfo=ET))
+    hb = tmp_path / ".heartbeat-dashboard"
+    calls = {"n": 0}
+
+    async def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 4:                       # dashboard comes back for ~3 minutes
+            hb.touch()
+            os.utime(hb, (clock.epoch() + 100, clock.epoch() + 100))
+        if calls["n"] <= 8:
+            raise RuntimeError("pacing violation")
+        return [OptionData(7700.0, "P", bid=1.0)]
+
+    rec = ChainRecorder(tmp_path, source="standalone")
+    n = await cap.capture_session(None, _state(app_state), rec, hb, clock=clock.now,
+                                  epoch=clock.epoch, mono=clock.mono, sleep=clock.sleep,
+                                  fetch=flaky)
+    assert calls["n"] > 8 and n > 0               # 4 + 4 failures are not 5 in a row
 
 
 @pytest.mark.asyncio

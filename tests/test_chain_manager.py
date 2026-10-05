@@ -91,3 +91,38 @@ class TestCollectStreamQuotes:
         assert [o.strike for o in live] == [7700.0, 7705.0]
         assert [(o.strike, o.bid) for o in book] == [(7700.0, 1.25)]
         assert live[1].open_interest == 300            # OI falls back to the last chain value
+
+
+class TestCollectStreamQuotesFreshness:
+    """A stream row reaches the book only when its stream ticked since the last pass."""
+
+    def _ticked(self, req_id, bid, at):
+        s = TickStream(req_id, contract=None)
+        s.bid = bid
+        s._mark(has_quote=True)
+        s.last_tick_mono = at
+        return s
+
+    def test_untick_ed_stream_key_is_not_restamped(self):
+        a, b = self._ticked(1, 1.0, 100.0), self._ticked(2, 2.0, 100.0)
+        tickers = {(7700.0, "P"): a, (7705.0, "P"): b}
+        seen = {}
+        _, _, book = _collect_stream_quotes(tickers, {}, seen)
+        assert [o.strike for o in book] == [7700.0, 7705.0]
+        _, live, book = _collect_stream_quotes(tickers, {}, seen)        # silent farm
+        assert book == [] and len(live) == 2                              # tick payload unchanged
+        a.last_tick_mono = 101.0                                          # only A ticks
+        _, _, book = _collect_stream_quotes(tickers, {}, seen)
+        assert [o.strike for o in book] == [7700.0]
+
+    def test_without_a_seen_map_every_ticked_stream_is_collected(self):
+        tickers = {(7700.0, "P"): self._ticked(1, 1.0, 100.0)}
+        assert len(_collect_stream_quotes(tickers, {})[2]) == 1
+        assert len(_collect_stream_quotes(tickers, {})[2]) == 1
+
+    def test_a_resubscribed_key_is_collected_again(self):
+        key = (7700.0, "P")
+        seen = {}
+        _collect_stream_quotes({key: self._ticked(1, 1.0, 100.0)}, {}, seen)
+        _, _, book = _collect_stream_quotes({key: self._ticked(9, 1.1, 150.0)}, {}, seen)
+        assert [o.bid for o in book] == [1.1]

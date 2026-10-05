@@ -62,6 +62,8 @@ class QualificationCache:
             except Exception as e:
                 logger.warning(f"Qualification batch failed: {e}")
                 results = [None] * len(batch)
+            if (expiry, trading_class) != (self.expiry, self.trading_class):
+                return {}       # an expiry roll or a clear overtook this call: write nothing
             for k, res in zip(batch, results):
                 if res and res[0].contract.conId > 0:
                     self.contracts[k] = res[0].contract

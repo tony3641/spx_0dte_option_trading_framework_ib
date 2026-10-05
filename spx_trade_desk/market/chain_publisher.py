@@ -57,6 +57,9 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
         trading_class=state.trading_class, ages=book.ages(now_mono),
         max_age_s=CHAIN_QUOTE_MAX_AGE_S)
     state.chain_quotes_cache["scope"] = "full"
+    # The engine adds (now - built_mono) to every side's age, so a cache that stops being
+    # replaced (reconnect, a persistent build error) cannot keep passing as fresh.
+    state.chain_quotes_cache["built_mono"] = time.monotonic()
     payload = dict(state.latest_gex)
     payload["es_derived"] = state.es_derived
     await broadcast_fn({"type": "gex", "data": payload})
@@ -68,14 +71,22 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     return True
 
 
+async def publish_tick(state, broadcast_fn, recorder, now_mono: float) -> bool:
+    """One publish cycle. A successful publish proves the dashboard is alive, so the
+    recorder's heartbeat is touched whether or not a record is due."""
+    ok = await publish_chain(state, broadcast_fn, now_mono)
+    if recorder is not None:
+        if ok:
+            recorder.touch_heartbeat()
+        recorder.maybe_record(state, now_et(), now_mono)
+    return ok
+
+
 async def chain_publish_loop(ib, state, broadcast_fn, recorder=None):
     while True:
         try:
             if state.connected and state.expiration and is_cboe_options_open():
-                mono = time.monotonic()
-                await publish_chain(state, broadcast_fn, mono)
-                if recorder is not None:
-                    recorder.maybe_record(state, now_et(), mono)
+                await publish_tick(state, broadcast_fn, recorder, time.monotonic())
         except asyncio.CancelledError:
             break
         except Exception as e:

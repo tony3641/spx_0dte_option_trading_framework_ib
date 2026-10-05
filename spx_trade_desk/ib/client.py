@@ -12,6 +12,7 @@ import asyncio
 import itertools
 import logging
 import threading
+import time
 from collections import namedtuple
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
@@ -138,6 +139,9 @@ class TickStream:
         self.model_greeks = Greeks()
         self._first_tick = False
         self._has_quote = False
+        # time.monotonic() of the latest tick, written on the socket thread (a float
+        # assignment): lets readers tell a silent subscription from a live one.
+        self.last_tick_mono = 0.0
 
     def received_any_tick(self):
         return self._first_tick
@@ -147,6 +151,7 @@ class TickStream:
 
     def _mark(self, has_quote):
         self._first_tick = True
+        self.last_tick_mono = time.monotonic()
         if has_quote:
             self._has_quote = True
 
@@ -586,7 +591,13 @@ class IBClient(EWrapper, EClient):
                 f"({self.line_budget.used(share)}/{self.line_budget.capacity(share)})")
         stream = self._register_stream(contract)
         self._stream_share[stream.req_id] = share
-        EClient.reqMktData(self, stream.req_id, contract, generic, False, False, [])
+        try:
+            EClient.reqMktData(self, stream.req_id, contract, generic, False, False, [])
+        except BaseException:
+            self._streams.pop(stream.req_id, None)
+            self._stream_share.pop(stream.req_id, None)
+            self.line_budget.release(share)
+            raise
         return stream
 
     def unsubscribe_tick(self, req_id):

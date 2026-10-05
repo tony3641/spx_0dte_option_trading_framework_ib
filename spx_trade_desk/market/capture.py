@@ -53,9 +53,9 @@ async def capture_session(ib, state, recorder: ChainRecorder, dashboard_heartbea
                           sleep=asyncio.sleep, fetch=_sweep) -> int:
     """Capture until the session close; return the number of records written.
 
-    A failed refresh/sweep is logged and retried at the normal step; MAX_FAILURES in a
-    row ends the session. A sweep that records nothing is not repeated before the
-    recorder's interval has passed.
+    A failed or empty sweep is not repeated before the recorder's interval has passed;
+    MAX_FAILURES failures in a row end the session. Idling while the dashboard is alive
+    resets the failure count.
     """
     written = 0
     failures = 0
@@ -65,6 +65,7 @@ async def capture_session(ib, state, recorder: ChainRecorder, dashboard_heartbea
         if t.time() >= session_close(t.date()):
             return written
         if heartbeat_fresh(dashboard_heartbeat, epoch()):
+            failures = 0
             await sleep(IDLE_CHECK_S)
             continue
         if recorder.due(t) and mono() >= next_sweep_mono:
@@ -83,6 +84,7 @@ async def capture_session(ib, state, recorder: ChainRecorder, dashboard_heartbea
                         next_sweep_mono = mono() + (record_interval(t) or STEP_S)
             except Exception as e:
                 failures += 1
+                next_sweep_mono = mono() + (record_interval(t) or STEP_S)
                 logger.warning(f"Capture sweep failed ({failures}/{MAX_FAILURES}): {e}")
                 if failures >= MAX_FAILURES:
                     logger.error("Capture stopping after repeated sweep failures")

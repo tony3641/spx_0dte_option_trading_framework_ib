@@ -1125,3 +1125,36 @@ def test_stale_long_leg_is_skipped():
     rows = _rows()
     rows["strikes"][1]["put_age_s"] = 500.0          # 5200 put is a short and a long leg
     assert _pairs(rows) == set()
+
+
+def test_a_frozen_cache_ages_with_wall_time_since_it_was_built():
+    import time
+    rows = _rows()
+    rows["strikes"][2]["put_age_s"] = 5.0
+    rows["strikes"][1]["put_age_s"] = 5.0
+    rows["built_mono"] = time.monotonic() - 400.0      # published 400 s ago, never refreshed
+    assert _pairs(rows) == set()
+
+
+def test_a_just_built_cache_keeps_its_published_ages():
+    import time
+    rows = _rows()
+    rows["strikes"][2]["put_age_s"] = 5.0
+    rows["built_mono"] = time.monotonic() - 2.0
+    assert _pairs(rows) == {(5300, 5200), (5200, 5100)}
+
+
+def test_a_cache_without_built_mono_adds_no_age():
+    rows = _rows()
+    rows["strikes"][2]["put_age_s"] = 170.0
+    assert "built_mono" not in rows
+    assert _pairs(rows) == {(5300, 5200), (5200, 5100)}
+
+
+def test_fresh_adds_the_cache_age_to_the_side_age():
+    from spx_trade_desk.strategy.engine import _fresh
+    row = {"strike": 5300, "put_age_s": 100.0}
+    assert _fresh(row, "P", max_age=180.0)
+    assert _fresh(row, "P", max_age=180.0, extra_age=79.0)
+    assert not _fresh(row, "P", max_age=180.0, extra_age=81.0)
+    assert _fresh({"strike": 5300}, "P", max_age=180.0, extra_age=500.0)   # no age: unknown = fresh

@@ -9,6 +9,10 @@ Merge rules: a field an update does not carry (None) never overwrites a present 
 bid_size/ask_size only follow a bid/ask carried by the same update; and an update with
 no quote data (bid, ask, last, delta, gamma, implied_vol) does not restamp the age or
 source of a row that already exists.
+
+The stream is the authority for the keys it holds: its update carries the whole quote
+state, so a bid or ask it reports as absent (IB's -1) clears the book's value (and that
+side's size). Poll rows keep the "None never overwrites" rule.
 """
 from dataclasses import dataclass, fields, replace
 from typing import Dict, Iterable, List
@@ -32,10 +36,16 @@ class _Entry:
     ts: float
 
 
-def _merge(old: OptionData, new: OptionData) -> OptionData:
+_QUOTE_SIDE = ("bid", "ask", "bid_size", "ask_size")
+
+
+def _merge(old: OptionData, new: OptionData, authoritative: bool = False) -> OptionData:
     out = replace(old)
     for name in _FIELDS:
         v = getattr(new, name)
+        if authoritative and name in _QUOTE_SIDE:
+            setattr(out, name, v)
+            continue
         if v is None:
             continue
         if name in _SIZE_OF and getattr(new, _SIZE_OF[name]) is None:
@@ -65,7 +75,7 @@ class QuoteBook:
             if old is None:
                 self._rows[k] = _Entry(replace(o, strike=k[0], right=k[1]), source, now)
                 continue
-            old.option = _merge(old.option, o)
+            old.option = _merge(old.option, o, authoritative=(source == "stream"))
             if any(getattr(o, f) is not None for f in _QUOTE_FIELDS):
                 old.source, old.ts = source, now
 

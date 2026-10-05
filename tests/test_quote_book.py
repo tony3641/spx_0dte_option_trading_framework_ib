@@ -71,13 +71,13 @@ def test_age_is_never_negative():
 def test_sizes_follow_their_own_side_of_the_quote():
     b = _book()
     b.update([opt(7700, bid=1.0, ask=1.2, bid_size=5, ask_size=7)], "poll", now=0.0)
-    b.update([opt(7700, bid=1.05, bid_size=3)], "stream", now=1.0)
+    b.update([opt(7700, bid=1.05, bid_size=3)], "poll", now=1.0)
     o = b.options()[0]
     assert (o.bid_size, o.ask_size) == (3, 7)
-    b.update([opt(7700, ask=1.3, ask_size=9)], "stream", now=2.0)
+    b.update([opt(7700, ask=1.3, ask_size=9)], "poll", now=2.0)
     o = b.options()[0]
     assert (o.bid_size, o.ask_size) == (3, 9)
-    b.update([opt(7700, last=1.1)], "stream", now=3.0)        # no bid/ask: sizes untouched
+    b.update([opt(7700, last=1.1)], "poll", now=3.0)          # no bid/ask: sizes untouched
     o = b.options()[0]
     assert (o.bid_size, o.ask_size) == (3, 9)
 
@@ -113,3 +113,14 @@ def test_zero_volume_does_not_wipe_positive_volume():
     assert b.options()[0].volume == 40
     b.update([opt(7700, volume=55)], "poll", now=2.0)
     assert b.options()[0].volume == 55
+
+
+def test_stream_none_bid_and_ask_clear_the_books_quote_but_poll_none_does_not():
+    b = _book()
+    b.update([opt(7700, bid=1.0, ask=1.2, bid_size=5, ask_size=7)], "poll", now=0.0)
+    b.update([opt(7700, last=1.1)], "poll", now=1.0)            # poll: absent = unknown
+    o = b.options()[0]
+    assert (o.bid, o.ask, o.bid_size, o.ask_size) == (1.0, 1.2, 5, 7)
+    b.update([opt(7700, ask=1.3, ask_size=2)], "stream", now=2.0)   # stream: no bid = no bid
+    o = b.options()[0]
+    assert (o.bid, o.ask, o.bid_size, o.ask_size) == (None, 1.3, 0, 2)

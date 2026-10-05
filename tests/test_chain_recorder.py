@@ -1,6 +1,7 @@
 """Chain recorder: schedule, schema, gzip append, heartbeat, error isolation."""
 import gzip
 import json
+import os
 from datetime import datetime
 
 import pytest
@@ -92,3 +93,38 @@ def test_maybe_record_swallows_write_errors(tmp_path, app_state):
     blocker.write_text("x")
     rec = ChainRecorder(blocker / "library")                # mkdir under a file fails
     assert rec.maybe_record(_state(app_state), at(10, 0), now_mono=10.0) is False
+
+
+def test_touch_heartbeat_creates_and_refreshes_the_file(tmp_path):
+    rec = ChainRecorder(tmp_path / "library")
+    rec.touch_heartbeat()
+    assert rec.heartbeat.exists()
+    os.utime(rec.heartbeat, (1.0, 1.0))
+    rec.touch_heartbeat()
+    assert rec.heartbeat.stat().st_mtime > 1_000_000
+
+
+def test_a_failed_heartbeat_touch_is_swallowed_and_does_not_duplicate_records(
+        tmp_path, app_state, monkeypatch):
+    rec = ChainRecorder(tmp_path)
+    boom = {"n": 0}
+
+    def broken_touch(*a, **k):
+        boom["n"] += 1
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(type(rec.heartbeat), "touch", broken_touch)
+    st = _state(app_state)
+    assert rec.maybe_record(st, at(10, 0), now_mono=10.0)           # record landed, touch failed
+    assert boom["n"] >= 1
+    assert not rec.maybe_record(st, at(10, 0), now_mono=10.0)       # not due again: no duplicate
+    with gzip.open(tmp_path / "20261005.jsonl.gz", "rt", encoding="utf-8") as f:
+        assert len(f.readlines()) == 1
+
+
+def test_no_record_while_spot_is_unknown(tmp_path, app_state):
+    rec = ChainRecorder(tmp_path)
+    st = _state(app_state)
+    st.spx_price = 0.0
+    assert not rec.maybe_record(st, at(10, 0), now_mono=10.0)
+    assert not (tmp_path / "20261005.jsonl.gz").exists()

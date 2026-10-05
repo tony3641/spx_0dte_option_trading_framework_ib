@@ -3,7 +3,10 @@
 The files under CHAIN_LIBRARY_DIR are the raw material for the simulator's smile library
 (SP2). IV is stored exactly as IB reports it (decimal, calendar clock); unit handling
 belongs to the consumer. One gzip member per record, so a crash mid-day leaves a valid
-file. The recorder never raises into the loop that calls it.
+file. The recorder never raises into the loop that calls it. The dashboard also touches
+its heartbeat on every successful publish tick (``touch_heartbeat``), not only when a
+record is written, so the standalone capture can tell "dashboard alive" from "dashboard
+idle until 09:31".
 """
 import gzip
 import json
@@ -70,13 +73,21 @@ class ChainRecorder:
         path = self.root / f"{t:%Y%m%d}.jsonl.gz"
         with gzip.open(path, "at", encoding="utf-8") as f:
             f.write(json.dumps(record, separators=(",", ":")) + "\n")
-        self.heartbeat.touch()
-        self._last = t
+        self._last = t          # before the touch: a touch failure must not repeat the record
+        self.touch_heartbeat()
         return path
+
+    def touch_heartbeat(self) -> None:
+        """Liveness mark for the standalone capture. Never raises."""
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            self.heartbeat.touch()
+        except Exception as e:
+            logger.warning(f"Chain recorder heartbeat touch failed: {e}")
 
     def maybe_record(self, state, t: datetime, now_mono: float) -> bool:
         if (not self.due(t) or state.expiration != f"{t:%Y%m%d}"
-                or len(state.quote_book) == 0):
+                or len(state.quote_book) == 0 or not state.spx_price > 0):
             return False
         try:
             rec = build_record(state.quote_book, state.expiration, state.spx_price,

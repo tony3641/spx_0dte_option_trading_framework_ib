@@ -68,3 +68,29 @@ async def test_clear_forgets_everything():
     cache.clear()
     await cache.qualify(ib, "20261005", "SPXW", [(7700, "P")], now=0.0)
     assert _n(ib) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_qualify_overtaken_by_an_expiry_roll_does_not_write_its_results():
+    import asyncio
+
+    class SlowIb(PickyIb):
+        def __init__(self):
+            super().__init__()
+            self.gate = asyncio.Event()
+
+        async def req_contract_details(self, contract):
+            if contract.lastTradeDateOrContractMonth == "20261005":
+                await self.gate.wait()
+            return await super().req_contract_details(contract)
+
+    ib = SlowIb()
+    cache = QualificationCache()
+    old = asyncio.create_task(cache.qualify(ib, "20261005", "SPXW", [(7700, "P")], now=0.0))
+    await asyncio.sleep(0)                                  # old call is now awaiting IB
+    new = await cache.qualify(ib, "20261006", "SPXW", [(7800, "P")], now=1.0)
+    ib.gate.set()
+    assert await old == {}                                  # stale caller gets nothing
+    assert set(cache.contracts) == {(7800.0, "P")}          # old-expiry contract not written
+    assert set(new) == {(7800.0, "P")} and cache.expiry == "20261006"
+    assert (7700.0, "P") not in cache.unknown

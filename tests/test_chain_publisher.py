@@ -1,9 +1,13 @@
 """Publisher: the quote book becomes GEX + chain payload + state every cycle."""
+import os
+import time
 from datetime import datetime
 
 import pytest
 
+from spx_trade_desk.market import chain_publisher as pub
 from spx_trade_desk.market.chain_publisher import publish_chain, tte_years
+from spx_trade_desk.market.chain_recorder import ChainRecorder
 from spx_trade_desk.market.gex import OptionData
 from spx_trade_desk.market.hours import ET
 from spx_trade_desk.market.quote_book import QuoteBook
@@ -71,3 +75,38 @@ async def test_publish_with_an_empty_book_does_nothing(app_state):
     sink = Sink()
     assert not await publish_chain(st, sink, now_mono=0.0)
     assert sink.msgs == []
+
+
+@pytest.mark.asyncio
+async def test_publish_stamps_the_cache_with_its_build_time(app_state):
+    st = _state(app_state, OptionData(7690, "P", bid=1.0))
+    await publish_chain(st, Sink(), now_mono=123.0)
+    assert st.chain_quotes_cache["built_mono"] == pytest.approx(time.monotonic(), abs=5.0)
+
+
+@pytest.mark.asyncio
+async def test_publish_tick_touches_the_heartbeat_even_when_no_record_is_due(
+        app_state, tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 9, 20, tzinfo=ET))
+    st = _state(app_state, OptionData(7690, "P", bid=1.0))
+    rec = ChainRecorder(tmp_path)
+    rec.touch_heartbeat()
+    os.utime(rec.heartbeat, (1.0, 1.0))
+    assert await pub.publish_tick(st, Sink(), rec, now_mono=1.0)
+    assert rec.heartbeat.stat().st_mtime > 1_000_000
+    assert not (tmp_path / "20261005.jsonl.gz").exists()        # 09:20: nothing due
+
+
+@pytest.mark.asyncio
+async def test_publish_tick_does_not_touch_the_heartbeat_when_the_publish_failed(
+        app_state, tmp_path):
+    st = _state(app_state)                                      # empty book -> publish returns False
+    rec = ChainRecorder(tmp_path)
+    assert not await pub.publish_tick(st, Sink(), rec, now_mono=1.0)
+    assert not rec.heartbeat.exists()
+
+
+@pytest.mark.asyncio
+async def test_publish_tick_without_a_recorder_just_publishes(app_state):
+    st = _state(app_state, OptionData(7690, "P", bid=1.0))
+    assert await pub.publish_tick(st, Sink(), None, now_mono=1.0)

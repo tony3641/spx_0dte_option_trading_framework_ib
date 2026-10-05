@@ -1,5 +1,6 @@
 # tests/test_ib_client.py
 import asyncio
+import time
 from types import SimpleNamespace
 import pytest
 from unittest import mock
@@ -659,3 +660,30 @@ async def test_cancelled_fetch_snapshot_releases_lines(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await t
     assert client.line_budget.used("poll") == 0 and client._streams == {}
+
+
+# Final-review fixes: stream freshness and line release on a failed request
+def test_tick_stream_records_a_monotonic_last_tick_time():
+    s = TickStream(7, None)
+    assert s.last_tick_mono == 0.0
+    before = time.monotonic()
+    s._mark(has_quote=False)
+    assert before <= s.last_tick_mono <= time.monotonic()
+    first = s.last_tick_mono
+    s._mark(has_quote=True)
+    assert s.last_tick_mono >= first
+
+
+def test_subscribe_tick_releases_its_line_if_the_request_raises(monkeypatch):
+    client = IBClient()
+
+    def boom(self, *a, **k):
+        raise RuntimeError("not connected")
+
+    monkeypatch.setattr(EClient, "reqMktData", boom)
+    c = Contract(); c.symbol = "SPX"; c.secType = "OPT"
+    used_before = client.line_budget.used("stream")
+    with pytest.raises(RuntimeError):
+        client.subscribe_tick(c, "101", share="stream")
+    assert client.line_budget.used("stream") == used_before
+    assert not client._streams and not client._stream_share
