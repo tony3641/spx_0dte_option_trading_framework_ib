@@ -95,6 +95,8 @@ def _get_time_setting(name: str, default_hhmm: str) -> time:
 IB_HOST = _get_setting("IB_HOST", "127.0.0.1", str)
 IB_PORT = _get_setting("IB_PORT", 7497, int)
 IB_CLIENT_ID = _get_setting("IB_CLIENT_ID", 1, int)
+# Standalone chain capture (python -m spx_trade_desk.market.capture) — its own IB client id.
+CAPTURE_CLIENT_ID = _get_setting("CAPTURE_CLIENT_ID", 97, int)
 
 # ---------------------------------------------------------------------------
 # Refresh cadences (seconds)
