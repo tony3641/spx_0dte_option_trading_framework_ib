@@ -15,7 +15,6 @@ from spx_trade_desk.ib.orders import _option_contract
 
 from spx_trade_desk.core.config import (
     CHAIN_STREAM_MAX_LINES, CHAIN_STREAM_UPDATE_INTERVAL,
-    CHAIN_STREAM_UNKNOWN_RETRY_SECS,
     SNAPSHOT_REFRESH_SECONDS, MONTHLY_CACHE_TTL,
 )
 from spx_trade_desk.market.hours import (
@@ -26,20 +25,9 @@ from spx_trade_desk.market.hours import (
 from spx_trade_desk.market.chain_fetcher import fetch_option_chain, clear_qualification_cache
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict, GEXResult, OptionData
 from spx_trade_desk.market.bars import compute_annual_vol, fetch_historical_bars
+from spx_trade_desk.market.qualification import norm_key, unknown_retry_due  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
-
-
-def unknown_retry_due(unknown: dict, now: float,
-                      cooldown: float = CHAIN_STREAM_UNKNOWN_RETRY_SECS) -> set:
-    """Return stream keys whose failed-qualification retry is due.
-
-    The unknown map holds (strike, right) -> monotonic timestamp of the last
-    failed qualification attempt. Retrying after a cooldown lets the stream
-    recover from transient sec-def farm outages (IB error 2157) instead of
-    staying blacklisted until the expiration rolls over.
-    """
-    return {k for k, ts in unknown.items() if now - ts >= cooldown}
 
 
 def chain_stream_status_line(contracts: int, quotes_present: int,
