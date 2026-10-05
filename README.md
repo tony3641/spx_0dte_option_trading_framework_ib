@@ -265,7 +265,7 @@ python -m spx_trade_desk.sim.tune --spec docs/experiments/<slug>/variants.json -
 
 While the dashboard runs, the merged 0DTE chain is appended every 60 s (09:31-10:00 and the last hour) or 120 s (otherwise) to `data/chain_library/YYYYMMDD.jsonl.gz`. Each line is one snapshot: spot, VIX, VIX1D, and per strike and side bid/ask/last/IV (IB's raw calendar-clock decimal)/delta/gamma/OI/volume, plus the quote's age and source. The folder is local market data, gitignored and blocked by the pre-commit hook.
 
-When the dashboard is not running, `python -m spx_trade_desk.market.capture` writes the same files. It idles while the dashboard's heartbeat is fresh and takes over within about three minutes of the dashboard stopping. A failed sweep is logged and retried, and the capture exits after 5 consecutive failures; while SPX has no price yet it waits instead of sweeping. To run it every trading day, create a Windows Task Scheduler task yourself (weekdays, 09:20 ET; working directory = repo root; action = `python -m spx_trade_desk.market.capture`). When the dashboard restarts while the capture is sweeping, both can briefly hold lines until the dashboard writes its first record, so with a 100-line account expect a short overlap at the line cap. Stopping the capture before restarting the dashboard avoids it.
+When the dashboard is not running, `python -m spx_trade_desk.market.capture` writes the same files. It idles while the dashboard's heartbeat is fresh and takes over within about four minutes of the dashboard stopping (the dashboard refreshes its heartbeat on every successful publish tick, so it also stays quiet from the 09:20 start until the first 09:31 record). A failed or empty sweep is logged and retried only after the next record interval (60-120 s), so a short outage does not end the run; the capture exits after 5 consecutive failed sweeps (an idle spell while the dashboard is alive resets the count). While SPX has no price yet it waits instead of sweeping. To run it every trading day, create a Windows Task Scheduler task yourself (weekdays, 09:20 ET; working directory = repo root; action = `python -m spx_trade_desk.market.capture`). When the dashboard restarts while the capture is sweeping, both can briefly hold lines until the dashboard writes its first record, so with a 100-line account expect a short overlap at the line cap. Stopping the capture before restarting the dashboard avoids it.
 
 ## Trade Log Analysis
 
@@ -436,7 +436,7 @@ Two-row subplot showing:
 - Live streaming 0DTE option chain with greeks
 - Markers on Put Wall, Call Wall, and Gamma Flip location
 
-The strikes nearest spot (or nearest your scroll position in the chain tab) stream live on the chain stream's line share. Every other strike in the +-8 sigma range is polled continuously in small batches on the poller's share, so the live stream never pauses. Both feed one quote book. Every `CHAIN_REFRESH_SECONDS` it is published as GEX, the chain table and the strategy engine's chain cache. Each side carries its quote age; sides older than `CHAIN_QUOTE_MAX_AGE_S` are dimmed and are never used as a strategy leg.
+The strikes nearest spot (or nearest your scroll position in the chain tab) stream live on the chain stream's line share. Every other strike in the +-8 sigma range is polled continuously in small batches on the poller's share, so the live stream never pauses. Both feed one quote book. Every `CHAIN_REFRESH_SECONDS` it is published as GEX, the chain table and the strategy engine's chain cache. Each side carries its quote age; sides older than `CHAIN_QUOTE_MAX_AGE_S` are dimmed and are never used as a candidate leg. A streamed row ages from its stream's last tick, so a silent data farm ages out the same way.
 
 ## Status Bar
 
@@ -467,7 +467,14 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/web/ws.py` | WebSocket message routing (tabs, GEX mode, strategies, orders, viewport sync) |
 | `spx_trade_desk/ib/client.py` / `ib/connection.py` | Native `ibapi` wrapper: contract resolution, streaming quotes, connection lifecycle |
 | `spx_trade_desk/market/chain_fetcher.py` | Batched SPXW option chain fetcher (streaming mode, ±8σ strike filter) |
-| `spx_trade_desk/market/chain_manager.py` | Chain caching, qualification, streaming state, monthly/0DTE coordination |
+| `spx_trade_desk/ib/line_budget.py` | Market-data line accounting: splits the account allowance into fixed/order/poll/stream shares and refuses over-cap requests locally |
+| `spx_trade_desk/market/chain_manager.py` | Chain stream loop (live near-money subscriptions into the quote book), `chain_quotes` payload builder, monthly GEX fetch and 0DTE coordination |
+| `spx_trade_desk/market/qualification.py` | Shared option-contract qualification cache (per expiry and trading class, retry cooldown for strikes IB could not resolve) |
+| `spx_trade_desk/market/quote_book.py` | The merged 0DTE quote book fed by the stream and the poller; every row carries its source and quote age |
+| `spx_trade_desk/market/chain_poller.py` | Wing poller: continuous batched snapshots of every in-range strike the stream does not hold |
+| `spx_trade_desk/market/chain_publisher.py` | Publish loop: quote book to GEX, chain table and the strategy engine's chain cache every `CHAIN_REFRESH_SECONDS`; refreshes the dashboard heartbeat |
+| `spx_trade_desk/market/chain_recorder.py` | Appends the merged chain to the daily gzipped chain library and maintains the heartbeat file |
+| `spx_trade_desk/market/capture.py` | Standalone chain capture (`python -m spx_trade_desk.market.capture`): records when the dashboard is not running |
 | `spx_trade_desk/market/gex.py` | GEX computation: Call/Put Wall, Gamma Flip, Max Pain, Net GEX, MM regime |
 | `spx_trade_desk/market/hours.py` | Market-hours helpers, ET timezone, expiration, FOMC/NFP day utilities |
 | `spx_trade_desk/market/bars.py` / `core/rates.py` | Historical bars and risk-free-rate (SGOV) helpers |
