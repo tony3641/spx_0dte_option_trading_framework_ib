@@ -23,7 +23,7 @@ from spx_trade_desk.ib.connection import (
 )
 from spx_trade_desk.ib.line_budget import split_lines
 from spx_trade_desk.market.chain_fetcher import fetch_option_chain, get_chain_params
-from spx_trade_desk.market.chain_recorder import ChainRecorder, session_close
+from spx_trade_desk.market.chain_recorder import ChainRecorder, record_interval, session_close
 from spx_trade_desk.market.hours import now_et
 from spx_trade_desk.resources import CHAIN_LIBRARY_DIR
 
@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_STALE_S = 180.0
 IDLE_CHECK_S = 60
 STEP_S = 5
+MAX_FAILURES = 5
 
 
 def heartbeat_fresh(path: Path, now_epoch: float, max_age: float = HEARTBEAT_STALE_S) -> bool:
@@ -50,8 +51,15 @@ async def _sweep(ib, state):
 async def capture_session(ib, state, recorder: ChainRecorder, dashboard_heartbeat: Path, *,
                           clock=now_et, epoch=time.time, mono=time.monotonic,
                           sleep=asyncio.sleep, fetch=_sweep) -> int:
-    """Capture until the session close; return the number of records written."""
+    """Capture until the session close; return the number of records written.
+
+    A failed refresh/sweep is logged and retried at the normal step; MAX_FAILURES in a
+    row ends the session. A sweep that records nothing is not repeated before the
+    recorder's interval has passed.
+    """
     written = 0
+    failures = 0
+    next_sweep_mono = 0.0
     while True:
         t = clock()
         if t.time() >= session_close(t.date()):
@@ -59,15 +67,26 @@ async def capture_session(ib, state, recorder: ChainRecorder, dashboard_heartbea
         if heartbeat_fresh(dashboard_heartbeat, epoch()):
             await sleep(IDLE_CHECK_S)
             continue
-        if recorder.due(t):
-            await update_spx_es_prices(state)
-            opts = await fetch(ib, state)
-            if state.quote_book.expiry != state.expiration:
-                state.quote_book.reset(state.expiration)
-            state.quote_book.update(opts, "poll", mono())
-            if recorder.maybe_record(state, t, mono()):
-                written += 1
-                logger.info(f"Captured {len(opts)} contracts at {t:%H:%M:%S}")
+        if recorder.due(t) and mono() >= next_sweep_mono:
+            try:
+                await update_spx_es_prices(state)
+                if (state.spx_price or 0) > 0:
+                    opts = await fetch(ib, state)
+                    if state.quote_book.expiry != state.expiration:
+                        state.quote_book.reset(state.expiration)
+                    state.quote_book.update(opts, "poll", mono())
+                    failures = 0
+                    if recorder.maybe_record(state, t, mono()):
+                        written += 1
+                        logger.info(f"Captured {len(opts)} contracts at {t:%H:%M:%S}")
+                    else:
+                        next_sweep_mono = mono() + (record_interval(t) or STEP_S)
+            except Exception as e:
+                failures += 1
+                logger.warning(f"Capture sweep failed ({failures}/{MAX_FAILURES}): {e}")
+                if failures >= MAX_FAILURES:
+                    logger.error("Capture stopping after repeated sweep failures")
+                    return written
         await sleep(STEP_S)
 
 
@@ -88,8 +107,8 @@ async def main(port: Optional[int] = None) -> None:
         await asyncio.sleep(2)
         await update_spx_es_prices(state)
         recorder = ChainRecorder(CHAIN_LIBRARY_DIR, source="standalone")
-        n = await capture_session(ib, state, recorder,
-                                  CHAIN_LIBRARY_DIR / ".heartbeat-dashboard")
+        dashboard_hb = ChainRecorder(CHAIN_LIBRARY_DIR, source="dashboard").heartbeat
+        n = await capture_session(ib, state, recorder, dashboard_hb)
         logger.info(f"Session over: {n} records written to {CHAIN_LIBRARY_DIR}")
     finally:
         ib.disconnect()
