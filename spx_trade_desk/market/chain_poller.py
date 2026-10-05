@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 CHAIN_STD_DEV_RANGE = 8.0
 ANNUAL_VOL_REFRESH_S = 300.0
+POLL_PACE_S = 1.0          # breather between productive cycles
+POLL_IDLE_S = 10.0         # back-off when a cycle wrote nothing (empty range / cooldown)
+POLL_START_DELAY_S = 1.0
 
 
 def poll_targets(strikes, spot: float, annual_vol: float, streamed: set) -> List[Key]:
@@ -44,6 +47,9 @@ async def poll_once(ib, state, now: Callable[[], float] = time.monotonic) -> int
     batch_n = max(1, ib.line_budget.capacity("poll"))
     written = 0
     for i in range(0, len(ordered), batch_n):
+        refresh = state.force_chain_fetch_event
+        if refresh is not None and refresh.is_set():
+            break          # the loop top clears the event and the qualification cache
         streams = await ib.fetch_snapshot(ordered[i:i + batch_n], generic="101",
                                           timeout=6.0, share="poll")
         opts = [o for o in (_stream_to_option_data(s) for s in streams) if o is not None]
@@ -69,7 +75,7 @@ def refresh_expiration(state) -> None:
 async def chain_poll_loop(ib, state, broadcast_fn):
     """Poll the wings continuously; a manual refresh restarts the cycle with a fresh
     qualification cache."""
-    await asyncio.sleep(1)
+    await asyncio.sleep(POLL_START_DELAY_S)
     if state.force_chain_fetch_event is None:
         state.force_chain_fetch_event = asyncio.Event()
     last_vol = float("-inf")
@@ -99,6 +105,7 @@ async def chain_poll_loop(ib, state, broadcast_fn):
             t0 = time.monotonic()
             n = await poll_once(ib, state)
             logger.info(f"Wing poll cycle: {n} contracts in {time.monotonic() - t0:.1f}s")
+            await asyncio.sleep(POLL_IDLE_S if n == 0 else POLL_PACE_S)
         except asyncio.CancelledError:
             break
         except Exception as e:
