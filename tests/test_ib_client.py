@@ -556,7 +556,7 @@ async def test_fetch_snapshot_grace_window_lets_late_oi_greeks_land(monkeypatch)
 @pytest.mark.asyncio
 async def test_error_fires_snapshot_done_when_pending_empties(monkeypatch):
     """A stream error (e.g. contract-not-found) drops its reqId from the pending
-    batch; when it was the last stream, _snapshot_done fires (mirrors _on_stream_tick)."""
+    batch; when it was the last stream, the batch's done event fires (mirrors _on_stream_tick)."""
     client = IBClient()
     client._loop = asyncio.get_running_loop()
     monkeypatch.setattr(EClient, "reqMktData", lambda self, *a, **k: None)
@@ -573,3 +573,89 @@ async def test_error_fires_snapshot_done_when_pending_empties(monkeypatch):
 
     assert len(streams) == 1
     assert len(client._streams) == 0
+
+
+# ---------------------------------------------------------------------------
+# Line budget + per-call snapshot batches (chain service SP1)
+# ---------------------------------------------------------------------------
+from spx_trade_desk.core import config as _cfg
+from spx_trade_desk.ib.line_budget import LineBudgetExceeded, split_lines
+
+
+def _opt(k):
+    c = Contract(); c.symbol = "SPX"; c.secType = "OPT"; c.strike = float(k)
+    return c
+
+
+def _quiet(monkeypatch, sent=None):
+    monkeypatch.setattr(EClient, "reqMktData",
+                        lambda self, *a, **k: sent.append(a[0]) if sent is not None else None)
+    monkeypatch.setattr(EClient, "cancelMktData", lambda self, *a, **k: None)
+
+
+def test_default_client_uses_configured_split():
+    assert IBClient().line_budget.shares() == split_lines(
+        _cfg.MARKET_DATA_LINES, _cfg.CHAIN_STREAM_MAX_LINES_CAP)
+
+
+def test_subscribe_tick_refuses_past_share_capacity_and_recovers(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient(line_shares={"fixed": 1, "order": 1, "poll": 1, "stream": 2})
+    s1 = client.subscribe_tick(_opt(1), "", share="fixed")
+    with pytest.raises(LineBudgetExceeded):
+        client.subscribe_tick(_opt(2), "", share="fixed")
+    client.unsubscribe_tick(s1.req_id)
+    client.subscribe_tick(_opt(2), "", share="fixed")
+    assert client.line_budget.used("fixed") == 1
+
+
+def test_refused_subscribe_sends_nothing(monkeypatch):
+    sent = []
+    _quiet(monkeypatch, sent)
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 0, "stream": 0})
+    with pytest.raises(LineBudgetExceeded):
+        client.subscribe_tick(_opt(1))
+    assert sent == [] and client._streams == {}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_fetch_snapshots_keep_separate_batches(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient(line_shares={"fixed": 4, "order": 4, "poll": 10, "stream": 0})
+    client._loop = asyncio.get_running_loop()
+    t_a = asyncio.create_task(client.fetch_snapshot([_opt(1), _opt(2)], timeout=5.0, grace=0.0))
+    await asyncio.sleep(0.01)
+    t_b = asyncio.create_task(client.fetch_snapshot([_opt(3)], timeout=5.0, grace=0.0))
+    await asyncio.sleep(0.01)
+    ids = sorted(client._streams)            # a's two req ids, then b's
+    client.tickPrice(ids[2], BID, 1.0, None)
+    b = await asyncio.wait_for(t_b, timeout=1)
+    assert [s.bid for s in b] == [1.0]
+    assert not t_a.done()                    # a still waits on its own ticks
+    client.tickPrice(ids[0], BID, 2.0, None)
+    client.tickPrice(ids[1], BID, 3.0, None)
+    a = await asyncio.wait_for(t_a, timeout=1)
+    assert [s.bid for s in a] == [2.0, 3.0]
+    assert client.line_budget.used("poll") == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshot_larger_than_share_raises(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 2, "stream": 0})
+    with pytest.raises(ValueError):
+        await client.fetch_snapshot([_opt(1), _opt(2), _opt(3)], timeout=0.01)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_fetch_snapshot_releases_lines(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 2, "stream": 0})
+    client._loop = asyncio.get_running_loop()
+    t = asyncio.create_task(client.fetch_snapshot([_opt(1), _opt(2)], timeout=5.0, grace=0.0))
+    await asyncio.sleep(0.01)
+    assert client.line_budget.used("poll") == 2
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert client.line_budget.used("poll") == 0 and client._streams == {}

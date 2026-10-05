@@ -30,6 +30,7 @@ from spx_trade_desk.ib.client import (
     _PENDING_STATUSES,
     _TERMINAL_STATUSES,
 )
+from spx_trade_desk.ib.line_budget import LineBudget, LineBudgetExceeded
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +93,11 @@ class MockContract:
 # by order_manager, account_manager, chain_fetcher, and other modules
 # ---------------------------------------------------------------------------
 
+# Pre-budget behaviour: unlimited underlyings/orders, the old 50-contract snapshot cap
+# and the old 96-line stream. Tests that exercise the budget pass line_shares explicitly.
+MOCK_LINE_SHARES = {"fixed": 1000, "order": 1000, "poll": 50, "stream": 96}
+
+
 class MockIBClient:
     """Mock bridge implementing the native ``IBClient`` surface.
 
@@ -112,7 +118,8 @@ class MockIBClient:
     def __init__(self, connected: bool = True,
                  fill_immediately: bool = True,
                  reject: bool = False,
-                 bracket_mode: bool = False):
+                 bracket_mode: bool = False,
+                 line_shares: Optional[Dict[str, int]] = None):
         self.connected = connected
         self._fill_immediately = fill_immediately
         self._reject = reject
@@ -128,6 +135,8 @@ class MockIBClient:
         self.orders: Dict[int, OrderHandle] = {}
         self._orders = self.orders
         self._streams: Dict[int, TickStream] = {}
+        self.line_budget = LineBudget(line_shares or MOCK_LINE_SHARES)
+        self._stream_share: Dict[int, str] = {}
         self.account_values: List[AccountValue] = []
         self.portfolio: List[PortfolioItem] = []
         self.executions: List[ExecutionRecord] = []
@@ -203,15 +212,7 @@ class MockIBClient:
 
     # -- Market data ---------------------------------------------------------
 
-    def subscribe_tick(self, contract, generic=""):
-        """Subscribe a real TickStream.
-
-        Bare quote subscriptions (generic="") seed an immediate quote so the
-        dynamic-liquidation mid-price fetch (order_manager._get_mid_price) has
-        data to read — mirroring the pre-migration mock's reqMktData. Batch /
-        filtered subscriptions (e.g. generic="101") stay tick-free so the mock
-        can also exercise "no quote yet" paths.
-        """
+    def _new_stream(self, contract, generic, share):
         req_id = self._next_req_id
         self._next_req_id += 1
         stream = TickStream(req_id, contract)
@@ -221,16 +222,34 @@ class MockIBClient:
             stream.last = 3.50
             stream._mark(True)
         self._streams[req_id] = stream
+        self._stream_share[req_id] = share
         self.call_log.append({"method": "subscribe_tick", "reqId": req_id,
                               "symbol": getattr(contract, "symbol", ""), "generic": generic})
         return stream
 
+    def subscribe_tick(self, contract, generic="", share="fixed"):
+        """Subscribe a real TickStream, taking one line from ``share``.
+
+        Bare quote subscriptions (generic="") seed an immediate quote so the
+        dynamic-liquidation mid-price fetch (order_manager._get_mid_price) has
+        data to read — mirroring the pre-migration mock's reqMktData. Batch /
+        filtered subscriptions (e.g. generic="101") stay tick-free so the mock
+        can also exercise "no quote yet" paths.
+        """
+        if not self.line_budget.try_acquire(share):
+            raise LineBudgetExceeded(f"no free '{share}' market-data line")
+        return self._new_stream(contract, generic, share)
+
     def unsubscribe_tick(self, req_id):
         self.call_log.append({"method": "unsubscribe_tick", "reqId": req_id})
         self._streams.pop(req_id, None)
+        share = self._stream_share.pop(req_id, None)
+        if share is not None:
+            self.line_budget.release(share)
 
-    async def fetch_snapshot(self, contracts, generic="101", timeout=5.0):
-        """Subscribe a batch, seed a minimal quote + greeks, then cancel it.
+    async def fetch_snapshot(self, contracts, generic="101", timeout=5.0, grace=0.5,
+                             share="poll"):
+        """Take ``len(contracts)`` lines, seed a minimal quote + greeks, then cancel.
 
         The seed mirrors ``subscribe_tick``'s bare-quote seed (bid/ask/last +
         model greeks) so ported ``chain_fetcher`` tests have data to convert
@@ -238,7 +257,11 @@ class MockIBClient:
         marked tick-received (``received_any_tick()`` stays False) — the mock
         returns with data already populated.
         """
-        streams = [self.subscribe_tick(c, generic) for c in contracts]
+        contracts = list(contracts)
+        if len(contracts) > self.line_budget.capacity(share):
+            raise ValueError(f"snapshot batch of {len(contracts)} exceeds the '{share}' share")
+        await self.line_budget.acquire(share, len(contracts))
+        streams = [self._new_stream(c, generic, share) for c in contracts]
         for s in streams:
             s.bid = 3.40
             s.ask = 3.60

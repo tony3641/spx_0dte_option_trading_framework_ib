@@ -284,3 +284,20 @@ async def test_one_shot_and_account_fakes_record_in_call_log():
     assert mock.executions == []
     assert mock.account_dirty is False
     assert mock.on_account_dirty is None
+
+
+from spx_trade_desk.ib.line_budget import LineBudgetExceeded
+
+
+@pytest.mark.asyncio
+async def test_mock_mirrors_line_budget():
+    mock = MockIBClient(line_shares={"fixed": 1, "order": 0, "poll": 2, "stream": 0})
+    s = mock.subscribe_tick(_contract())
+    with pytest.raises(LineBudgetExceeded):
+        mock.subscribe_tick(_contract())
+    mock.unsubscribe_tick(s.req_id)
+    assert mock.line_budget.used("fixed") == 0
+    with pytest.raises(ValueError):
+        await mock.fetch_snapshot([_contract()] * 3)
+    await mock.fetch_snapshot([_contract()] * 2)
+    assert mock.line_budget.used("poll") == 0
