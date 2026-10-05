@@ -74,11 +74,16 @@ class LineBudget:
             except ValueError:
                 pass
             if fut.done() and not fut.cancelled():   # granted, then cancelled before resuming
-                self.release(share, n)
+                self.release(share, n)               # frees the lines and wakes the queue
+            else:
+                self._wake(share)                    # a cancelled head may have been blocking
             raise
 
     def release(self, share: str, n: int = 1) -> None:
         self._used[share] = max(0, self._used[share] - n)
+        self._wake(share)
+
+    def _wake(self, share: str) -> None:
         q = self._waiters[share]
         while q:
             need, fut = q[0]

@@ -95,3 +95,32 @@ async def test_cancelled_waiter_leaves_the_queue():
         await t
     b.release("poll", 1)
     assert b.used("poll") == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_head_waiter_unblocks_the_waiter_behind_it():
+    b = LineBudget({"poll": 4})
+    await b.acquire("poll", 2)                      # 2 free
+    head = asyncio.create_task(b.acquire("poll", 3))    # cannot fit, blocks the queue
+    behind = asyncio.create_task(b.acquire("poll", 1))  # fits, but must wait behind head
+    await asyncio.sleep(0)
+    assert not behind.done()
+    head.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await head
+    await asyncio.wait_for(behind, timeout=1)       # no release() needed to wake it
+    assert b.used("poll") == 3
+
+
+@pytest.mark.asyncio
+async def test_grant_then_cancel_before_resume_does_not_leak_lines():
+    b = LineBudget({"poll": 1})
+    await b.acquire("poll", 1)
+    t = asyncio.create_task(b.acquire("poll", 1))
+    await asyncio.sleep(0)
+    b.release("poll", 1)                            # grants t's future; t has not resumed yet
+    assert b.used("poll") == 1
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert b.used("poll") == 0
