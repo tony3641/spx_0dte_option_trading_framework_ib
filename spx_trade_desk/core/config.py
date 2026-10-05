@@ -127,6 +127,8 @@ CHAIN_STREAM_MAX_LINES = _get_setting("CHAIN_STREAM_MAX_LINES", 96, int)
 MARKET_DATA_LINES = _get_setting("MARKET_DATA_LINES", 100, int)
 CHAIN_STREAM_MAX_LINES_CAP = _get_setting("CHAIN_STREAM_MAX_LINES_CAP", 160, int)
 CHAIN_STREAM_UPDATE_INTERVAL = _get_setting("CHAIN_STREAM_UPDATE_INTERVAL", 0.5, float)
+# Quotes older than this are dimmed in the chain tab and skipped by the strategy engine.
+CHAIN_QUOTE_MAX_AGE_S = _get_setting("CHAIN_QUOTE_MAX_AGE_S", 180.0, float)
 CHAIN_STREAM_UNKNOWN_RETRY_SECS = _get_setting("CHAIN_STREAM_UNKNOWN_RETRY_SECS", 120.0, float)
 VIEWPORT_CENTER_MIN_INTERVAL = _get_setting("VIEWPORT_CENTER_MIN_INTERVAL", 0.2, float)
 

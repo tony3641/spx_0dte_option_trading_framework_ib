@@ -1095,3 +1095,33 @@ def test_build_candidate_views_size_and_sort():
     # sized views: total_credit = credit_mid * size
     for v in views:
         assert v["total_credit"] == round((v["credit_mid"] or 0) * v["size"], 4)
+
+
+def _bull_put():
+    return Strategy(name="bp", direction="bull_put", conditions=[
+        Condition(kind="short_delta", params={"min": 0.05, "max": 0.35}),
+        Condition(kind="spread_width", params={"min": 50, "max": 150}),
+    ])
+
+
+def _pairs(rows):
+    state = type("S", (), {"chain_quotes_cache": rows, "account_summary": {}})()
+    return {(c.short_strike, c.long_strike) for c in generate_candidates(_bull_put(), state)}
+
+
+def test_fresh_or_missing_quote_age_is_kept():
+    rows = _rows()
+    rows["strikes"][2]["put_age_s"] = 5.0
+    assert _pairs(rows) == {(5300, 5200), (5200, 5100)}
+
+
+def test_stale_short_leg_is_skipped():
+    rows = _rows()
+    rows["strikes"][2]["put_age_s"] = 500.0          # 5300 put quote is old
+    assert _pairs(rows) == {(5200, 5100)}
+
+
+def test_stale_long_leg_is_skipped():
+    rows = _rows()
+    rows["strikes"][1]["put_age_s"] = 500.0          # 5200 put is a short and a long leg
+    assert _pairs(rows) == set()

@@ -9,7 +9,7 @@ import asyncio
 import math
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from spx_trade_desk.ib.orders import _option_contract
 
@@ -117,8 +117,13 @@ def build_chain_quotes(options: List[OptionData], spot_price: float,
                        gex_result: Optional[GEXResult] = None,
                        annual_vol: float = 0.20,
                        expiration: str = "",
-                       trading_class: str = "SPXW") -> dict:
-    """Serialize a list of OptionData into the chain_quotes payload."""
+                       trading_class: str = "SPXW",
+                       ages: Optional[Dict[tuple, float]] = None,
+                       max_age_s: Optional[float] = None) -> dict:
+    """Serialize a list of OptionData into the chain_quotes payload.
+
+    `ages` maps (strike, right) to the seconds since that quote last updated; a side
+    gets `<call|put>_age_s` only when `ages` covers it."""
     sigma_tte_years = 0.0
     if expiration:
         try:
@@ -183,6 +188,11 @@ def build_chain_quotes(options: List[OptionData], spot_price: float,
                 "put_oi": p.open_interest, "put_volume": p.volume,
                 "put_iv": round(p.implied_vol * 100, 2) if p.implied_vol else None,
             })
+        if ages:
+            for right, prefix in (("C", "call"), ("P", "put")):
+                age = ages.get(norm_key(s, right))
+                if age is not None:
+                    row[f"{prefix}_age_s"] = round(age, 1)
         rows.append(row)
 
     call_wall = gex_result.call_wall if gex_result else None
@@ -200,6 +210,7 @@ def build_chain_quotes(options: List[OptionData], spot_price: float,
         "call_wall": call_wall,
         "put_wall": put_wall,
         "gamma_flip": gamma_flip,
+        "max_age_s": max_age_s,
         "timestamp": now_et().strftime("%H:%M:%S"),
         "timestamp_iso": now_et().isoformat(),
     }

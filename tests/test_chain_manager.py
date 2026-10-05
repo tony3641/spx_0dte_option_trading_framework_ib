@@ -50,3 +50,22 @@ class TestChainStreamStatusLine:
     def test_zero_quotes_with_no_subs_gets_no_hint(self):
         assert chain_stream_status_line(0, 0, 0) == "Chain stream ticks: 0 contracts, quotes_present=0, active_subs=0"
 
+
+
+from spx_trade_desk.market.chain_manager import build_chain_quotes
+from spx_trade_desk.market.gex import OptionData
+
+
+class TestBuildChainQuotesAges:
+    def test_adds_per_side_age_and_max_age(self):
+        opts = [OptionData(7700, "P", bid=1.0), OptionData(7700, "C", bid=2.0)]
+        q = build_chain_quotes(opts, 7700.0, ages={(7700.0, "P"): 12.34, (7700.0, "C"): 0.0},
+                               max_age_s=180)
+        row = q["strikes"][0]
+        assert row["put_age_s"] == 12.3 and row["call_age_s"] == 0.0
+        assert q["max_age_s"] == 180
+
+    def test_without_ages_has_no_age_fields(self):
+        q = build_chain_quotes([OptionData(7700, "P", bid=1.0)], 7700.0)
+        assert "put_age_s" not in q["strikes"][0]
+        assert q["max_age_s"] is None
