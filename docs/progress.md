@@ -4,6 +4,19 @@ All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboa
 
 ---
 
+## Session: October 5, 2026 - Chain service: line budget, no stream pause, chain library
+
+- **Why:** the sim's option prices were tested against a live SPXW 0DTE chain (one afternoon, local analysis). They were not usable as wired: calendar- vs trading-clock IV units, SVI guards that cannot fit a 0DTE smile, and one frozen smile per day. The planned fix (SP2) needs a daily chain library, so this session builds the capture first (SP1).
+- **Market-data line budget** (`ib/line_budget.py`): `MARKET_DATA_LINES` (default 100) is split at startup into underlyings 4 (SPX, ES, VIX, VIX1D), order entry 4, poller 12 and stream 78, with 2 spare. Every subscribe goes through it, so the process cannot trigger IB error 101. Order-entry mid lookups can no longer be starved by the chain.
+- **No more stream pause:** the 5-minute full sweep (`chain_fetch_loop`) is gone. A wing poller cycles the strikes the stream does not hold. Stream and poller both write a `QuoteBook`, which is published every `CHAIN_REFRESH_SECONDS`. The strategy engine previously read a cache that could be about 5 minutes old; it now reads one at most a cycle old, and skips legs older than `CHAIN_QUOTE_MAX_AGE_S`.
+- **Bug fixed in passing:** concurrent `IBClient.fetch_snapshot` calls shared one pending set; each call now has its own batch.
+- **Chain library:** `market/chain_recorder.py` appends the book to `data/chain_library/YYYYMMDD.jsonl.gz`; `python -m spx_trade_desk.market.capture` is the fallback when the dashboard is down.
+- **Pre-commit hook:** now also blocks anything under `data/` (local market data). The hook's second case block gained a `data/*)` case that blocks anything under the repo-root `data/` directory. `reports/data/` stays tracked and is not blocked. The full rule list is in the "Follow-up" bullet of the October 1, 2026 public-repo cleanup entry below.
+- Removed settings: `CHAIN_STREAM_MAX_LINES` (now derived from the budget), `SNAPSHOT_REFRESH_SECONDS`.
+- Live check: pending (paper TWS, 30 min of RTH: error-101 count, stream subscriptions never 0, poller cycle time <= 120 s, GEX walls vs a full sweep within one strike, recorder cadence, standalone take-over within 3 min, one paper order's mid lookup).
+
+---
+
 ## Session: October 1, 2026 - Trade-log review fixes
 
 Fixes found while reviewing a live month of manual SPX put-spread trades.
@@ -651,7 +664,8 @@ At startup the TWS data farms were mid-reconnect: historical bars and live ticks
 - Follow-up: `*.csv` is now ignored except `reports/data/` and `tests/fixtures/` (IBKR and
   E*Trade exports are CSV). A local `.git/hooks/pre-commit` (POSIX sh, not versioned, not
   pushed) rejects staged statement/data files (`csv tsv pdf xlsx xlsm xls qfx ofx qbo`
-  outside those two folders) and secrets (`.env*`, `config/strategies.*`,
+  outside those two folders), anything under the repo-root `data/` directory (local market data,
+  added October 5, 2026; `reports/data/` is unaffected) and secrets (`.env*`, `config/strategies.*`,
   `config/sim_smile.json`, `.mcp.json`, key files) even after `git add -f`. Deliberate
   override: `git commit --no-verify`. A fresh clone does not have the hook.
 

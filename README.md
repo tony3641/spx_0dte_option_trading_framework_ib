@@ -261,6 +261,12 @@ python -m spx_trade_desk.sim.tune --strategy MyStrategy --spec docs/experiments/
 python -m spx_trade_desk.sim.tune --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
 ```
 
+### Chain library (input for the sim smile)
+
+While the dashboard runs, the merged 0DTE chain is appended every 60 s (09:31-10:00 and the last hour) or 120 s (otherwise) to `data/chain_library/YYYYMMDD.jsonl.gz`. Each line is one snapshot: spot, VIX, VIX1D, and per strike and side bid/ask/last/IV (IB's raw calendar-clock decimal)/delta/gamma/OI/volume, plus the quote's age and source. The folder is local market data, gitignored and blocked by the pre-commit hook.
+
+When the dashboard is not running, `python -m spx_trade_desk.market.capture` writes the same files. It idles while the dashboard's heartbeat is fresh and takes over within about three minutes of the dashboard stopping. A failed sweep is logged and retried, and the capture exits after 5 consecutive failures; while SPX has no price yet it waits instead of sweeping. To run it every trading day, create a Windows Task Scheduler task yourself (weekdays, 09:20 ET; working directory = repo root; action = `python -m spx_trade_desk.market.capture`). When the dashboard restarts while the capture is sweeping, both can briefly hold lines until the dashboard writes its first record, so with a 100-line account expect a short overlap at the line cap. Stopping the capture before restarting the dashboard avoids it.
+
 ## Trade Log Analysis
 
 A statement-facing analysis engine (`spx_trade_desk/tradelog/`, ported from the
@@ -430,6 +436,8 @@ Two-row subplot showing:
 - Live streaming 0DTE option chain with greeks
 - Markers on Put Wall, Call Wall, and Gamma Flip location
 
+The strikes nearest spot (or nearest your scroll position in the chain tab) stream live on the chain stream's line share. Every other strike in the +-8 sigma range is polled continuously in small batches on the poller's share, so the live stream never pauses. Both feed one quote book. Every `CHAIN_REFRESH_SECONDS` it is published as GEX, the chain table and the strategy engine's chain cache. Each side carries its quote age; sides older than `CHAIN_QUOTE_MAX_AGE_S` are dimmed and are never used as a strategy leg.
+
 ## Status Bar
 
 Real-time status indicators:
@@ -499,10 +507,14 @@ Settings are resolved in order: **environment variable → repo-root `.env` → 
 | `IB_HOST` | `127.0.0.1` | TWS host |
 | `IB_PORT` | `7497` | TWS API port |
 | `IB_CLIENT_ID` | `1` | IB client ID |
-| `CHAIN_REFRESH_SECONDS` | `10` | How often to re-fetch the option chain |
+| `CHAIN_REFRESH_SECONDS` | `10` | How often the merged quote book is published (GEX, chain tab, strategy engine) |
 | `DASHBOARD_CHAIN_REFRESH_SECONDS` | `300` | Dashboard GEX chain refresh cadence |
 | `CHAIN_TAB_FULL_REFRESH_SECONDS` | `300` | Chain tab full refresh cadence |
-| `SNAPSHOT_REFRESH_SECONDS` | `300` | Snapshot refresh cadence |
+| `MARKET_DATA_LINES` | `100` | Your IB account's market-data line allowance (all API clients). Split at startup into underlyings 4, order entry 4, wing poller 12, chain stream (rest, up to `CHAIN_STREAM_MAX_LINES_CAP`), 2 spare |
+| `CHAIN_STREAM_MAX_LINES_CAP` | `160` | Most lines the live chain stream may use; lines beyond it go to the poller |
+| `CHAIN_QUOTE_MAX_AGE_S` | `180` | Quotes older than this are dimmed in the chain tab and ignored by the strategy engine |
+| `CAPTURE_CLIENT_ID` | `97` | IB client id of the standalone chain capture |
+| `CHAIN_LIBRARY_DIR` | `data/chain_library` | Where daily 0DTE chain files are written (env var only; gitignored) |
 | `SERVER_HOST` | `0.0.0.0` | Server listen address (all interfaces) |
 | `SERVER_PORT` | `8000` | Server listen port |
 | `DEFAULT_ANNUAL_VOL` | `0.20` | Assumed annualized volatility for unlisted IV |
