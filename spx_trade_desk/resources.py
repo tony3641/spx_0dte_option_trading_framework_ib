@@ -26,3 +26,6 @@ REPORT_OUTPUT_DIR = REPORTS_DIR / "output"
 # An explicit DOTENV_PATH override keeps working, matching the behaviour of the
 # former config.py. If it is set to a relative path it stays cwd-relative.
 ENV_PATH = Path(os.getenv("DOTENV_PATH", REPO_ROOT / ".env"))
+
+# Local 0DTE chain library written by the chain recorder (gitignored; never committed).
+CHAIN_LIBRARY_DIR = Path(os.getenv("CHAIN_LIBRARY_DIR", REPO_ROOT / "data" / "chain_library"))

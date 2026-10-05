@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from spx_trade_desk.ib.client import IBClient
 
 from spx_trade_desk.core import config
-from spx_trade_desk.resources import STATIC_DIR
+from spx_trade_desk.resources import CHAIN_LIBRARY_DIR, STATIC_DIR
 from spx_trade_desk.core.app_state import AppState
 from spx_trade_desk.ib.connection import (
     connect_ib, setup_spx_subscription, setup_chain_info,
@@ -45,6 +45,7 @@ from spx_trade_desk.market.bars import fetch_historical_bars, price_push_loop
 from spx_trade_desk.market.chain_manager import chain_stream_loop
 from spx_trade_desk.market.chain_poller import chain_poll_loop
 from spx_trade_desk.market.chain_publisher import chain_publish_loop
+from spx_trade_desk.market.chain_recorder import ChainRecorder
 from spx_trade_desk.web.ws import (
     broadcast, make_broadcast_fn, make_ib_error_handler, status_push_loop,
     websocket_endpoint as ws_endpoint,
@@ -78,6 +79,7 @@ logger = logging.getLogger("server")
 ib: Optional[IBClient] = None
 state = AppState()
 broadcast_fn = None  # set in lifespan
+chain_recorder = ChainRecorder(CHAIN_LIBRARY_DIR, source="dashboard")
 discord_manager: Optional[DiscordSettingsManager] = None
 
 
@@ -169,7 +171,7 @@ async def lifespan(_app):
             state.force_chain_fetch_event = asyncio.Event()
         state.background_tasks.append(asyncio.create_task(chain_poll_loop(ib, state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(chain_stream_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(chain_publish_loop(ib, state, broadcast_fn)))
+        state.background_tasks.append(asyncio.create_task(chain_publish_loop(ib, state, broadcast_fn, recorder=chain_recorder)))
         logger.info("All background tasks started")
 
     except Exception as e:
@@ -279,7 +281,7 @@ async def reconnect_ib_on(port: int) -> dict:
         state.background_tasks.append(asyncio.create_task(log_push_loop(state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(chain_poll_loop(ib, state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(chain_stream_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(chain_publish_loop(ib, state, broadcast_fn)))
+        state.background_tasks.append(asyncio.create_task(chain_publish_loop(ib, state, broadcast_fn, recorder=chain_recorder)))
         # Strategy engine: re-subscribe VIX, reload strategies, and restart the
         # auto-entry / take-profit loops so a manual reconnect does NOT silently
         # stop auto-trading or position management.
