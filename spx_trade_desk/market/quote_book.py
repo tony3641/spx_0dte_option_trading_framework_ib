@@ -4,6 +4,11 @@ The chain stream (near-money, live) and the wing poller (everything else, refres
 every cycle) both write here; the publisher builds GEX and the chain payload from it
 and the recorder snapshots it. Each row remembers who wrote it and when, so consumers
 can tell a live quote from a stale one.
+
+Merge rules: a field an update does not carry (None) never overwrites a present one;
+bid_size/ask_size only follow a bid/ask carried by the same update; and an update with
+no quote data (bid, ask, last, delta, gamma, implied_vol) does not restamp the age or
+source of a row that already exists.
 """
 from dataclasses import dataclass, fields, replace
 from typing import Dict, Iterable, List
@@ -15,6 +20,9 @@ _FIELDS = [f.name for f in fields(OptionData) if f.name not in ("strike", "right
 # Cumulative counters: a 0 means "not reported in this update" (OI often arrives late),
 # never "dropped to zero", so it does not overwrite a positive value.
 _COUNTERS = ("open_interest", "volume")
+# A size is meaningful only alongside its own price (the size default is 0, not None).
+_SIZE_OF = {"bid_size": "bid", "ask_size": "ask"}
+_QUOTE_FIELDS = ("bid", "ask", "last", "delta", "gamma", "implied_vol")
 
 
 @dataclass
@@ -29,6 +37,8 @@ def _merge(old: OptionData, new: OptionData) -> OptionData:
     for name in _FIELDS:
         v = getattr(new, name)
         if v is None:
+            continue
+        if name in _SIZE_OF and getattr(new, _SIZE_OF[name]) is None:
             continue
         if name in _COUNTERS and not v and getattr(old, name):
             continue
@@ -52,9 +62,12 @@ class QuoteBook:
         for o in options:
             k = norm_key(o.strike, o.right)
             old = self._rows.get(k)
-            merged = (replace(o, strike=k[0], right=k[1]) if old is None
-                      else _merge(old.option, o))
-            self._rows[k] = _Entry(merged, source, now)
+            if old is None:
+                self._rows[k] = _Entry(replace(o, strike=k[0], right=k[1]), source, now)
+                continue
+            old.option = _merge(old.option, o)
+            if any(getattr(o, f) is not None for f in _QUOTE_FIELDS):
+                old.source, old.ts = source, now
 
     def options(self) -> List[OptionData]:
         return [replace(self._rows[k].option) for k in sorted(self._rows)]

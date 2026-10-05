@@ -66,3 +66,50 @@ def test_age_is_never_negative():
     b = _book()
     b.update([opt(7700)], "poll", now=10.0)
     assert b.ages(now=9.0) == {(7700.0, "P"): 0.0}
+
+
+def test_sizes_follow_their_own_side_of_the_quote():
+    b = _book()
+    b.update([opt(7700, bid=1.0, ask=1.2, bid_size=5, ask_size=7)], "poll", now=0.0)
+    b.update([opt(7700, bid=1.05, bid_size=3)], "stream", now=1.0)
+    o = b.options()[0]
+    assert (o.bid_size, o.ask_size) == (3, 7)
+    b.update([opt(7700, ask=1.3, ask_size=9)], "stream", now=2.0)
+    o = b.options()[0]
+    assert (o.bid_size, o.ask_size) == (3, 9)
+    b.update([opt(7700, last=1.1)], "stream", now=3.0)        # no bid/ask: sizes untouched
+    o = b.options()[0]
+    assert (o.bid_size, o.ask_size) == (3, 9)
+
+
+def test_update_without_quote_data_keeps_age_and_source():
+    b = _book()
+    b.update([opt(7700, bid=1.0)], "stream", now=10.0)
+    b.update([opt(7700)], "poll", now=50.0)
+    assert b.ages(now=60.0) == {(7700.0, "P"): 50.0}
+    assert b.sources() == {(7700.0, "P"): "stream"}
+
+
+def test_open_interest_only_update_merges_but_keeps_age_and_source():
+    b = _book()
+    b.update([opt(7700, bid=1.0)], "stream", now=10.0)
+    b.update([opt(7700, open_interest=800)], "poll", now=50.0)
+    assert b.options()[0].open_interest == 800
+    assert b.ages(now=60.0) == {(7700.0, "P"): 50.0}
+    assert b.sources() == {(7700.0, "P"): "stream"}
+
+
+def test_first_sighting_is_stamped_even_without_quote_data():
+    b = _book()
+    b.update([opt(7700)], "poll", now=10.0)
+    assert b.ages(now=12.0) == {(7700.0, "P"): 2.0}
+    assert b.sources() == {(7700.0, "P"): "poll"}
+
+
+def test_zero_volume_does_not_wipe_positive_volume():
+    b = _book()
+    b.update([opt(7700, volume=40)], "poll", now=0.0)
+    b.update([opt(7700, volume=0)], "poll", now=1.0)
+    assert b.options()[0].volume == 40
+    b.update([opt(7700, volume=55)], "poll", now=2.0)
+    assert b.options()[0].volume == 55
