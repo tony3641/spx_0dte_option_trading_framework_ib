@@ -19,6 +19,7 @@
             call_wall: data.call_wall,
             put_wall: data.put_wall,
             gamma_flip: data.gamma_flip,
+            max_age_s: data.max_age_s,
         };
         state.chainLastUpdateMs = data.timestamp_iso ? Date.parse(data.timestamp_iso) : Date.now();
         updateChainUpdateAge();
@@ -146,6 +147,10 @@
             let tags = '';
             const callItmClass = (spot > 0 && strike < spot) ? 'itm-call' : '';
             const putItmClass = (spot > 0 && strike > spot) ? 'itm-put' : '';
+            const maxAge = (state.chainMeta && state.chainMeta.max_age_s) || null;
+            const staleCls = (age) => (maxAge !== null && age !== undefined && age !== null && age > maxAge) ? 'quote-stale' : '';
+            const callCls = `${callItmClass} ${staleCls(r.call_age_s)}`.trim();
+            const putCls = `${putItmClass} ${staleCls(r.put_age_s)}`.trim();
             const sigmaAbs = r.sigma_distance_abs;
             const sigmaSigned = r.sigma_distance_signed;
             const strikeSigmaClass = getStrikeSigmaClass(sigmaAbs);
@@ -157,27 +162,27 @@
 
             html += `<tr class="${rowClasses.join(' ')}" data-strike="${strike}">`;
             // === Call side (right-to-left: IV, Vol, OI, Gamma, Delta, AskSz, Ask, Bid, BidSz) ===
-            html += td('call', 'iv', strike, r.call_iv, callItmClass);
-            html += td('call', 'volume', strike, r.call_volume, callItmClass);
-            html += td('call', 'oi', strike, r.call_oi, callItmClass);
-            html += td('call', 'gamma', strike, r.call_gamma, callItmClass);
-            html += td('call', 'delta', strike, r.call_delta, callItmClass);
-            html += td('call', 'ask_size', strike, r.call_ask_size, callItmClass);
-            html += `<td class="cell-ask ${callItmClass} ${hasSelectedLeg(strike, 'C', 'BUY') ? 'cell-selected-ask' : ''}" id="chain_${strike}_call_ask" onclick="addLeg(${strike},'C','BUY')" title="Buy ${strike}C">${fv('ask', r.call_ask)}</td>`;
-            html += `<td class="cell-bid ${callItmClass} ${hasSelectedLeg(strike, 'C', 'SELL') ? 'cell-selected-bid' : ''}" id="chain_${strike}_call_bid" onclick="addLeg(${strike},'C','SELL')" title="Sell ${strike}C">${fv('bid', r.call_bid)}</td>`;
-            html += td('call', 'bid_size', strike, r.call_bid_size, callItmClass);
+            html += td('call', 'iv', strike, r.call_iv, callCls);
+            html += td('call', 'volume', strike, r.call_volume, callCls);
+            html += td('call', 'oi', strike, r.call_oi, callCls);
+            html += td('call', 'gamma', strike, r.call_gamma, callCls);
+            html += td('call', 'delta', strike, r.call_delta, callCls);
+            html += td('call', 'ask_size', strike, r.call_ask_size, callCls);
+            html += `<td class="cell-ask ${callCls} ${hasSelectedLeg(strike, 'C', 'BUY') ? 'cell-selected-ask' : ''}" id="chain_${strike}_call_ask" onclick="addLeg(${strike},'C','BUY')" title="Buy ${strike}C">${fv('ask', r.call_ask)}</td>`;
+            html += `<td class="cell-bid ${callCls} ${hasSelectedLeg(strike, 'C', 'SELL') ? 'cell-selected-bid' : ''}" id="chain_${strike}_call_bid" onclick="addLeg(${strike},'C','SELL')" title="Sell ${strike}C">${fv('bid', r.call_bid)}</td>`;
+            html += td('call', 'bid_size', strike, r.call_bid_size, callCls);
             // === Strike center ===
             html += `<td class="strike-col ${strikeSigmaClass}" title="${strikeSigmaTitle}">${strike}${tags}</td>`;
             // === Put side (left-to-right: BidSz, Bid, Ask, AskSz, Delta, Gamma, OI, Vol, IV) ===
-            html += td('put', 'bid_size', strike, r.put_bid_size, putItmClass);
-            html += `<td class="cell-bid ${putItmClass} ${hasSelectedLeg(strike, 'P', 'SELL') ? 'cell-selected-bid' : ''}" id="chain_${strike}_put_bid" onclick="addLeg(${strike},'P','SELL')" title="Sell ${strike}P">${fv('bid', r.put_bid)}</td>`;
-            html += `<td class="cell-ask ${putItmClass} ${hasSelectedLeg(strike, 'P', 'BUY') ? 'cell-selected-ask' : ''}" id="chain_${strike}_put_ask" onclick="addLeg(${strike},'P','BUY')" title="Buy ${strike}P">${fv('ask', r.put_ask)}</td>`;
-            html += td('put', 'ask_size', strike, r.put_ask_size, putItmClass);
-            html += td('put', 'delta', strike, r.put_delta, putItmClass);
-            html += td('put', 'gamma', strike, r.put_gamma, putItmClass);
-            html += td('put', 'oi', strike, r.put_oi, putItmClass);
-            html += td('put', 'volume', strike, r.put_volume, putItmClass);
-            html += td('put', 'iv', strike, r.put_iv, putItmClass);
+            html += td('put', 'bid_size', strike, r.put_bid_size, putCls);
+            html += `<td class="cell-bid ${putCls} ${hasSelectedLeg(strike, 'P', 'SELL') ? 'cell-selected-bid' : ''}" id="chain_${strike}_put_bid" onclick="addLeg(${strike},'P','SELL')" title="Sell ${strike}P">${fv('bid', r.put_bid)}</td>`;
+            html += `<td class="cell-ask ${putCls} ${hasSelectedLeg(strike, 'P', 'BUY') ? 'cell-selected-ask' : ''}" id="chain_${strike}_put_ask" onclick="addLeg(${strike},'P','BUY')" title="Buy ${strike}P">${fv('ask', r.put_ask)}</td>`;
+            html += td('put', 'ask_size', strike, r.put_ask_size, putCls);
+            html += td('put', 'delta', strike, r.put_delta, putCls);
+            html += td('put', 'gamma', strike, r.put_gamma, putCls);
+            html += td('put', 'oi', strike, r.put_oi, putCls);
+            html += td('put', 'volume', strike, r.put_volume, putCls);
+            html += td('put', 'iv', strike, r.put_iv, putCls);
             html += '</tr>';
         }
         tbody.innerHTML = html;
