@@ -169,6 +169,30 @@ def update_vix(state):
         state.vix = float(price)
 
 
+def index_price(stream):
+    """Best available level of an index TickStream: last, then bid, then close."""
+    if stream is None:
+        return None
+    for val in (getattr(stream, "last", None), getattr(stream, "bid", None),
+                getattr(stream, "close", None)):
+        if val is not None and val > 0:
+            return float(val)
+    return None
+
+
+async def setup_vix1d_subscription(ib, state):
+    """Subscribe to VIX1D (CBOE 1-day VIX) for the chain recorder's regime key."""
+    try:
+        vix1d = _index_contract("VIX1D", "CBOE", "USD")
+        details = await ib.req_contract_details(vix1d)
+        if details:
+            vix1d.conId = details[0].contract.conId
+        state.vix1d_stream = ib.subscribe_tick(vix1d, "")
+        logger.info(f"Subscribed to VIX1D (reqId={state.vix1d_stream.req_id})")
+    except Exception as e:
+        logger.warning(f"VIX1D subscription failed: {e}")
+
+
 async def setup_es_subscription(ib, state):
     """Find front-month ES futures and subscribe for off-hours SPX derivation."""
     try:

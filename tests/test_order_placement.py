@@ -1767,3 +1767,18 @@ async def test_stop_order_tif_matches_parent(mock_ib, app_state, sample_stop_los
 
     assert parent.order.tif == "DAY"
     assert stop.order.tif == "DAY"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_fill_without_a_free_order_line_returns_error(app_state):
+    from tests.conftest import MockIBClient
+    ib = MockIBClient(line_shares={"fixed": 4, "order": 0, "poll": 12, "stream": 78})
+    payload = {
+        "legs": [{"symbol": "SPX", "expiry": "20260410", "strike": 5200.0,
+                  "right": "C", "action": "BUY", "qty": 1}],
+        "orderType": "LMT", "tif": "DAY", "dynamicFill": True, "repriceIntervalSec": 0.01,
+    }
+    result = await handle_place_order(ib, app_state, payload)
+    assert result["data"]["status"] == "Error"
+    assert "midpoint" in result["data"]["message"]
+    assert ib.get_placed_orders() == []

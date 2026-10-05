@@ -21,6 +21,7 @@ from ibapi.tag_value import TagValue
 
 from spx_trade_desk.core.config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
 from spx_trade_desk.ib.client import _PENDING_STATUSES, _TERMINAL_STATUSES
+from spx_trade_desk.ib.line_budget import LineBudgetExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +315,11 @@ async def _place_single_leg(ib, state, payload, leg,
             return False
 
     async def _get_mid_price() -> Optional[float]:
-        stream = ib.subscribe_tick(contract, "")
+        try:
+            stream = ib.subscribe_tick(contract, "", share="order")
+        except LineBudgetExceeded as e:
+            logger.warning(f"Mid-price lookup skipped: {e}")
+            return None
         mid = None
         try:
             for _ in range(8):

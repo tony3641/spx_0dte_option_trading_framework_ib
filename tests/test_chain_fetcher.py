@@ -312,3 +312,15 @@ def test_compute_gex_no_gex_when_gamma_and_iv_both_missing():
     result = compute_gex([call], spot, time_to_expiry_years=tte)
 
     assert result.total_call_gex == 0.0
+
+
+@pytest.mark.asyncio
+async def test_fetch_option_chain_batches_fit_the_poll_share():
+    ib = MockIBClient(line_shares={"fixed": 4, "order": 4, "poll": 7, "stream": 0})
+    strikes = [5000.0 + 5 * i for i in range(40)]
+    opts = await fetch_option_chain(ib, MockContract(conId=1, symbol="SPX"), "20260410",
+                                    strikes, 5100.0, std_dev_range=50.0, annual_vol=0.20)
+    sizes = [c["count"] for c in ib.call_log if c["method"] == "fetch_snapshot"]
+    assert sizes and max(sizes) <= 7
+    assert sum(sizes) == len(opts) == 80
+    assert ib.line_budget.used("poll") == 0

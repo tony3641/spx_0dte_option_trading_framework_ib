@@ -220,9 +220,9 @@ async def fetch_option_chain(
     if progress_callback and need_requalify:
         await progress_callback('qualifying', 1, 1, 10)
 
-    # Phase 2: Snapshot market data in batches (each batch capped at 50 for IB's
-    # 100 market-data-line pacing guard)
-    snap_batch_size = min(BATCH_SIZE, 50)
+    # Phase 2: Snapshot market data in batches no larger than the line budget's
+    # 'poll' share (the chain stream keeps its own share and is never paused).
+    snap_batch_size = max(1, min(BATCH_SIZE, 50, ib.line_budget.capacity("poll")))
     all_option_data: List[OptionData] = []
     for i in range(0, len(qualified), snap_batch_size):
         batch = qualified[i:i + snap_batch_size]
@@ -260,16 +260,12 @@ async def fetch_option_chain(
 
 
 async def _snapshot_batch(ib, contracts: List[Contract], timeout: float = 6.0) -> List[TickStream]:
-    """
-    Fetch a batch of market-data snapshots (generic tick list '101' for OI).
+    """Fetch a batch of market-data snapshots (generic tick list '101' for OI).
 
-    The batch is capped at 50 requests to stay safely under IB's 100-line
-    pacing guard. ``ib.fetch_snapshot`` handles subscription, first-tick (or
-    timeout) completion, and cancellation internally.
+    The caller sizes the batch to the line budget's 'poll' share; ``ib.fetch_snapshot``
+    takes those lines, waits for first ticks (or the timeout), then cancels.
     """
-    batch_cap = min(len(contracts), 50)     # 100-line pacing guard
-    streams = await ib.fetch_snapshot(contracts[:batch_cap], generic="101", timeout=timeout)
-    return [s for s in streams]
+    return list(await ib.fetch_snapshot(contracts, generic="101", timeout=timeout, share="poll"))
 
 
 def _safe_int(val) -> int:
