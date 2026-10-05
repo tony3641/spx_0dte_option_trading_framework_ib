@@ -122,6 +122,10 @@ SIM_WORKERS = _get_setting("SIM_WORKERS", 0, int)
 # Chain streaming
 # ---------------------------------------------------------------------------
 CHAIN_STREAM_MAX_LINES = _get_setting("CHAIN_STREAM_MAX_LINES", 96, int)
+# Market-data line budget (ib/line_budget.py). MARKET_DATA_LINES is the account's IB
+# allowance shared by every API client; the split into shares is computed at startup.
+MARKET_DATA_LINES = _get_setting("MARKET_DATA_LINES", 100, int)
+CHAIN_STREAM_MAX_LINES_CAP = _get_setting("CHAIN_STREAM_MAX_LINES_CAP", 160, int)
 CHAIN_STREAM_UPDATE_INTERVAL = _get_setting("CHAIN_STREAM_UPDATE_INTERVAL", 0.5, float)
 CHAIN_STREAM_UNKNOWN_RETRY_SECS = _get_setting("CHAIN_STREAM_UNKNOWN_RETRY_SECS", 120.0, float)
 VIEWPORT_CENTER_MIN_INTERVAL = _get_setting("VIEWPORT_CENTER_MIN_INTERVAL", 0.2, float)
