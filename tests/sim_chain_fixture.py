@@ -90,3 +90,16 @@ def write_day(root, day: str = "20300304", *, seed: int = 0, spot0: float = 6000
         spot *= math.exp(rng.normal(0.0, 0.0008))
         t += timedelta(minutes=step_min)
     return path
+
+
+TRUTH_MIDS = (0.25, 0.75, 1.5, 2.5, 4.0, 7.5, 15.0, 30.0)   # one representative mid per MID bucket
+
+
+def truth_tables(n_days: int = 20, sweeps: int = 100):
+    """The fixture's truth as pricing tables (f at the bucket centres, exact g, hs at TRUTH_MIDS)."""
+    from spx_trade_desk.sim.pricing_tables import G_TAU, N_TAU, TAU_CENTERS, Z_GRID, PricingTables
+    f = np.vstack([r_true(Z_GRID, c) for c in TAU_CENTERS])
+    g = np.array([g_true(t) for t in G_TAU])
+    hs = np.tile(hs_true(np.array(TRUTH_MIDS)), (N_TAU, 1))
+    return PricingTables(f=f, f_sweeps=np.full(N_TAU, sweeps), g=g, hs=hs,
+                         atm_vix1d_ratio=ATM_OPEN / (VIX1D_PREV / 100.0), n_days=n_days)
