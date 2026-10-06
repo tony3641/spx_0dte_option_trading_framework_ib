@@ -147,3 +147,17 @@ async def test_a_strike_listed_after_the_first_cycle_appears_after_the_retry_coo
     assert await poll_once(ib, st, now=lambda: 130.0) == 30         # cooldown over: one re-list finds it
     assert ib.count_calls("req_chain_contract_details") == 2
     assert (7705.0, "P") in st.quote_book.sources()
+
+@pytest.mark.asyncio
+async def test_poll_batches_are_clamped_to_fifty_even_when_the_poll_share_is_large(app_state):
+    """MARKET_DATA_LINES raised: a huge poll share must not turn one snapshot into hundreds of requests."""
+    ib = MockIBClient(line_shares={"fixed": 4, "order": 4, "poll": 400, "stream": 0})
+    st = _state(app_state)
+    st.annual_vol = 0.05                                # wide range: every listed strike is a target
+    expected = len(poll_targets(st.strikes, st.spx_price, st.annual_vol, set()))
+    assert expected > 50
+    n = await poll_once(ib, st, now=lambda: 0.0)
+    sizes = [c["count"] for c in ib.call_log if c["method"] == "fetch_snapshot"]
+    assert n == expected and sum(sizes) == expected
+    assert max(sizes) == 50                             # clamped to the chain fetcher's snapshot batch
+    assert chain_poller.POLL_BATCH_MAX == 50

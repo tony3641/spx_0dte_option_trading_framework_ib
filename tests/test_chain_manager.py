@@ -172,3 +172,122 @@ def test_drop_failed_streams_removes_refused_streams_only(app_state):
     assert set(app_state.chain_stream_tickers) == {(7700.0, "C")}
     assert set(app_state.chain_stream_contracts) == {(7700.0, "C")}
     assert drop_failed_streams(app_state) == 0
+
+
+# -- chain_stream_loop: expiry roll during a qualification, zero stream share --------------------
+
+import asyncio
+import logging
+
+from spx_trade_desk.market import chain_manager
+from spx_trade_desk.market.chain_manager import chain_stream_loop
+from spx_trade_desk.market.qualification import norm_key
+
+_LOOP_INTERVAL = 0.0123            # distinctive: the fake sleep counts the loop's per-pass sleeps by it
+OLD_EXP, NEW_EXP = "20261005", "20261006"
+
+
+class _FakeRegistry:
+    """Qualifies every key; ``flip_to`` rolls the state's expiry during the first qualification."""
+
+    def __init__(self, state, flip_to=None):
+        self.state = state
+        self.flip_to = flip_to
+        self.calls = []
+
+    async def qualify_keys(self, ib, expiry, trading_class, keys, now):
+        self.calls.append(expiry)
+        out = {norm_key(*k): MockContract(conId=len(self.calls) * 1000 + i, symbol="SPX", secType="OPT",
+                                          lastTradeDateOrContractMonth=expiry, strike=k[0], right=k[1],
+                                          tradingClass=trading_class)
+               for i, k in enumerate(keys)}
+        if self.flip_to is not None and len(self.calls) == 1:
+            await asyncio.sleep(0)               # a real suspension: the roll lands while we wait
+            self.state.expiration = self.flip_to
+        return out
+
+    def unknown_count(self):
+        return 0
+
+
+async def _run_stream_loop(monkeypatch, ib, state, passes):
+    """Run chain_stream_loop with no real delays until it has slept ``passes`` times, then stop it."""
+    real_sleep = asyncio.sleep
+    done = asyncio.Event()
+    slept = {"n": 0}
+
+    async def fast_sleep(delay, *a, **k):
+        if delay == _LOOP_INTERVAL:
+            slept["n"] += 1
+            if slept["n"] >= passes:
+                done.set()
+        await real_sleep(0)
+
+    monkeypatch.setattr(chain_manager, "CHAIN_STREAM_UPDATE_INTERVAL", _LOOP_INTERVAL)
+    monkeypatch.setattr(chain_manager, "is_cboe_options_open", lambda: True)
+    monkeypatch.setattr(chain_manager.asyncio, "sleep", fast_sleep)
+
+    async def broadcast(_msg):
+        return None
+
+    task = asyncio.create_task(chain_stream_loop(ib, state, broadcast))
+    try:
+        await asyncio.wait_for(done.wait(), timeout=5.0)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def _stream_state(app_state):
+    st = app_state
+    st.connected, st.expiration, st.trading_class = True, OLD_EXP, "SPXW"
+    st.spx_price = 5200.0
+    st.strikes = [5190.0, 5195.0, 5200.0, 5205.0, 5210.0]
+    return st
+
+
+@pytest.mark.asyncio
+async def test_an_expiry_roll_during_qualification_subscribes_and_books_nothing_for_the_old_expiry(
+        app_state, monkeypatch):
+    st = _stream_state(app_state)
+    st.contracts = _FakeRegistry(st, flip_to=NEW_EXP)
+    ib = MockIBClient()
+    subscribed, book_writes = [], []
+    real_subscribe = ib.subscribe_tick_paced
+
+    async def ticking_subscribe(contract, generic="", share="fixed"):
+        stream = await real_subscribe(contract, generic, share)
+        subscribed.append(contract.lastTradeDateOrContractMonth)
+        stream.bid, stream.ask, stream.last = ((99.0, 99.1, 99.05)
+                                               if contract.lastTradeDateOrContractMonth == OLD_EXP
+                                               else (1.0, 1.1, 1.05))
+        stream._mark(True)
+        return stream
+
+    ib.subscribe_tick_paced = ticking_subscribe
+    real_update = st.quote_book.update
+
+    def spy_update(options, source, now):
+        book_writes.append((st.quote_book.expiry, [o.bid for o in options]))
+        return real_update(options, source, now)
+
+    monkeypatch.setattr(st.quote_book, "update", spy_update)
+    await _run_stream_loop(monkeypatch, ib, st, passes=2)
+
+    assert st.contracts.calls[0] == OLD_EXP and NEW_EXP in st.contracts.calls
+    assert subscribed and set(subscribed) == {NEW_EXP}                  # nothing subscribed for the old expiry
+    assert book_writes and all(exp == NEW_EXP for exp, _ in book_writes)
+    assert all(b == 1.0 for _, bids in book_writes for b in bids)       # no old-expiry quote reached the book
+
+
+@pytest.mark.asyncio
+async def test_a_zero_stream_share_does_not_qualify_or_subscribe_or_warn_every_pass(
+        app_state, monkeypatch, caplog):
+    st = _stream_state(app_state)
+    st.contracts = _FakeRegistry(st)
+    ib = MockIBClient(line_shares={"fixed": 4, "order": 4, "poll": 12, "stream": 0})
+    with caplog.at_level(logging.WARNING):
+        await _run_stream_loop(monkeypatch, ib, st, passes=3)
+    assert st.contracts.calls == []
+    assert [c for c in ib.call_log if c["method"] == "subscribe_tick"] == []
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

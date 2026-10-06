@@ -349,7 +349,8 @@ async def chain_stream_loop(ib, state, broadcast_fn):
                 await asyncio.sleep(10)
                 continue
 
-            max_strikes = max(1, ib.line_budget.capacity("stream") // 2)
+            stream_cap = ib.line_budget.capacity("stream")
+            max_strikes = max(1, stream_cap // 2)
             nearest = sorted(avail, key=lambda s: (abs(s - focus_center), s))[:max_strikes]
             desired_keys = {norm_key(s, r) for s in nearest for r in ("C", "P")}
             if available_pairs:
@@ -368,9 +369,12 @@ async def chain_stream_loop(ib, state, broadcast_fn):
 
             new_keys = sorted(desired_keys - current_keys,
                               key=lambda k: (abs(k[0] - focus_center), k))
-            if new_keys:
+            if new_keys and stream_cap > 0:         # a share shrunk to 0 (error 101) subscribes nothing
+                exp, cls = state.expiration, state.trading_class
                 qualified = await state.contracts.qualify_keys(
-                    ib, state.expiration, state.trading_class, new_keys, time.monotonic())
+                    ib, exp, cls, new_keys, time.monotonic())
+                if (state.expiration, state.trading_class) != (exp, cls):
+                    continue            # the expiry rolled while we waited: these contracts are stale
                 subscribed = await _subscribe_new_keys(ib, state, qualified, new_keys)
                 if subscribed:
                     logger.info(f"Chain stream subscribed {subscribed}/{len(new_keys)}; "

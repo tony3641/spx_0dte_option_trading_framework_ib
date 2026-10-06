@@ -2,7 +2,8 @@
 
 Each cycle polls every contract in the chain range (+-8 daily sigma, multiples of 5)
 that the stream does not currently hold, nearest strikes first, in batches the size of
-the line budget's 'poll' share. Results go into ``state.quote_book``.
+the line budget's 'poll' share (at most POLL_BATCH_MAX, so one snapshot never paces hundreds
+of subscribes ahead of an order). Results go into ``state.quote_book``.
 """
 import asyncio
 import logging
@@ -24,6 +25,7 @@ ANNUAL_VOL_REFRESH_S = 300.0
 POLL_PACE_S = 1.0          # breather between productive cycles
 POLL_IDLE_S = 10.0         # back-off when a cycle wrote nothing (empty range / cooldown)
 POLL_START_DELAY_S = 1.0
+POLL_BATCH_MAX = 50        # lines per snapshot batch, whatever the poll share (as the chain fetcher)
 
 
 def poll_targets(strikes, spot: float, annual_vol: float, streamed: set) -> List[Key]:
@@ -44,7 +46,7 @@ async def poll_once(ib, state, now: Callable[[], float] = time.monotonic) -> int
     qualified = await state.contracts.qualify_keys(ib, state.expiration, state.trading_class,
                                                    targets, now())
     ordered = [qualified[k] for k in targets if k in qualified]
-    batch_n = max(1, ib.line_budget.capacity("poll"))
+    batch_n = max(1, min(ib.line_budget.capacity("poll"), POLL_BATCH_MAX))
     written = 0
     for i in range(0, len(ordered), batch_n):
         refresh = state.force_chain_fetch_event
