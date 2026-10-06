@@ -46,8 +46,10 @@ Two classes, and the difference matters for reading results:
 
 The exit engine is a per-path × per-bar Python loop with a full-ladder BSM per
 bar: ~minutes at `n_paths=10000` on 5m bars, ~seconds at 400 (`--smoke`).
-Calibration is cached in-process per (source, path, bar_size, lookback); bars
-load once per invocation. A 6-variant round ≈ 6 × one run.
+Calibration is cached in-process per (source, csv path, bar size, lookback, pricing
+tier, pricing-model file hash, ET session date, after-close flag; see runner.md). A
+calibration made without a VIX1D prior close is never cached, so such runs recalibrate
+each time. Bars load once per invocation. A 6-variant round ≈ 6 × one run.
 
 ## Family-mode extension (future — do not implement ad hoc)
 

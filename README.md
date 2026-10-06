@@ -172,7 +172,9 @@ threads: the exit scan is a per-path Python loop, which the GIL would serialize.
   - `g` is the library's intraday ATM curve, normalized at 09:45.
   - `L` links the level to the path's GJR state: `L = 1` at the unconditional variance,
     clipped to [0.5, 3]. `budget_beta` scales its sensitivity.
-  - `skew_beta > 0` also steepens the wing as `L` rises.
+  - `skew_beta > 0` also steepens the wing as `L` rises, by at most 1.25x the table's skew
+    (a larger tilt makes wing put prices fall with strike). The tilt is applied before
+    the Lee cap.
   - `ATM_open` is the ATM IV % dial if set, else the VIX1D prior close x the library's
     ATM/VIX1D ratio, else the GARCH level.
 - **Half-spread** comes from a table by bucket and put mid, floored at half a tick. The
@@ -191,7 +193,11 @@ threads: the exit scan is a per-path Python loop, which the GIL would serialize.
   - A time bucket with fewer than 20 chain sweeps falls back one tier.
   - The run's warnings (and `meta.pricing`) show the tier, the fallen-back buckets, the
     library age (stale after 10 trading days without a capture) and the last harness
-    score.
+    score, with its day count and an in-sample flag (e.g. "harness 4/4 buckets on 1 day
+    (in-sample)").
+  - With no VIX1D prior close (yfinance down or no history), the run warns "no VIX1D prior
+    close; regime tiers unavailable" (plus "ATM anchor = GARCH level" if no ATM IV % dial
+    is set). Such a calibration is not cached, so the next run retries the lookup.
 - **Building:**
   - The standalone capture rebuilds `data/chain_library/pricing_model.json` after
     each session.
@@ -211,12 +217,16 @@ threads: the exit scan is a per-path Python loop, which the GIL would serialize.
   5/10/15/20 delta, the short strike the sim's delta picks, and the half-spread.
   - Bar: median credit error within ±25% before 15:00 (±40% after); short strike
     within 5 points in 80% of pairs.
-  - Tier tables are built leave-one-out.
+  - Tier tables are built leave-one-out (except the Cold default: a day it was built
+    from scores in-sample, and the harness says so).
+  - `--store` saves the score under each tier the scored days resolved to, with the day
+    count and an in-sample flag; a run that scored nothing stores nothing.
   - A second column reprices with the snapshot's real ATM (shape error only).
   - Reports go to `reports/output/`.
 - **Tuning results from before this pricer** (SVI smile, `vol_beta`) are not comparable:
   re-run them. Old configs and tuning specs that still carry `vol_beta`, `skew_t_gamma`
-  or `atm_budget` load with a warning, and the key is ignored.
+  or `atm_budget` load with a warning (unless the value already matches the new behaviour:
+  `skew_t_gamma` 0, `atm_budget` true), and the key is ignored.
 
 ### Reading results: win-rate sanity
 

@@ -83,8 +83,8 @@ it: something varied the market (different n_paths, stress dial, dataset) —
 the round's paired deltas are invalid; re-run as a clean round.
 
 Related reproducibility notes:
-- Calibration is cached in-process per (source, path, bar_size, lookback, pricing tier, pricing-model file, session date) —
-  one invocation is self-consistent; rebuild the pricing library between
+- Calibration is cached in-process per (source, path, bar_size, lookback, pricing tier, pricing-model file, session date, after-close flag; a calibration without a VIX1D prior close is not
+  cached) — one invocation is self-consistent; rebuild the pricing library between
   invocations, never mid-experiment, and pin `stress.pricing_tier` when a round
   must not move with the library.
 - `tests/fixtures/SPX_1min_10d.csv` is the committed 1-minute fixture (the

@@ -31,6 +31,20 @@ library (SP1).
 - Regression baselines re-pinned (`sim_baseline_z*.npz`); the legacy/A/AB/ABC chain is
   retired. Tuning results from before this change must be re-run.
 - Known failure resolved: sim_regression baseline drift (re-pinned).
+- After updating, hard-reload the dashboard (Ctrl+F5) so the browser picks up the new Sim
+  tab script and CSS.
+- Final-review fixes:
+  - No VIX1D prior close now warns in the run's warnings (and the GARCH anchor warns
+    separately); that degraded calibration is not cached, so a later run retries.
+  - The stored harness score carries its day count and an in-sample flag (any day that
+    resolved to the Cold tier is in-sample); it is stored under each resolved tier, never
+    under "auto", and an empty score is not stored.
+  - `skew_beta > 0` could price wing puts that fall with strike once `L` passed about 1.5:
+    the tilt now applies before the Lee cap and is clamped to 1.25x (`skew_beta = 0` is
+    unchanged; the z baseline still passes). The z_skew regression baseline was re-pinned
+    because the tilt moved its marks.
+  - Malformed pricing models (valid JSON, wrong types) fall back to the Cold default with
+    a "pricing:" warning instead of raising.
 
 ---
 
