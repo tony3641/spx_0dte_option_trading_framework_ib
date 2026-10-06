@@ -5,6 +5,7 @@ Everything here runs on small fakes: no test opens a socket or talks to TWS.
 import asyncio
 import copy
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,13 @@ from spx_trade_desk.core.perf import PerfRecorder
 from spx_trade_desk.ib import latency_probe as lp
 
 EXP = "20261006"
+
+
+@pytest.fixture(autouse=True)
+def _default_client_ids(monkeypatch):
+    """The probe also reserves the configured dashboard and capture ids: pin them to the defaults."""
+    monkeypatch.setattr(lp.config, "IB_CLIENT_ID", 1)
+    monkeypatch.setattr(lp.config, "CAPTURE_CLIENT_ID", 97)
 
 
 def test_verdict_bands():
@@ -204,9 +212,9 @@ def test_assert_safe_refuses_a_payload_that_is_not_a_dict():
 @pytest.mark.asyncio
 async def test_the_paper_guard_refuses_a_live_account_without_printing_its_code():
     with pytest.raises(SystemExit) as ei:
-        await lp._assert_paper(SimpleNamespace(_account_code="U1234567"), wait_s=0.0)
-    assert "U1234567" not in str(ei.value)
-    await lp._assert_paper(SimpleNamespace(_account_code="DU0000001"), wait_s=0.0)      # paper: fine
+        await lp._assert_paper(SimpleNamespace(_account_code="U***12345"), wait_s=0.0)
+    assert "U***12345" not in str(ei.value)
+    await lp._assert_paper(SimpleNamespace(_account_code="DU***12345"), wait_s=0.0)      # paper: fine
 
 
 @pytest.mark.asyncio
@@ -243,6 +251,23 @@ def test_the_parser_accepts_other_client_ids(cid):
     assert lp._parser().parse_args(["--client-id", cid]).client_id == int(cid)
 
 
+@pytest.mark.parametrize("configured", [5, 1234])
+def test_the_parser_also_rejects_the_configured_dashboard_and_capture_ids(monkeypatch, configured):
+    """IB_CLIENT_ID and CAPTURE_CLIENT_ID are settings: the probe must not take whatever they are set to."""
+    for name in ("IB_CLIENT_ID", "CAPTURE_CLIENT_ID"):
+        monkeypatch.setattr(lp.config, "IB_CLIENT_ID", 1)
+        monkeypatch.setattr(lp.config, "CAPTURE_CLIENT_ID", 97)         # defaults, then one configured
+        monkeypatch.setattr(lp.config, name, configured)
+        for cid in (configured, configured - 1):              # the probe connects as N and N + 1
+            with pytest.raises(SystemExit) as ei:
+                lp._parser().parse_args(["--client-id", str(cid)])
+            assert ei.value.code == 2
+
+
+def test_the_parser_accepts_an_id_next_to_the_defaults_when_the_settings_are_untouched():
+    assert lp._parser().parse_args(["--client-id", "98"]).client_id == 98
+
+
 @pytest.mark.parametrize("port", [7496, 4001])
 def test_the_standard_live_ports_are_refused_before_connecting(port):
     with pytest.raises(SystemExit) as ei:
@@ -268,7 +293,7 @@ class _FakeHandle:
 class _FakeIB:
     """The slice of IBClient the probe touches; connect and every order call are recorded."""
 
-    def __init__(self, account_code="DU0000001"):
+    def __init__(self, account_code="DU***12345"):
         self._account_code = account_code
         self.connected = True
         self.orders = {}
@@ -524,16 +549,44 @@ async def test_orders_section_tallies_each_check_and_grades_the_failing_one(monk
     assert by["combo_ack_p50"]["verdict"] == "MISS" and by["single_ack_p50"]["verdict"] == "PASS"
 
 
-class _FakeRegistry:
-    """Stands in for ContractRegistry: a bulk call that takes ``delay`` seconds, a qualification that never ends."""
+class _FakeClock:
+    """A stand-in for ``time.perf_counter``: tests advance it instead of sleeping."""
 
-    def __init__(self, delay=0.0, listed=600, error_200=0):
-        self.delay, self.listed, self.error_200 = delay, listed, error_200
+    def __init__(self):
+        self.t = 0.0
+
+    def perf_counter(self):
+        return self.t
+
+
+def _fake_clock(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(lp, "time", SimpleNamespace(perf_counter=clock.perf_counter, monotonic=time.monotonic))
+    return clock
+
+
+class _FakeRegistry:
+    """Stands in for ContractRegistry; a qualification that never ends.
+
+    ``ensure_chain`` returns at once (one loop yield) by default. With ``gate`` it waits for the gate,
+    with ``clock`` it spends ``spend_s`` of fake time without yielding; ``finished`` is set as it returns.
+    """
+
+    def __init__(self, listed=600, error_200=0, gate=None, clock=None, spend_s=0.0):
+        self.listed, self.error_200 = listed, error_200
+        self.gate, self.clock, self.spend_s = gate, clock, spend_s
+        self.finished = asyncio.Event()
 
     async def ensure_chain(self, ib, symbol, expiry, trading_class, now, force=False):
-        await asyncio.sleep(self.delay)
+        if self.gate is not None:
+            await asyncio.wait_for(self.gate.wait(), timeout=5.0)
+        elif self.clock is not None:
+            self.clock.t += self.spend_s
+        else:
+            await asyncio.sleep(0)
         for _ in range(self.error_200):
             lp.ERRS.append((0.0, 1, 200, "No security definition has been found"))
+        self.finished.set()
         return self.listed
 
     async def qualify_keys(self, ib, expiry, trading_class, keys, now):
@@ -557,12 +610,27 @@ def _bulk_ib(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_bulk_first_call_is_the_listing_alone_and_the_second_connection_is_n_plus_one(monkeypatch):
-    # A fast listing (50 ms) with slow orders (3 x 200 ms): the old measurement read ~650 ms.
-    _handlers(monkeypatch, ack_delay=0.15, cancel_delay=0.05)
-    monkeypatch.setattr(lp, "ContractRegistry", lambda: _FakeRegistry(delay=0.05))
+    # On a fake clock: the listing spends 50 ms, each order 250 ms. Timing the whole section, as the old
+    # measurement did, would read 800 ms (warm-up plus three orders); the listing alone reads 50 ms.
+    clock = _fake_clock(monkeypatch)
+    h = _handlers(monkeypatch)
+    real_place, real_cancel = lp.orders.handle_place_order, lp.orders.handle_cancel_order
+
+    async def slow_place(*a, **k):
+        clock.t += 0.2
+        return await real_place(*a, **k)
+
+    async def slow_cancel(*a, **k):
+        clock.t += 0.05
+        return await real_cancel(*a, **k)
+
+    monkeypatch.setattr(lp.orders, "handle_place_order", slow_place)
+    monkeypatch.setattr(lp.orders, "handle_cancel_order", slow_cancel)
+    monkeypatch.setattr(lp, "ContractRegistry", lambda: _FakeRegistry(clock=clock, spend_s=0.05))
     ib2 = _bulk_ib(monkeypatch)
     out = await lp._bulk_section(SimpleNamespace(port=7497, client_id=150), EXP, 7700.0, {})
-    assert 40.0 <= out["first_call_ms"] < 250.0
+    assert len(h.places) == 4 and clock.t == pytest.approx(0.05 + 4 * 0.25)      # the orders did take time
+    assert out["first_call_ms"] == pytest.approx(50.0)
     assert ib2.connects[0][1:] == (7497, 151) and ib2.disconnected
     assert len(out["acks_ms"]) == 3 and out["overlapped"] == 0 and out["acks_during_bulk_ms"] == []
     assert out["listed"] == 600 and out["failed_lookups"] == 0 and out["live_orders_left"] == 0
@@ -570,9 +638,20 @@ async def test_bulk_first_call_is_the_listing_alone_and_the_second_connection_is
 
 @pytest.mark.asyncio
 async def test_bulk_counts_only_the_acks_that_finished_while_the_listing_was_running(monkeypatch):
-    # Listing 0.5 s, each order 0.2 s: acks at ~0.2 s and ~0.4 s overlap, the one at ~0.6 s does not.
-    _handlers(monkeypatch, ack_delay=0.2)
-    monkeypatch.setattr(lp, "ContractRegistry", lambda: _FakeRegistry(delay=0.5))
+    # The listing is held open by a gate: the first two measured orders ack while it runs. The third
+    # order opens the gate and waits for the listing to finish before it acks, so its ack does not overlap.
+    h = _handlers(monkeypatch)
+    registry = _FakeRegistry(gate=asyncio.Event())
+    monkeypatch.setattr(lp, "ContractRegistry", lambda: registry)
+    real_place = lp.orders.handle_place_order
+
+    async def place(ib, state, payload, ws=None, refresh_fn=None):
+        if len(h.places) == 3:                              # warm-up + two measured orders are done
+            registry.gate.set()
+            await asyncio.wait_for(registry.finished.wait(), timeout=5.0)
+        return await real_place(ib, state, payload, ws=ws, refresh_fn=refresh_fn)
+
+    monkeypatch.setattr(lp.orders, "handle_place_order", place)
     _bulk_ib(monkeypatch)
     out = await lp._bulk_section(SimpleNamespace(port=7497, client_id=150), EXP, 7700.0, {})
     assert len(out["acks_ms"]) == 3 and out["overlapped"] == 2 and len(out["acks_during_bulk_ms"]) == 2
@@ -605,7 +684,7 @@ async def test_bulk_warmup_failure_is_recorded(monkeypatch):
 @pytest.mark.asyncio
 async def test_bulk_section_refuses_a_live_account_sends_no_order_and_disconnects(monkeypatch):
     h = _handlers(monkeypatch, forbid=True)
-    ib2 = _FakeIB("U1234567")
+    ib2 = _FakeIB("U***12345")
     monkeypatch.setattr(lp, "IBClient", lambda *a, **k: ib2)
     with pytest.raises(SystemExit):
         await lp._bulk_section(SimpleNamespace(port=7497, client_id=150), EXP, 7700.0, {})
@@ -724,11 +803,11 @@ async def test_run_exits_nonzero_when_a_section_failed_every_placement(monkeypat
 @pytest.mark.asyncio
 async def test_run_refuses_a_live_account_sends_no_order_and_disconnects(monkeypatch, tmp_path):
     h = _handlers(monkeypatch, forbid=True)
-    ib = _FakeIB("U1234567")
+    ib = _FakeIB("U***12345")
     _patch_run(monkeypatch, ib)
     with pytest.raises(SystemExit) as ei:
         await lp.run(_run_args(tmp_path))
-    assert "not a paper account" in str(ei.value) and "U1234567" not in str(ei.value)
+    assert "not a paper account" in str(ei.value) and "U***12345" not in str(ei.value)
     assert h.places == [] and ib.disconnected
 
 
@@ -760,3 +839,30 @@ async def test_run_sweeps_disconnects_and_keeps_partial_results_when_a_section_r
     saved = json.loads(Path(args.out).read_text(encoding="utf-8"))
     assert saved["orders"]["single"]["acks_ms"] == [90.0, 95.0]           # nothing measured is lost
     assert saved["live_orders_left"] == 0 and saved["boot_ms"] == 900.0
+
+
+# -- the leftover count: an unknown side is never read as clean ------------------------------------
+
+@pytest.mark.parametrize("main_left, bulk, expected", [
+    (None, {"live_orders_left": 0}, None),          # main connection gone: its orders may be live
+    (0, {"live_orders_left": None}, None),          # second connection opened but its sweep never reported
+    (None, {"live_orders_left": None}, None),
+    (None, None, None),
+    (0, {"live_orders_left": 0}, 0),
+    (1, {"live_orders_left": 2}, 3),
+    (0, None, 0),                                   # --skip-bulk: there is no second connection
+    (2, {}, 2),                                     # the bulk section was never reached
+])
+def test_total_left_is_unknown_when_either_connection_is_unknown(main_left, bulk, expected):
+    assert lp._total_left(main_left, bulk) == expected
+
+
+@pytest.mark.asyncio
+async def test_run_exits_nonzero_when_the_main_connection_was_gone_at_the_sweep(monkeypatch, tmp_path, capsys):
+    ib = _FakeIB()
+    ib.connected = False                                    # dropped: nothing could be swept or counted
+    _patch_run(monkeypatch, ib)
+    _patch_sections(monkeypatch, _good_result())
+    args = _run_args(tmp_path, skip_bulk=True)
+    assert await lp.run(args) == 1
+    assert "live orders left after the sweep: None" in capsys.readouterr().out

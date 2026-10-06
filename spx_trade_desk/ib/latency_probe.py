@@ -39,8 +39,14 @@ MAX_PROBE_LMT = 0.10
 NEAR_FACTOR = 1.10
 LIVE_PORTS = (7496, 4001)               # standard TWS and Gateway live-account ports
 # Client ids the probe must never take: 0 falls back to the dashboard id inside connect_ib, 1 is the
-# dashboard, 97 the standalone chain capture, 140 line_probe. The probe also connects as N + 1.
+# default dashboard id, 97 the default standalone chain capture, 140 line_probe. The dashboard and
+# capture ids are settings, so ``reserved_client_ids`` adds the configured ones. The probe also
+# connects as N + 1.
 RESERVED_CLIENT_IDS = (0, 1, 97, 140)
+
+
+def reserved_client_ids() -> frozenset:
+    return frozenset(RESERVED_CLIENT_IDS) | {config.IB_CLIENT_ID, config.CAPTURE_CLIENT_ID}
 # Pauses of the live run, module constants so the tests can zero them.
 ORDER_GAP_S = 0.3                       # between the orders of the orders section
 FILL_LEAD_S = 0.5                       # let the qualification load reach the connection
@@ -453,10 +459,17 @@ def grade(result: dict, skip_bulk: bool = False) -> List[dict]:
 
 
 def _total_left(main_left: Optional[int], bulk: Optional[dict]) -> Optional[int]:
-    bulk_left = (bulk or {}).get("live_orders_left")
-    if main_left is None and bulk_left is None:
+    """Orders left live on both connections; None if either count is unknown (``exit_code`` fails it).
+
+    A bulk dict without the key (skipped, or its section never opened the second connection) has
+    nothing to count; a key holding None means the connection opened but its sweep never reported.
+    """
+    if main_left is None:
         return None
-    return (main_left or 0) + (bulk_left or 0)
+    if not bulk or "live_orders_left" not in bulk:
+        return main_left
+    bulk_left = bulk["live_orders_left"]
+    return None if bulk_left is None else main_left + bulk_left
 
 
 def _write_out(args, result: dict) -> None:
@@ -506,10 +519,12 @@ async def run(args) -> int:
 
 def _client_id(text: str) -> int:
     n = int(text)
-    if n < 2 or any(c in RESERVED_CLIENT_IDS for c in (n, n + 1)):
+    reserved = reserved_client_ids()
+    if n < 2 or any(c in reserved for c in (n, n + 1)):
         raise argparse.ArgumentTypeError(
-            f"client id {n} (or {n} + 1, the second connection) collides with the dashboard (1), "
-            f"the chain capture (97) or line_probe (140), or falls back to the dashboard id (0)")
+            f"client id {n} (or {n} + 1, the second connection) collides with the dashboard "
+            f"({config.IB_CLIENT_ID}), the chain capture ({config.CAPTURE_CLIENT_ID}) or line_probe "
+            f"(140), or falls back to the dashboard id (0)")
     return n
 
 
