@@ -704,3 +704,89 @@ async def test_req_contract_details_records_a_span():
     client.contractDetailsEnd(req_id)
     await asyncio.wait_for(fut, timeout=1)
     assert perf.snapshot()["metrics"]["ib.details"]["n"] == 1
+
+
+# Data-lane pacing (RequestPacer)
+class _CountingPacer:
+    def __init__(self):
+        self.acquired = 0
+        self.debited = 0
+
+    async def acquire(self, n=1):
+        self.acquired += n
+        return 0.0
+
+    def debit(self, n=1):
+        self.debited += n
+
+
+class _GatePacer(_CountingPacer):
+    """Lets the first request through and blocks the second until the gate opens."""
+
+    def __init__(self):
+        super().__init__()
+        self.gate = asyncio.Event()
+
+    async def acquire(self, n=1):
+        self.acquired += n
+        if self.acquired >= 2:
+            await self.gate.wait()
+        return 0.0
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshot_acquires_per_request_and_debits_the_cancels(monkeypatch):
+    _quiet(monkeypatch)
+    pacer = _CountingPacer()
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 5, "stream": 0}, pacer=pacer)
+    client._loop = asyncio.get_running_loop()
+    await client.fetch_snapshot([_opt(1), _opt(2), _opt(3)], timeout=0.01, grace=0.0)
+    assert pacer.acquired == 3 and pacer.debited == 3
+
+
+@pytest.mark.asyncio
+async def test_cancelled_snapshot_sends_cancels_only_for_requests_that_went_out(monkeypatch):
+    sent, cancelled = [], []
+    _quiet(monkeypatch, sent)
+    monkeypatch.setattr(EClient, "cancelMktData", lambda self, req_id, *a, **k: cancelled.append(req_id))
+    pacer = _GatePacer()
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 5, "stream": 0}, pacer=pacer)
+    client._loop = asyncio.get_running_loop()
+    t = asyncio.create_task(client.fetch_snapshot([_opt(1), _opt(2), _opt(3)], timeout=5.0, grace=0.0))
+    await asyncio.sleep(0.01)                    # request 1 is out, request 2 waits at the pacer
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert len(sent) == 1 and cancelled == sent  # no cancel for requests IB never saw
+    assert pacer.debited == 1
+    assert client.line_budget.used("poll") == 0 and client._streams == {}
+
+
+@pytest.mark.asyncio
+async def test_subscribe_tick_paced_waits_for_the_pacer_then_takes_a_line(monkeypatch):
+    _quiet(monkeypatch)
+    pacer = _CountingPacer()
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 0, "stream": 2}, pacer=pacer)
+    stream = await client.subscribe_tick_paced(_opt(1), "101", share="stream")
+    assert pacer.acquired == 1 and stream.req_id in client._streams
+    assert client.line_budget.used("stream") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_paced_subscribe_leaks_no_line(monkeypatch):
+    _quiet(monkeypatch)
+    pacer = _GatePacer()
+    pacer.acquired = 1                           # the next acquire blocks
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 0, "stream": 2}, pacer=pacer)
+    t = asyncio.create_task(client.subscribe_tick_paced(_opt(1), "101", share="stream"))
+    await asyncio.sleep(0.01)
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert client.line_budget.used("stream") == 0 and client._streams == {}
+
+
+def test_default_client_gets_a_pacer_from_the_config():
+    from spx_trade_desk.core import config
+    pacer = IBClient().pacer
+    assert pacer.rate == config.IB_REQUEST_RATE and pacer.burst == config.IB_REQUEST_BURST

@@ -301,3 +301,19 @@ async def test_mock_mirrors_line_budget():
         await mock.fetch_snapshot([_contract()] * 3)
     await mock.fetch_snapshot([_contract()] * 2)
     assert mock.line_budget.used("poll") == 0
+
+
+@pytest.mark.asyncio
+async def test_mock_has_a_disabled_pacer_and_a_paced_subscribe():
+    mock = MockIBClient()
+    assert mock.pacer.rate <= 0
+    stream = await mock.subscribe_tick_paced(_contract(), "101", share="stream")
+    assert isinstance(stream, TickStream) and mock.count_calls("subscribe_tick") == 1
+
+
+@pytest.mark.asyncio
+async def test_mock_unlisted_strikes_cannot_be_qualified():
+    mock = MockIBClient()
+    mock.unlisted_strikes.add(5200.0)
+    assert await mock.req_contract_details(_contract(), timeout=5.0) == []
+    assert mock.count_calls("req_contract_details") == 1

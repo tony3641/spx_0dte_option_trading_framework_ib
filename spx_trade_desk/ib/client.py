@@ -22,9 +22,15 @@ from ibapi.client import EClient
 from ibapi.common import BarData  # noqa: F401  (used in Task 4)
 from ibapi.wrapper import EWrapper
 
-from spx_trade_desk.core.config import CHAIN_STREAM_MAX_LINES_CAP, MARKET_DATA_LINES
+from spx_trade_desk.core.config import (
+    CHAIN_STREAM_MAX_LINES_CAP,
+    IB_REQUEST_BURST,
+    IB_REQUEST_RATE,
+    MARKET_DATA_LINES,
+)
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.line_budget import LineBudget, LineBudgetExceeded, split_lines
+from spx_trade_desk.ib.pacing import RequestPacer
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +210,8 @@ class _SnapshotBatch:
 
 
 class IBClient(EWrapper, EClient):
-    def __init__(self, line_shares: Optional[Dict[str, int]] = None):
+    def __init__(self, line_shares: Optional[Dict[str, int]] = None,
+                 pacer: Optional[RequestPacer] = None):
         EClient.__init__(self, self)
         # ibapi 10.45 useProtoBuf() crashes on None serverVersion when unconnected
         # (`unifiedVersion <= None`). Default to 0 so one-shot request methods degrade
@@ -222,6 +229,8 @@ class IBClient(EWrapper, EClient):
         self._stream_share: Dict[int, str] = {}                  # req_id -> budget share
         self.line_budget = LineBudget(
             line_shares or split_lines(MARKET_DATA_LINES, CHAIN_STREAM_MAX_LINES_CAP))
+        # Data-lane pacing: orders and cancels never wait on it (see ib/pacing.py).
+        self.pacer = pacer if pacer is not None else RequestPacer(IB_REQUEST_RATE, IB_REQUEST_BURST)
         self._orders: Dict[int, "OrderHandle"] = {}
         self._thread: Optional[threading.Thread] = None
         self._connected_evt: Optional[asyncio.Event] = None
@@ -602,11 +611,19 @@ class IBClient(EWrapper, EClient):
             raise
         return stream
 
-    def unsubscribe_tick(self, req_id):
+    async def subscribe_tick_paced(self, contract, generic="", share="fixed"):
+        """``subscribe_tick`` for the data lane: waits for the pacer first, so a long fill of
+        stream subscriptions never queues ahead of an order. A cancelled wait takes no line."""
+        await self.pacer.acquire()
+        return self.subscribe_tick(contract, generic, share)
+
+    def unsubscribe_tick(self, req_id, send_cancel=True):
         self._streams.pop(req_id, None)
         share = self._stream_share.pop(req_id, None)
         if share is not None:
             self.line_budget.release(share)
+        if not send_cancel:
+            return                      # the request never went out: nothing to cancel at IB
         try:
             EClient.cancelMktData(self, req_id)
         except Exception:
@@ -652,9 +669,12 @@ class IBClient(EWrapper, EClient):
             self._stream_share[s.req_id] = share
             batch.pending.add(s.req_id)
             self._snapshot_batches[s.req_id] = batch
+        sent = set()                                  # req ids whose reqMktData actually went out
         try:
             for s in streams:
+                await self.pacer.acquire()            # data lane: keep the queue short for orders
                 EClient.reqMktData(self, s.req_id, s.contract, generic, False, False, [])
+                sent.add(s.req_id)
             try:
                 await asyncio.wait_for(batch.done.wait(), timeout=timeout)
             except asyncio.TimeoutError:
@@ -667,5 +687,6 @@ class IBClient(EWrapper, EClient):
         finally:
             for s in streams:
                 self._snapshot_batches.pop(s.req_id, None)
-                self.unsubscribe_tick(s.req_id)      # releases the line
+                self.unsubscribe_tick(s.req_id, send_cancel=s.req_id in sent)   # releases the line
+            self.pacer.debit(len(sent))               # the cancels are messages too, but never awaited
         return streams

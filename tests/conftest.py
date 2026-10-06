@@ -31,6 +31,7 @@ from spx_trade_desk.ib.client import (
     _TERMINAL_STATUSES,
 )
 from spx_trade_desk.ib.line_budget import LineBudget, LineBudgetExceeded
+from spx_trade_desk.ib.pacing import RequestPacer
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +144,8 @@ class MockIBClient:
         self.account_dirty = False
         self.on_account_dirty = None
         self.call_log: List[Dict] = []  # records every method call for AI analysis
+        self.pacer = RequestPacer(0, 1)                 # disabled: tests never wait on pacing
+        self.unlisted_strikes: set = set()              # strikes IB cannot resolve (single requests)
 
     # -- Connection ----------------------------------------------------------
 
@@ -160,12 +163,17 @@ class MockIBClient:
 
     # -- Contract qualification / one-shot requests ---------------------------
 
-    async def req_contract_details(self, contract):
+    async def req_contract_details(self, contract, timeout=30.0):
         """Return one MockContractDetails carrying a fresh conId + minTick.
 
         The returned contract mirrors the input's symbol/secType/etc. so
-        ported tests see the same shape the real bridge produces.
+        ported tests see the same shape the real bridge produces. Strikes in
+        ``unlisted_strikes`` resolve to nothing, like a strike IB does not list.
         """
+        if float(getattr(contract, "strike", 0) or 0) in self.unlisted_strikes:
+            self.call_log.append({"method": "req_contract_details", "found": False,
+                                  "symbol": getattr(contract, "symbol", "")})
+            return []
         mc = MockContract(
             conId=self._next_con_id,
             symbol=getattr(contract, "symbol", "SPX"),
@@ -184,6 +192,10 @@ class MockIBClient:
         self.call_log.append({"method": "req_contract_details", "symbol": mc.symbol,
                               "secType": mc.secType, "conId": mc.conId})
         return [MockContractDetails(minTick=0.05, contract=mc)]
+
+    def count_calls(self, method: str) -> int:
+        """Number of recorded calls of ``method`` (e.g. the lookups an order path made)."""
+        return sum(1 for c in self.call_log if c["method"] == method)
 
     async def req_sec_def_opt_params(self, symbol, fut_fop_exchange="", sec_type="OPT", con_id=0):
         """Minimal fake — SPXW (exchange SMART) plus an SPX monthly chain."""
@@ -240,7 +252,11 @@ class MockIBClient:
             raise LineBudgetExceeded(f"no free '{share}' market-data line")
         return self._new_stream(contract, generic, share)
 
-    def unsubscribe_tick(self, req_id):
+    async def subscribe_tick_paced(self, contract, generic="", share="fixed"):
+        await self.pacer.acquire()
+        return self.subscribe_tick(contract, generic, share)
+
+    def unsubscribe_tick(self, req_id, send_cancel=True):
         self.call_log.append({"method": "unsubscribe_tick", "reqId": req_id})
         self._streams.pop(req_id, None)
         share = self._stream_share.pop(req_id, None)

@@ -145,6 +145,8 @@ TRADING_DAYS_PER_YEAR = _get_setting("TRADING_DAYS_PER_YEAR", 252, int)
 # IB layer: request lanes, contract cache, perf log (ib/pacing.py, ib/contracts.py, core/perf.py)
 # ---------------------------------------------------------------------------
 PERF_LOG_SECONDS = _get_setting("PERF_LOG_SECONDS", 60.0, float)    # 0 disables the periodic perf log line
+IB_REQUEST_RATE = _get_setting("IB_REQUEST_RATE", 30.0, float)     # data-lane messages/s; <= 0 disables the pacer
+IB_REQUEST_BURST = _get_setting("IB_REQUEST_BURST", 5, int)
 
 # ---------------------------------------------------------------------------
 # Monthly/account/risk-free
