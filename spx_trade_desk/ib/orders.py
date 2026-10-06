@@ -22,24 +22,9 @@ from ibapi.tag_value import TagValue
 from spx_trade_desk.core.config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
 from spx_trade_desk.ib.client import _PENDING_STATUSES, _TERMINAL_STATUSES
 from spx_trade_desk.ib.line_budget import LineBudgetExceeded
+from spx_trade_desk.ib.contracts import _exact_match, _option_contract  # noqa: F401  (moved; re-exported for existing importers)
 
 logger = logging.getLogger(__name__)
-
-
-def _option_contract(symbol, expiry, strike, right, exchange,
-                     trading_class="SPXW"):
-    """Build a native ibapi OPT Contract (ibapi.contract.Contract)."""
-    c = Contract()
-    c.symbol = symbol
-    c.secType = "OPT"
-    c.exchange = exchange
-    c.currency = "USD"
-    c.lastTradeDateOrContractMonth = expiry
-    c.strike = float(strike)
-    c.right = right
-    c.multiplier = "100"
-    c.tradingClass = trading_class
-    return c
 
 
 def _stock_contract(symbol):
@@ -50,35 +35,6 @@ def _stock_contract(symbol):
     c.exchange = "SMART"
     c.currency = "USD"
     return c
-
-
-def _exact_match(details, requested):
-    """Return the contract from ``details`` that exactly matches ``requested``.
-
-    IB's ``reqContractDetails`` can return multiple near-matches; the ComboLeg
-    is sent to IBKR as a bare conId, so picking the wrong one silently ships a
-    leg with the wrong strike. Refuse a near-match: return only an exact
-    strike/right/expiry match carrying a conId, else None.
-    """
-    if not details:
-        return None
-    req_strike = float(getattr(requested, "strike", 0) or 0)
-    req_right = (getattr(requested, "right", "") or "").upper()
-    req_expiry = (getattr(requested, "lastTradeDateOrContractMonth", "") or "").replace(" ", "")
-    for d in details:
-        dc = getattr(d, "contract", None)
-        if dc is None or not getattr(dc, "conId", 0):
-            continue
-        try:
-            strike_matches = abs(float(getattr(dc, "strike", 0) or 0) - req_strike) < 1e-6
-        except (TypeError, ValueError):
-            strike_matches = False
-        right_matches = (getattr(dc, "right", "") or "").upper() == req_right
-        returned_expiry = (getattr(dc, "lastTradeDateOrContractMonth", "") or "").replace(" ", "")
-        expiry_matches = returned_expiry == req_expiry or returned_expiry.startswith(req_expiry)
-        if strike_matches and right_matches and expiry_matches:
-            return dc
-    return None
 
 
 async def _qualify_contracts(ib, contracts):

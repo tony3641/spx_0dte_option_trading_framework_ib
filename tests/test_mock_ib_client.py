@@ -317,3 +317,25 @@ async def test_mock_unlisted_strikes_cannot_be_qualified():
     mock.unlisted_strikes.add(5200.0)
     assert await mock.req_contract_details(_contract(), timeout=5.0) == []
     assert mock.count_calls("req_contract_details") == 1
+
+
+@pytest.mark.asyncio
+async def test_mock_bulk_listing_is_a_dense_grid_that_honours_unlisted_strikes():
+    mock = MockIBClient()
+    mock.unlisted_strikes.add(7705.0)
+    rows = await mock.req_chain_contract_details("SPX", "20261005", "SPXW")
+    assert len(rows) == (801 - 1) * 2                       # strikes 5000..9000 step 5, calls and puts
+    assert all(r.contract.tradingClass == "SPXW" and r.contract.lastTradeDateOrContractMonth == "20261005"
+               for r in rows)
+    assert len({r.contract.conId for r in rows}) == len(rows)
+    assert not any(r.contract.strike == 7705.0 for r in rows)
+    assert any(r.contract.strike == 7700.0 and r.contract.right == "P" for r in rows)
+    assert mock.count_calls("req_chain_contract_details") == 1
+
+
+@pytest.mark.asyncio
+async def test_mock_bulk_listing_returns_a_forced_result_for_its_key():
+    mock = MockIBClient()
+    mock.chain_listings[("SPX", "20261005", "SPXW")] = []
+    assert await mock.req_chain_contract_details("SPX", "20261005", "SPXW") == []
+    assert len(await mock.req_chain_contract_details("SPX", "20261006", "SPXW")) == 801 * 2

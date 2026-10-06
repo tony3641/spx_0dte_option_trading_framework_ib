@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from ibapi.client import EClient
 from ibapi.common import BarData  # noqa: F401  (used in Task 4)
+from ibapi.contract import Contract
 from ibapi.wrapper import EWrapper
 
 from spx_trade_desk.core.config import (
@@ -471,6 +472,15 @@ class IBClient(EWrapper, EClient):
                 return []
             finally:
                 self._requests.pop(req_id, None)
+
+    async def req_chain_contract_details(self, symbol, expiry, trading_class, timeout=60.0):
+        """One partial request (no strike, no right): every listed contract of the expiry."""
+        c = Contract()
+        c.symbol, c.secType, c.exchange, c.currency = symbol, "OPT", "SMART", "USD"
+        c.lastTradeDateOrContractMonth = expiry
+        c.tradingClass = trading_class
+        with perf.timer("ib.chain_details"):
+            return await self.req_contract_details(c, timeout=timeout)
 
     async def req_sec_def_opt_params(self, symbol, fut_fop_exchange, sec_type, con_id,
                                      timeout=30.0):

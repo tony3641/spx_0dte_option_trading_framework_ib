@@ -790,3 +790,23 @@ def test_default_client_gets_a_pacer_from_the_config():
     from spx_trade_desk.core import config
     pacer = IBClient().pacer
     assert pacer.rate == config.IB_REQUEST_RATE and pacer.burst == config.IB_REQUEST_BURST
+
+
+@pytest.mark.asyncio
+async def test_req_chain_contract_details_sends_one_partial_contract(monkeypatch):
+    from ibapi.const import UNSET_DOUBLE
+    from spx_trade_desk.core.perf import perf
+    perf.reset()
+    sent = []
+    monkeypatch.setattr(EClient, "reqContractDetails", lambda self, req_id, contract: sent.append(contract))
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    t = asyncio.create_task(client.req_chain_contract_details("SPX", "20261005", "SPXW"))
+    await asyncio.sleep(0.01)
+    (c,) = sent
+    assert (c.symbol, c.secType, c.exchange, c.currency) == ("SPX", "OPT", "SMART", "USD")
+    assert (c.lastTradeDateOrContractMonth, c.tradingClass) == ("20261005", "SPXW")
+    assert c.right == "" and c.strike == UNSET_DOUBLE       # partial: no strike, no right
+    client.contractDetailsEnd(next(iter(client._requests)))
+    assert await asyncio.wait_for(t, timeout=1) == []
+    assert perf.snapshot()["metrics"]["ib.chain_details"]["n"] == 1

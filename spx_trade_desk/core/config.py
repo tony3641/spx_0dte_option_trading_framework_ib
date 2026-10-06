@@ -69,6 +69,18 @@ def _get_setting(name: str, default: Any, cast: Callable[[Any], Any]) -> Any:
         return default
 
 
+def _as_bool(value: Any) -> bool:
+    """Parse a boolean setting (env strings or YAML values); anything else is an error."""
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off", ""):
+        return False
+    raise ValueError(f"not a boolean: {value!r}")
+
+
 def _parse_hhmm(value: Any) -> time:
     text = str(value).strip()
     hh, mm = text.split(":", 1)
@@ -147,6 +159,7 @@ TRADING_DAYS_PER_YEAR = _get_setting("TRADING_DAYS_PER_YEAR", 252, int)
 PERF_LOG_SECONDS = _get_setting("PERF_LOG_SECONDS", 60.0, float)    # 0 disables the periodic perf log line
 IB_REQUEST_RATE = _get_setting("IB_REQUEST_RATE", 30.0, float)     # data-lane messages/s; <= 0 disables the pacer
 IB_REQUEST_BURST = _get_setting("IB_REQUEST_BURST", 5, int)
+ORDER_USE_CONTRACT_CACHE = _get_setting("ORDER_USE_CONTRACT_CACHE", True, _as_bool)   # False: live lookup per order leg
 
 # ---------------------------------------------------------------------------
 # Monthly/account/risk-free

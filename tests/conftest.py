@@ -146,6 +146,7 @@ class MockIBClient:
         self.call_log: List[Dict] = []  # records every method call for AI analysis
         self.pacer = RequestPacer(0, 1)                 # disabled: tests never wait on pacing
         self.unlisted_strikes: set = set()              # strikes IB cannot resolve (single requests)
+        self.chain_listings: Dict[tuple, list] = {}     # (symbol, expiry, trading_class) -> forced bulk result
 
     # -- Connection ----------------------------------------------------------
 
@@ -192,6 +193,27 @@ class MockIBClient:
         self.call_log.append({"method": "req_contract_details", "symbol": mc.symbol,
                               "secType": mc.secType, "conId": mc.conId})
         return [MockContractDetails(minTick=0.05, contract=mc)]
+
+    async def req_chain_contract_details(self, symbol, expiry, trading_class, timeout=60.0):
+        """One partial request: every listed contract of the expiry (strikes 5000..9000, step 5)."""
+        self.call_log.append({"method": "req_chain_contract_details", "symbol": symbol,
+                              "expiry": expiry, "trading_class": trading_class})
+        forced = self.chain_listings.get((symbol, expiry, trading_class))
+        if forced is not None:
+            return list(forced)
+        out = []
+        for i in range(801):
+            strike = 5000.0 + 5.0 * i
+            if strike in self.unlisted_strikes:
+                continue
+            for right in ("C", "P"):
+                mc = MockContract(conId=self._next_con_id, symbol=symbol, secType="OPT",
+                                  lastTradeDateOrContractMonth=expiry, strike=strike, right=right,
+                                  multiplier="100", currency="USD", exchange="SMART",
+                                  tradingClass=trading_class)
+                self._next_con_id += 1
+                out.append(MockContractDetails(minTick=0.05, contract=mc))
+        return out
 
     def count_calls(self, method: str) -> int:
         """Number of recorded calls of ``method`` (e.g. the lookups an order path made)."""

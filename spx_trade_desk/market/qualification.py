@@ -6,29 +6,13 @@ sec-def farm outage (IB error 2157) heals by itself.
 """
 import asyncio
 import logging
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable
 
 from spx_trade_desk.core.config import CHAIN_STREAM_UNKNOWN_RETRY_SECS, QUALIFY_BATCH_SIZE
+from spx_trade_desk.ib.contracts import Key, norm_key, unknown_retry_due  # noqa: F401  (moved to ib/contracts.py)
 from spx_trade_desk.ib.orders import _option_contract
 
 logger = logging.getLogger(__name__)
-
-Key = Tuple[float, str]
-
-
-def norm_key(strike, right) -> Key:
-    return (round(float(strike), 1), str(right).upper())
-
-
-def unknown_retry_due(unknown: dict, now: float,
-                      cooldown: float = CHAIN_STREAM_UNKNOWN_RETRY_SECS) -> set:
-    """Return keys whose failed-qualification retry is due.
-
-    The unknown map holds key -> monotonic timestamp of the last failed qualification
-    attempt. Retrying after a cooldown lets the chain recover from transient sec-def
-    farm outages (IB error 2157) instead of staying blacklisted until expiry rolls over.
-    """
-    return {k for k, ts in unknown.items() if now - ts >= cooldown}
 
 
 class QualificationCache:
