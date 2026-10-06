@@ -143,6 +143,9 @@ CHAIN_STREAM_UPDATE_INTERVAL = _get_setting("CHAIN_STREAM_UPDATE_INTERVAL", 0.5,
 CHAIN_QUOTE_MAX_AGE_S = _get_setting("CHAIN_QUOTE_MAX_AGE_S", 180.0, float)
 CHAIN_STREAM_UNKNOWN_RETRY_SECS = _get_setting("CHAIN_STREAM_UNKNOWN_RETRY_SECS", 120.0, float)
 VIEWPORT_CENTER_MIN_INTERVAL = _get_setting("VIEWPORT_CENTER_MIN_INTERVAL", 0.2, float)
+# Push channel (web/push.py): per-browser send queue.
+PUSH_ORDERED_BACKLOG_MAX = _get_setting("PUSH_ORDERED_BACKLOG_MAX", 1000, int)   # unsent critical messages before the client is dropped
+PUSH_SEND_TIMEOUT_S = _get_setting("PUSH_SEND_TIMEOUT_S", 5.0, float)            # one send longer than this drops the client
 
 # ---------------------------------------------------------------------------
 # Chain fetch internals

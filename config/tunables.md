@@ -24,6 +24,8 @@ Source: spx_trade_desk/core/config.py
 - PERF_LOG_SECONDS = 60 (one perf summary log line per interval; 0 disables; the same data is at /api/perf on localhost)
 - CHAIN_STREAM_UPDATE_INTERVAL = 0.5
 - VIEWPORT_CENTER_MIN_INTERVAL = 0.2
+- PUSH_ORDERED_BACKLOG_MAX = 1000 (unsent critical messages, such as order status, one browser may queue before it is dropped and reconnects to a fresh init; raise it only if a slow but healthy client gets dropped during order bursts)
+- PUSH_SEND_TIMEOUT_S = 5.0 (one WebSocket send slower than this drops that browser only; raise it for clients on a slow remote link, lower it to shed a stuck tab sooner)
 
 ## 2) Backend hardcoded tunables (not env-wired today)
 
