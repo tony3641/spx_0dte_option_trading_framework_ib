@@ -42,7 +42,7 @@ class AppState:
         self.ib_port: int = config.IB_PORT   # live port; updated by connect_ib
         self.chain_fetching: bool = False
         self.last_chain_update: str = ""
-        self.ws_clients: set = set()     # Set[WebSocket]
+        self.ws_clients: dict = {}       # WebSocket -> web.push.ClientChannel
         self.alert_bridge = None       # Optional[AlertBridge] — Discord event observer
         self.background_tasks: List[asyncio.Task] = []
 

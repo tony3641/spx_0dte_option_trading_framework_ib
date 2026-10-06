@@ -12,6 +12,7 @@ A send longer than ``PUSH_SEND_TIMEOUT_S`` or a send error closes that client on
 """
 import asyncio
 import inspect
+import itertools
 import json
 import logging
 import math
@@ -20,7 +21,7 @@ import time
 from collections import OrderedDict, deque
 from typing import Callable, Deque, Dict, Optional, Set, Tuple
 
-from starlette.websockets import WebSocketState
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from spx_trade_desk.core.config import PUSH_ORDERED_BACKLOG_MAX, PUSH_SEND_TIMEOUT_S
 from spx_trade_desk.core.perf import perf
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 
 # Strong references to in-flight socket closes (the loop only keeps weak ones).
 _CLOSE_TASKS: Set[asyncio.Task] = set()
+# Log-dropped notes use -1, -2, ... process-wide: the browser dedupes logs by seq and keeps its
+# console across a reconnect, so a new channel's note must not reuse an old channel's seq.
+_NOTE_SEQ = itertools.count(-1, -1)
 
 LOG_BACKLOG_MAX = 500
 LATEST_TYPES = frozenset({
@@ -82,7 +86,6 @@ class ClientChannel:
         self.closed = False
         self._closing = False          # set by aclose: no new messages, a failed drain send is quiet
         self._close_task: Optional[asyncio.Task] = None
-        self._note_seq = 0             # log-dropped notes use -1, -2, ... (the browser dedupes logs by seq)
         self._on_close = on_close
         self._send_timeout = send_timeout
         self._backlog_max = backlog_max
@@ -156,8 +159,7 @@ class ClientChannel:
             return self._critical.popleft()
         if self._log_dropped:
             n, self._log_dropped = self._log_dropped, 0
-            self._note_seq -= 1
-            note = stamp({"type": "log", "data": {"seq": self._note_seq, "ts": "", "level": "WARNING", "name": "push",
+            note = stamp({"type": "log", "data": {"seq": next(_NOTE_SEQ), "ts": "", "level": "WARNING", "name": "push",
                                                    "msg": f"{n} log lines dropped (the browser fell behind)"}})
             return json.dumps(note), self._clock()
         if self._log:
@@ -187,14 +189,14 @@ class ClientChannel:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            self._close(f"send failed: {e}")
+            self._close(f"send failed: {e!r}", gone=self._client_gone(e))
             return False
         perf.record("push.send", (self._clock() - t0) * 1000.0)
         return True
 
     async def _run(self) -> None:
         try:
-            while not self.closed:
+            while not self.closed and not self._closing:   # aclose drains the rest itself
                 item = self._next()
                 if item is None:
                     self._wake.clear()
@@ -209,12 +211,21 @@ class ClientChannel:
 
     # -- teardown -----------------------------------------------------------
 
-    def _close(self, reason: str) -> None:
+    def _client_gone(self, exc: Exception) -> bool:
+        """True when a send failed because the browser disconnected (not a slow or broken client)."""
+        if isinstance(exc, WebSocketDisconnect):
+            return True
+        return WebSocketState.DISCONNECTED in (getattr(self.ws, "application_state", None),
+                                               getattr(self.ws, "client_state", None))
+
+    def _close(self, reason: str, gone: bool = False) -> None:
         if self.closed:
             return
         self.closed = True
         if self._closing:   # a failed send while aclose drains: the normal tab-close path
             logger.debug(f"push: drain ended early: {reason}")
+        elif gone:          # an ordinary disconnect noticed by the writer before the read loop
+            logger.debug(f"push: client went away: {reason}")
         else:
             logger.warning(f"Dropping a WebSocket client: {reason}")
         self._wake.set()
@@ -250,11 +261,16 @@ class ClientChannel:
         """Stop the writer; with ``drain``, send what is still queued first (each send bounded).
 
         New messages are ignored from the first line on, so producers cannot extend the drain.
+        With ``drain`` the writer is not cancelled: it finishes its in-flight send (bounded) and
+        exits on ``_closing``, so that message is not lost. Exiting on the flag also covers
+        Python 3.10's ``wait_for`` swallowing a cancel that lands as the send completes.
         """
         self._closing = True
+        self._wake.set()
         task, self._task = self._task, None
         if task is not None:
-            task.cancel()
+            if not drain:
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         if drain and not self.closed:
             while True:
@@ -262,8 +278,11 @@ class ClientChannel:
                 if item is None or not await self._send(*item):
                     break
         self.closed = True
-        if self._close_task is not None:
-            await asyncio.gather(self._close_task, return_exceptions=True)
+        if self._close_task is not None and not self._close_task.done():
+            try:
+                await asyncio.wait_for(self._close_task, timeout=self._send_timeout)
+            except asyncio.TimeoutError:
+                logger.debug("push: closing the socket timed out")
 
 
 def record_client_perf(raw: str) -> int:

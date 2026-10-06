@@ -2,9 +2,10 @@
 import asyncio
 import gc
 import json
+import logging
 
 import pytest
-from starlette.websockets import WebSocketState
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.web import push
@@ -313,6 +314,101 @@ async def test_a_chain_tick_that_failed_to_encode_is_not_merged():
     ch.enqueue({"type": "chain_tick", "data": {"ticks": [{"strike": 5000.0, "right": "C", "bid": 1.0}]}}, None)
     await ch.aclose(drain=True)
     assert ws.sent == []
+
+
+@pytest.mark.asyncio
+async def test_aclose_while_a_send_is_in_flight_finishes_and_delivers_everything():
+    """Python 3.10's wait_for swallows a cancel that lands as the send completes: aclose must not hang."""
+    ws = SlowWS()
+    ch = push.ClientChannel(ws)
+    ch.start()
+    ch.send_message({"type": "order_status", "data": {"n": 1}})
+    ch.send_message({"type": "order_status", "data": {"n": 2}})
+    await asyncio.sleep(0)                                   # the writer is now inside its first send
+    await asyncio.wait_for(ch.aclose(drain=True), timeout=1.0)
+    assert [m["data"]["n"] for m in ws.sent] == [1, 2] and ch.closed
+
+
+class HangCloseWS:
+    """Send fails; ``close()`` never returns."""
+
+    async def send_text(self, text):
+        raise OSError("connection reset")
+
+    async def close(self, code=1000):
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_aclose_bounds_the_wait_for_a_hung_socket_close():
+    ch = push.ClientChannel(HangCloseWS(), send_timeout=0.05)
+    ch.start()
+    ch.send_message({"type": "status", "data": {}})
+    await _settle()
+    assert ch.closed
+    await asyncio.wait_for(ch.aclose(drain=True), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_log_dropped_notes_are_unique_across_channels():
+    """A browser that reconnects without reloading dedupes logs by seq: a new channel's note needs a new seq."""
+    seqs = []
+    for _ in range(2):
+        gate = asyncio.Event()
+        ws = SlowWS(gate)
+        ch = push.ClientChannel(ws, log_max=1)
+        ch.start()
+        ch.send_message({"type": "ping"})
+        await _settle()
+        for i in range(3):
+            ch.send_message({"type": "log", "data": {"seq": i, "msg": f"line {i}"}})
+        gate.set()
+        await _settle()
+        seqs += [m["data"]["seq"] for m in ws.sent
+                 if m["type"] == "log" and "log lines dropped" in m["data"]["msg"]]
+        await ch.aclose(drain=False)
+    assert len(seqs) == 2 and seqs[0] != seqs[1] and all(s < 0 for s in seqs)
+
+
+class DisconnectedWS:
+    def __init__(self, exc, application_state=None):
+        self.exc = exc
+        if application_state is not None:
+            self.application_state = application_state
+
+    async def send_text(self, text):
+        raise self.exc
+
+    async def close(self, code=1000):
+        pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make_ws", [
+    lambda: DisconnectedWS(WebSocketDisconnect(code=1006)),
+    lambda: DisconnectedWS(RuntimeError('Cannot call "send" once a close message has been sent.'),
+                           WebSocketState.DISCONNECTED),
+], ids=["websocket_disconnect", "already_disconnected"])
+async def test_a_client_that_went_away_is_not_a_warning(make_ws, caplog):
+    caplog.set_level("DEBUG", logger="spx_trade_desk.web.push")
+    closed = []
+    ch = push.ClientChannel(make_ws(), on_close=closed.append)
+    ch.start()
+    ch.send_message({"type": "status", "data": {}})
+    await _settle()
+    assert ch.closed and closed == [ch]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_a_send_timeout_still_warns(caplog):
+    caplog.set_level("DEBUG", logger="spx_trade_desk.web.push")
+    ch = push.ClientChannel(SlowWS(asyncio.Event()), send_timeout=0.05)
+    ch.start()
+    ch.send_message({"type": "status", "data": {}})
+    await asyncio.sleep(0.2)
+    assert ch.closed
+    assert [r for r in caplog.records if r.levelno == logging.WARNING and "Dropping a WebSocket client" in r.getMessage()]
 
 
 def test_record_client_perf_survives_deeply_nested_json():

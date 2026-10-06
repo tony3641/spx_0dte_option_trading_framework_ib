@@ -505,6 +505,7 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 |---|---|
 | `spx_trade_desk/server.py` | FastAPI app, IB connection, state management, WebSocket endpoint |
 | `spx_trade_desk/web/ws.py` | WebSocket message routing (tabs, GEX mode, strategies, orders, viewport sync) |
+| `spx_trade_desk/web/push.py` | Per-browser send channels: `broadcast` enqueues and returns, one writer task per socket coalesces and sends |
 | `spx_trade_desk/ib/client.py` / `ib/connection.py` | Native `ibapi` wrapper: contract resolution, streaming quotes, connection lifecycle |
 | `spx_trade_desk/market/chain_fetcher.py` | Batched SPXW option chain fetcher (streaming mode, ±8σ strike filter) |
 | `spx_trade_desk/ib/line_budget.py` | Market-data line accounting: splits the account allowance into fixed/order/poll/stream shares and refuses over-cap requests locally |
@@ -576,6 +577,8 @@ Settings are resolved in order: **environment variable → repo-root `.env` → 
 | `ORDER_MID_MAX_AGE_S` | `2.0` | A dynamic-fill order takes its starting mid from the chain's quote book when the quote is at most this old and two-sided; otherwise it subscribes to the contract |
 | `PERF_LOG_SECONDS` | `60` | Seconds between perf summary log lines (`0` disables). Same data: `GET /api/perf` on localhost |
 | `CHAIN_QUOTE_MAX_AGE_S` | `180` | Quotes older than this are dimmed in the chain tab and ignored by the strategy engine |
+| `PUSH_ORDERED_BACKLOG_MAX` | `1000` | Unsent ordered messages (order status, IB errors, replies) one browser may hold before the server drops it; the page reconnects and gets a fresh `init` |
+| `PUSH_SEND_TIMEOUT_S` | `5.0` | One WebSocket send longer than this drops that browser only (the others keep streaming) |
 | `CAPTURE_CLIENT_ID` | `97` | IB client id of the standalone chain capture |
 | `CHAIN_LIBRARY_DIR` | `data/chain_library` | Where daily 0DTE chain files are written (env var only; gitignored) |
 | `SERVER_HOST` | `0.0.0.0` | Server listen address (all interfaces) |
@@ -595,6 +598,7 @@ Additional tunables (chain streaming, batch sizes, viewport sync, SPXW cease/gap
 ### Measuring the IB layer
 
 - `GET /api/perf` (localhost only) shows n / p50 / p95 / max / last for connect, contract lookups, bulk listing, order place-to-ack, cancel-to-terminal, pacer wait, chain stream cycle and startup, plus the error-101 and registry counters (hit, miss, rejected non-SMART rows). The log line every `PERF_LOG_SECONDS` carries n / p50 / p95 and the counters; `max` is on `/api/perf` only.
+- The browser push shows up on `/api/perf` too: `push.broadcast` (enqueueing one message for every browser), `push.queue_wait` (time a message waited in a browser's queue) and `push.send` (one socket send). Render timings a page sends back in a `perf_report:` WebSocket message are recorded as `client.*` spans (for example `client.chain_tick.paint`); unknown names and out-of-range samples are dropped.
 - `python -m spx_trade_desk.ib.line_probe` finds how many market-data lines your account really has (stop the dashboard and close TWS watchlists first; it only reads market data) and prints a `MARKET_DATA_LINES` value with 10% head-room. Setting it above 100 lets the chain stream cover more strikes, up to `CHAIN_STREAM_MAX_LINES_CAP` lines (lines beyond the cap go to the poller, whose snapshot batches stay at 50 lines or fewer); keep it opt-in until you have watched the Log tab for error 101.
 - `python -m spx_trade_desk.ib.latency_probe` is the acceptance run on a **paper** account (it refuses any other): it places and cancels non-fillable orders and prints each latency target as PASS / NEAR / MISS. It refuses live ports and exits non-zero on a MISS or an unmeasured target.
 
