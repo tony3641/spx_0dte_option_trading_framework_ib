@@ -45,8 +45,25 @@ def test_record_atm_interpolates_between_bracketing_strikes():
 def test_record_atm_one_sided_book_is_none():
     rows = [_row(5990.0, "P", 0.12), _row(5995.0, "P", 0.12)]
     assert record_atm(rows, 5998.0) is None                       # nothing quoted above spot
-    rows += [_row(6000.0, "C", None), _row(6010.0, "C", 0.11)]    # IV missing at the nearest strike
-    assert record_atm(rows, 5998.0) is None                       # next IV is 15 points away
+    rows += [_row(6000.0, "C", None), _row(6010.0, "C", 0.11)]    # nearest IV above is 15 points away
+    assert record_atm(rows, 5998.0) is None                       # bracket gap 15 > ATM_MAX_GAP
+
+
+def test_record_atm_ignores_rows_without_a_usable_iv_on_one_side():
+    # The strikes just above spot (gap 5, inside ATM_MAX_GAP) carry a missing and a zero IV,
+    # so they must not count as a bracket side: with them filtered nothing is quoted above.
+    rows = [_row(5995.0, "P", 0.12), _row(6000.0, "C", None), _row(6003.0, "P", 0.0)]
+    assert record_atm(rows, 5998.0) is None
+
+
+def test_record_atm_skips_ivless_nearest_strike_when_gap_stays_inside_limit():
+    # 6000 has no usable IV (None put, zero call); the next IV above is 6005, so the bracket is
+    # 5995..6005 (gap 10 = ATM_MAX_GAP) and the value interpolates between 0.10 and 0.14 only.
+    rows = [_row(5995.0, "P", 0.10), _row(6000.0, "P", None), _row(6000.0, "C", 0.0),
+            _row(6005.0, "C", 0.14)]
+    atm = record_atm(rows, 5998.0)
+    assert atm is not None and np.isfinite(atm)
+    assert atm == pytest.approx(0.10 + 0.3 * 0.04)                # 0.112; 0.06 if 6000 were used
 
 
 def test_record_atm_exact_strike_ignores_stale_rows():
