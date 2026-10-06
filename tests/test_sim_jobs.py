@@ -28,7 +28,9 @@ def _clean():
     # synthetic "T" strategy here (the brief seeds it only in test_sim_api.py).
     from tests.test_sim_engine import _strategy
     jobs._STRATEGY_CACHE["T"] = _strategy()
+    jobs._CALIB_CACHE.clear()
     yield
+    jobs._CALIB_CACHE.clear()
     jobs.reset_registry()
 
 
@@ -156,3 +158,32 @@ def test_pipeline_meta_reports_pricing_and_config_warnings():
     assert meta["pricing"]["atm_open"] > 0 and meta["pricing"]["vix1d_prev"] is None
     assert meta["dials"]["pricing_tier"] == "auto" and "vol_beta" not in meta["dials"]
     assert meta["config_warnings"] and "vol_beta" in meta["config_warnings"][0]
+
+
+def test_missing_vix1d_warns_in_the_run_meta_and_anchor():
+    cfg = _cfg()
+    payload = jobs.execute_pipeline(cfg, load_bars(cfg), lambda p, m: None, spot0=SPOT0)
+    warns = payload["meta"]["garch_warnings"]
+    assert any("no VIX1D prior close; regime tiers unavailable" in w for w in warns)
+    assert any("ATM anchor = GARCH level (no VIX1D prior close)" in w for w in warns)
+
+
+def test_atm_iv_override_skips_the_anchor_warning_but_keeps_the_vix1d_one():
+    cfg = _cfg(atm_iv=0.16)
+    warns = jobs.execute_pipeline(cfg, load_bars(cfg), lambda p, m: None,
+                                  spot0=SPOT0)["meta"]["garch_warnings"]
+    assert any("regime tiers unavailable" in w for w in warns)
+    assert not any("ATM anchor = GARCH" in w for w in warns)
+
+
+def test_degraded_calibration_is_not_cached_so_a_later_run_gets_vix1d(monkeypatch):
+    from spx_trade_desk.sim import data as sim_data
+    cfg = _cfg()
+    bars = load_bars(cfg)
+    first = jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=SPOT0)
+    assert first["meta"]["pricing"]["vix1d_prev"] is None
+    monkeypatch.setattr(sim_data, "load_vix1d_daily", lambda period="2y": {"20200102": 15.0})
+    second = jobs.execute_pipeline(cfg, bars, lambda p, m: None, spot0=SPOT0)
+    assert second["meta"]["pricing"]["vix1d_prev"] == 15.0
+    assert second["meta"]["pricing"]["anchor"] == "vix1d"
+    assert not any("regime tiers unavailable" in w for w in second["meta"]["garch_warnings"])

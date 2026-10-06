@@ -312,11 +312,17 @@ def build_and_write(root=None, overrides: Optional[Dict[str, float]] = None,
         model_path = MODEL_PATH if root == CHAIN_LIBRARY_DIR else root / MODEL_NAME
     days = load_days(root)
     old, _ = read_model_file(model_path)
-    prev = prior_closes(days, sim_data.load_vix1d_daily(), overrides)
+    daily = sim_data.load_vix1d_daily()
+    warnings: List[str] = []
+    if not daily:
+        warnings.append("pricing: no VIX1D history; regime assignments use only overrides and "
+                        "consecutive-day fallbacks")
+        logger.warning(warnings[0])
+    prev = prior_closes(days, daily, overrides)
     model = build_model_dict(days, prev, (old or {}).get("scores"))
     write_model(model, model_path)
     logger.info(f"pricing model rebuilt from {len(days)} library days -> {model_path}")
-    return model_summary(model)
+    return dict(model_summary(model), warnings=warnings)
 
 
 def write_cold_default(root=None, overrides: Optional[Dict[str, float]] = None,
@@ -345,6 +351,8 @@ def resolve_pricing(tier: str = "auto", now: Optional[datetime] = None):
                                            now.astimezone(ET).date())
     if err:
         warnings.insert(0, err)
+    if vix1d_prev is None:
+        warnings.append("pricing: no VIX1D prior close; regime tiers unavailable")
     return tables, info, vix1d_prev, warnings
 
 
@@ -353,8 +361,13 @@ def pricing_summary(tier: str = "auto") -> dict:
     staleness, stored harness scores, the VIX1D prior close and the library summary."""
     _, info, vix1d_prev, warnings = resolve_pricing(tier)
     model, _ = read_model_file(MODEL_PATH)
-    return dict(info, vix1d_prev=vix1d_prev,
-                library=model_summary(model) if model else None, warnings=warnings)
+    library = None
+    if model:
+        try:
+            library = model_summary(model)
+        except Exception as e:      # a hand-edited model: select_tables already warned and fell back
+            logger.warning(f"pricing model summary unavailable: {e!r}")
+    return dict(info, vix1d_prev=vix1d_prev, library=library, warnings=warnings)
 
 
 def _parse_overrides(items) -> Dict[str, float]:

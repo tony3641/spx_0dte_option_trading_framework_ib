@@ -173,13 +173,19 @@ def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
     model = _CALIB_CACHE.get(key)
     if model is None:
         model = calibrate(bars, cfg)
-        _CALIB_CACHE[key] = model
+        # A model calibrated without a VIX1D prior close is degraded (no regime tiers, GARCH
+        # anchor): keep it out of the cache so the next run retries the lookup.
+        if model.vix1d_prev is not None:
+            _CALIB_CACHE[key] = model
     strat = _get_strategy(cfg, state)
     children = []
     if cfg.mode == "family" and state is not None:
         children = [s for s in state.strategies.values() if s.parent_name == strat.name]
     ladder = build_ladder(spot0, cfg.ladder_range_pct)
     pricer = build_pricing_model(model, cfg)   # per-run dials + anchor; NOT cached with the model
+    run_warnings = list(model.warnings)
+    if pricer.anchor_source == "garch" and model.vix1d_prev is None:
+        run_warnings.append("pricing: ATM anchor = GARCH level (no VIX1D prior close)")
     cells = sweep_cells(cfg)
     n_chunks = (cfg.n_paths + cfg.chunk_size - 1) // cfg.chunk_size
     payloads = chunk_payloads(cfg, model, strat, children, ladder, pricer, cells,
@@ -243,7 +249,7 @@ def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
                 bar_size=cfg.bar_size, steps_per_day=cfg.steps_per_day(),
                 n_paths=cfg.n_paths, seed=cfg.seed, spot0=spot0,
                 garch=vars(model.garch),
-                garch_warnings=model.warnings, data_warnings=bars.warnings,
+                garch_warnings=run_warnings, data_warnings=bars.warnings,
                 config_warnings=list(cfg.load_warnings),
                 pricing=dict(model.pricing_info, anchor=pricer.anchor_source,
                              atm_open=pricer.atm_open, vix1d_prev=model.vix1d_prev),

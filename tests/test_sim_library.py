@@ -238,3 +238,14 @@ def test_pricing_summary_without_a_library_is_cold():
     s = library.pricing_summary()
     assert s["tier"] == "cold" and s["library"] is None and s["vix1d_prev"] is None
     assert any(w.startswith("pricing: tier cold") for w in s["warnings"])
+
+
+def test_rebuild_warns_when_vix1d_is_unavailable(tmp_path, caplog, monkeypatch):
+    from spx_trade_desk.sim import data as sim_data
+    write_day(tmp_path, "20300304", seed=1, step_min=30)
+    with caplog.at_level("WARNING"):
+        s = library.build_and_write(tmp_path, overrides={"20300304": 13.0})
+    assert any("consecutive-day" in w for w in s["warnings"])
+    assert any("consecutive-day" in r.getMessage() for r in caplog.records)
+    monkeypatch.setattr(sim_data, "load_vix1d_daily", lambda period="2y": {"20300301": 12.0})
+    assert library.build_and_write(tmp_path)["warnings"] == []
