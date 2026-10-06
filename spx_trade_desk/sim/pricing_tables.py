@@ -9,6 +9,7 @@ All IV is in calendar units. pandas is imported inside the builders only, so a
 spawned sim worker that unpickles the per-run pricer never loads it.
 """
 import json
+import logging
 import math
 from dataclasses import dataclass, replace
 from datetime import date
@@ -18,6 +19,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from spx_trade_desk.resources import CONFIG_DIR
+
+logger = logging.getLogger(__name__)
 
 TABLES_VERSION = 1
 Z_GRID = np.linspace(-6.0, 3.0, 37)
@@ -310,17 +313,30 @@ def select_tables(model: Optional[dict], cold: PricingTables, tier: str = "auto"
     warnings: List[str] = []
     regime = regime_of(vix1d_prev)
     pooled = reg = None
+    days = regime_days = 0
+    last = scores_by_tier = None
     if model is not None:
         try:
+            # Valid JSON can still be hand-edited into the wrong types: any failure while
+            # reading the model's fields falls back to the Cold default.
             pooled = PricingTables.from_dict(model["pooled"])
             if regime is not None and regime in (model.get("regimes") or {}):
                 reg = PricingTables.from_dict(model["regimes"][regime])
-        except (KeyError, TypeError, ValueError) as e:
+            days = int(model.get("days", 0))
+            regime_days = int((model.get("regime_days") or {}).get(regime, 0))
+            last = model.get("last_capture")
+            if last:
+                _busdays(last, date.today())
+            scores_by_tier = dict(model.get("scores") or {})
+            for sc in scores_by_tier.values():
+                int(sc["passed"]), int(sc["scored"])
+        except Exception as e:
+            logger.warning(f"pricing model unusable: {e!r}")
             warnings.append(f"pricing: model file unusable ({e}); using the Cold default")
             model = pooled = reg = None
-    days = int(model.get("days", 0)) if model else 0
-    lib_ok = (reg is not None and days >= LIBRARY_MIN_DAYS
-              and int((model.get("regime_days") or {}).get(regime, 0)) >= REGIME_MIN_DAYS)
+            days = regime_days = 0
+            last = scores_by_tier = None
+    lib_ok = (reg is not None and days >= LIBRARY_MIN_DAYS and regime_days >= REGIME_MIN_DAYS)
     levels = [("library", reg if lib_ok else None),
               ("thin", pooled if pooled is not None and pooled.n_days >= 1 else None),
               ("cold", cold)]
@@ -346,12 +362,15 @@ def select_tables(model: Optional[dict], cold: PricingTables, tier: str = "auto"
     tables = PricingTables(f=f, f_sweeps=sweeps, g=level.g.copy(), hs=hs,
                            atm_vix1d_ratio=level.atm_vix1d_ratio, n_days=chain[0][1].n_days,
                            provisional=provisional)
-    last = model.get("last_capture") if model else None
     stale = bool(last and resolved != "cold" and today is not None
                  and _busdays(last, today) > STALE_TRADING_DAYS)
-    scores = ((model or {}).get("scores") or {}).get(resolved)
-    score_txt = (f"harness {scores.get('passed')}/{scores.get('scored')} buckets passed"
-                 if scores else "no harness score")
+    scores = (scores_by_tier or {}).get(resolved)
+    score_txt = "no harness score"
+    if scores:
+        n = scores.get("days")
+        on = f" on {n} day{'' if n == 1 else 's'}" if n else ""
+        flag = " (in-sample)" if scores.get("in_sample") else ""
+        score_txt = f"harness {scores['passed']}/{scores['scored']} buckets{on}{flag}"
     warnings.append(f"pricing: tier {resolved}, {len(fallback)} of {N_TAU} tau buckets fell back, "
                     f"{days} library days, last capture {last or 'none'}, {score_txt}")
     if stale:

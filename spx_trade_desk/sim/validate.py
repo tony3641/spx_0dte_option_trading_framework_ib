@@ -166,16 +166,16 @@ def run_harness(day_paths, tier: str = "auto", root=None, cold=None,
         others = [d for d in all_days if d.day != day]
         model = build_model_dict(others, prev) if others else None
         tables, info, _ = select_tables(model, cold, tier, prev.get(day), _date(day))
-        resolved[day] = info["tier"]
         if prev.get(day) is None or not math.isfinite(tables.atm_vix1d_ratio):
             notes.append(f"{day}: no VIX1D prior close; skipped (pass --vix1d-prev)")
             continue
+        resolved[day] = info["tier"]
         pricer = ZPricer(tables, prev[day] / 100.0 * tables.atm_vix1d_ratio)
         records = list(iter_records(path))
         forecast += score_records(records, pricer, day)
         real += score_records(records, pricer, day, use_real_atm=True)
         scored.append(day)
-    if tier == "cold":
+    if "cold" in resolved.values():
         notes.append("cold tier is not leave-one-out: a day the Cold default was built from "
                      "scores in-sample")
     fc = summarize(forecast)
@@ -197,20 +197,27 @@ def write_report(report: dict, out=None) -> Path:
     return out
 
 
-def store_scores(report: dict, path=None) -> None:
-    """Record the latest z-pricer score for the resolved tier in the model's metadata."""
+def store_scores(report: dict, path=None) -> str:
+    """Record the latest z-pricer score under each tier the scored days resolved to, with the
+    day count and an in-sample flag (the Cold default is not leave-one-out). Nothing scored
+    stores nothing. Returns a one-line message."""
     if report["pricer"] != "z":
         raise ValueError("only z-pricer scores are stored")
     path = Path(path) if path else library.MODEL_PATH
     model, err = read_model_file(path)
     if model is None:
         raise ValueError(err or f"{path} not found; build the library first")
-    tiers = set(report["resolved_tiers"].values())
-    key = tiers.pop() if len(tiers) == 1 else report["tier"]
-    model.setdefault("scores", {})[key] = {"passed": report["passed_buckets"],
-                                          "scored": report["scored_buckets"],
-                                          "days": len(report["days"]), "at": report["generated"]}
+    if not report["scored_buckets"] or not report["resolved_tiers"]:
+        return "nothing scored; stored no harness score"
+    by_tier: dict = {}
+    for tier in report["resolved_tiers"].values():
+        by_tier[tier] = by_tier.get(tier, 0) + 1
+    scores = model.setdefault("scores", {})
+    for tier, n_days in by_tier.items():
+        scores[tier] = {"passed": report["passed_buckets"], "scored": report["scored_buckets"],
+                        "days": n_days, "in_sample": tier == "cold", "at": report["generated"]}
     library.write_model(model, path)
+    return f"stored harness score under {', '.join(sorted(by_tier))}"
 
 
 def _pct(x) -> str:
@@ -249,7 +256,7 @@ def main(argv=None) -> int:
     print(format_report(report))
     print(f"report: {write_report(report, args.out)}")
     if args.store:
-        store_scores(report, Path(args.root) / library.MODEL_NAME if args.root else None)
+        print(store_scores(report, Path(args.root) / library.MODEL_NAME if args.root else None))
     return 0 if report["passed_buckets"] == report["scored_buckets"] > 0 else 1
 
 

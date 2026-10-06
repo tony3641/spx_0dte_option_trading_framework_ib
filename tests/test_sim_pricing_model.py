@@ -290,3 +290,34 @@ def test_resolve_pricing_reads_the_model_file(tmp_path, monkeypatch):
     path.write_text("{oops")
     _, info, _, w = library.resolve_pricing("auto", now=now)
     assert info["tier"] == "cold" and w[0].startswith("pricing: cannot read")
+
+
+def test_score_text_shows_days_and_the_in_sample_flag():
+    m = _model_dict()
+    m["scores"] = {"library": {"passed": 4, "scored": 4, "days": 1, "in_sample": True},
+                   "thin": {"passed": 3, "scored": 5, "days": 6, "in_sample": False}}
+    _, _, w = select_tables(m, COLD, "auto", 13.0, TODAY)
+    assert any("harness 4/4 buckets on 1 day (in-sample)" in x for x in w)
+    _, _, w = select_tables(m, COLD, "thin", 13.0, TODAY)
+    assert any("harness 3/5 buckets on 6 days" in x and "in-sample" not in x for x in w)
+
+
+@pytest.mark.parametrize("bad", [{"days": "x"}, {"scores": {"thin": [1]}}, {"scores": {"thin": 3}},
+                                 {"regime_days": {"12-18": "many"}}, {"last_capture": 5}])
+def test_malformed_but_valid_json_models_fall_back_to_cold(bad):
+    m = dict(_model_dict(), **bad)
+    t, info, w = select_tables(m, COLD, "auto", 13.0, TODAY)
+    assert info["tier"] == "cold" and np.allclose(t.f, COLD.f)
+    assert any(x.startswith("pricing: ") and "unusable" in x for x in w)
+
+
+@pytest.mark.parametrize("bad", [{"days": "x"}, {"pooled": 5}, {"scores": {"thin": [1]}}])
+def test_pricing_summary_survives_a_malformed_library_block(tmp_path, monkeypatch, bad):
+    from spx_trade_desk.sim import library
+    path = tmp_path / "pricing_model.json"
+    path.write_text(json.dumps(dict(_model_dict(), **bad)))
+    monkeypatch.setattr(library, "MODEL_PATH", path)
+    monkeypatch.setattr(library, "load_cold", lambda: COLD)
+    s = library.pricing_summary("auto")
+    assert s["tier"] == "cold"
+    assert any(x.startswith("pricing: ") and "unusable" in x for x in s["warnings"])

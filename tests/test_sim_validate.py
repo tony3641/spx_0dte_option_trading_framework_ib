@@ -70,3 +70,49 @@ def test_store_scores_records_the_resolved_tier(tmp_path):
     validate.store_scores(rep, path)
     s = json.loads(path.read_text())["scores"]["cold"]
     assert s["passed"] == rep["passed_buckets"] and s["scored"] == rep["scored_buckets"]
+
+
+def test_auto_tier_resolving_to_cold_is_flagged_in_sample(tmp_path):
+    rep = _run(tmp_path, truth_tables(), tier="auto")
+    assert rep["resolved_tiers"] == {DAY: "cold"}
+    assert any("in-sample" in n for n in rep["notes"])
+
+
+def test_store_scores_keeps_days_and_in_sample_flag_under_the_resolved_tier(tmp_path):
+    rep = _run(tmp_path, truth_tables(), tier="auto")
+    path = tmp_path / "pricing_model.json"
+    path.write_text(json.dumps({"v": 1, "scores": {}}))
+    validate.store_scores(rep, path)
+    scores = json.loads(path.read_text())["scores"]
+    assert "auto" not in scores
+    assert scores["cold"]["days"] == 1 and scores["cold"]["in_sample"] is True
+
+
+def test_store_scores_one_entry_per_resolved_tier(tmp_path):
+    rep = _run(tmp_path, truth_tables())
+    rep["resolved_tiers"] = {DAY: "thin", "20300305": "cold"}
+    rep["days"] = [DAY, "20300305"]
+    path = tmp_path / "pricing_model.json"
+    path.write_text(json.dumps({"v": 1, "scores": {}}))
+    validate.store_scores(rep, path)
+    scores = json.loads(path.read_text())["scores"]
+    assert set(scores) == {"thin", "cold"}
+    assert scores["thin"]["days"] == 1 and scores["thin"]["in_sample"] is False
+    assert scores["cold"]["in_sample"] is True
+
+
+def test_store_scores_skips_an_empty_score(tmp_path):
+    p = write_day(tmp_path, DAY, seed=1, step_min=30)
+    rep = validate.run_harness([p], "cold", root=tmp_path, cold=truth_tables(), overrides={}, daily={})
+    assert rep["scored_buckets"] == 0 and rep["days"] == []
+    path = tmp_path / "pricing_model.json"
+    path.write_text(json.dumps({"v": 1, "scores": {}}))
+    msg = validate.store_scores(rep, path)
+    assert json.loads(path.read_text())["scores"] == {}
+    assert "nothing scored" in msg
+
+
+def test_skipped_day_is_not_listed_as_resolved(tmp_path):
+    p = write_day(tmp_path, DAY, seed=1, step_min=30)
+    rep = validate.run_harness([p], "cold", root=tmp_path, cold=truth_tables(), overrides={}, daily={})
+    assert rep["resolved_tiers"] == {}
