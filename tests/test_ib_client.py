@@ -1,5 +1,6 @@
 # tests/test_ib_client.py
 import asyncio
+import logging
 import time
 from types import SimpleNamespace
 import pytest
@@ -810,3 +811,79 @@ async def test_req_chain_contract_details_sends_one_partial_contract(monkeypatch
     client.contractDetailsEnd(next(iter(client._requests)))
     assert await asyncio.wait_for(t, timeout=1) == []
     assert perf.snapshot()["metrics"]["ib.chain_details"]["n"] == 1
+
+
+# Error 101 (max number of tickers): release the refused line and cap the budget
+@pytest.mark.asyncio
+async def test_error_101_on_a_stream_releases_its_line_marks_it_failed_and_caps_the_budget(monkeypatch, caplog):
+    from spx_trade_desk.core.perf import perf
+    perf.reset()
+    _quiet(monkeypatch)
+    client = IBClient()                                    # default split: fixed 4, order 4, poll 12, stream 78
+    client._loop = asyncio.get_running_loop()
+    for i in range(4):
+        client.subscribe_tick(_opt(i), "", share="fixed")
+    for i in range(70):
+        client.subscribe_tick(_opt(100 + i), "101", share="stream")
+    refused = client.subscribe_tick(_opt(999), "101", share="stream")          # IB says no
+    with caplog.at_level(logging.WARNING):
+        client.error(refused.req_id, 0, 101, "Max number of tickers has been reached", "")
+        await asyncio.sleep(0)                             # the socket-thread callback hops onto the loop
+    assert refused.failed_code == 101
+    assert refused.req_id not in client._streams and refused.req_id not in client._stream_share
+    assert client.line_budget.used("stream") == 70
+    assert client.line_budget.capacity("stream") == 54     # 98 planned lines shrunk to the 74 in use
+    assert client.line_budget.capacity("fixed") == 4 and client.line_budget.capacity("order") == 4
+    assert perf.counter("ib.error_101") == 1
+    assert "capping the budget at 74" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_burst_of_101_refusals_converges_on_the_lines_actually_granted(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    for i in range(4):
+        client.subscribe_tick(_opt(i), "", share="fixed")
+    for i in range(70):
+        client.subscribe_tick(_opt(100 + i), "101", share="stream")
+    refused = [client.subscribe_tick(_opt(900 + i), "101", share="stream") for i in range(3)]
+    for s in refused:
+        client.error(s.req_id, 0, 101, "Max number of tickers has been reached", "")
+    await asyncio.sleep(0)
+    assert all(s.failed_code == 101 for s in refused)
+    assert client.line_budget.used("stream") == 70
+    assert client.line_budget.capacity("stream") == 54     # never below what IB actually granted
+
+
+@pytest.mark.asyncio
+async def test_error_101_for_an_untracked_request_changes_nothing(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    before = client.line_budget.shares()
+    client.error(424242, 0, 101, "Max number of tickers has been reached", "")
+    await asyncio.sleep(0)
+    assert client.line_budget.shares() == before
+
+
+@pytest.mark.asyncio
+async def test_error_101_mid_snapshot_settles_the_batch_and_releases_each_line_once(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 3, "stream": 0},
+                      pacer=_CountingPacer())
+    client._loop = asyncio.get_running_loop()
+    releases = []
+    original_release = client.line_budget.release
+    client.line_budget.release = lambda share, n=1: (releases.append((share, n)), original_release(share, n))[1]
+    t = asyncio.create_task(client.fetch_snapshot([_opt(1), _opt(2), _opt(3)], timeout=5.0, grace=0.0))
+    await asyncio.sleep(0.01)
+    ids = sorted(client._streams)
+    client.tickPrice(ids[0], BID, 1.0, None)
+    client.tickPrice(ids[1], BID, 2.0, None)
+    client.error(ids[2], 0, 101, "Max number of tickers has been reached", "")   # the third line is refused
+    streams = await asyncio.wait_for(t, timeout=1)                               # the batch must not hang
+    assert [s.bid for s in streams] == [1.0, 2.0, None]
+    assert streams[2].failed_code == 101
+    assert len(releases) == 3                                  # one release per line: no double release
+    assert client.line_budget.used("poll") == 0 and client._streams == {}

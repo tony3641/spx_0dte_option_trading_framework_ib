@@ -124,3 +124,24 @@ async def test_grant_then_cancel_before_resume_does_not_leak_lines():
     with pytest.raises(asyncio.CancelledError):
         await t
     assert b.used("poll") == 0
+
+
+def test_observe_limit_shrinks_stream_first_then_poll_never_fixed_or_order():
+    b = LineBudget(split_lines(100))                      # fixed 4, order 4, poll 12, stream 78
+    assert b.observe_limit(90) == {"fixed": 4, "order": 4, "poll": 12, "stream": 70}
+    assert b.observe_limit(30) == {"fixed": 4, "order": 4, "poll": 12, "stream": 10}
+    assert b.observe_limit(10) == {"fixed": 4, "order": 4, "poll": 2, "stream": 0}
+    assert b.ceiling == 10
+
+
+def test_observe_limit_keeps_the_stream_share_even():
+    b = LineBudget(split_lines(100))
+    assert b.observe_limit(97)["stream"] == 76            # 77 would split a call/put pair
+
+
+def test_observe_limit_never_grows_the_budget():
+    b = LineBudget(split_lines(100))
+    b.observe_limit(60)
+    shrunk = b.shares()
+    assert b.observe_limit(10_000) == shrunk
+    assert b.ceiling == 60

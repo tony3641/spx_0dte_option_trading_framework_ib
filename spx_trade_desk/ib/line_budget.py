@@ -7,7 +7,7 @@ process never sends a request IB would reject with error 101 (max number of tick
 """
 import asyncio
 from collections import deque
-from typing import Deque, Dict, Tuple
+from typing import Deque, Dict, Optional, Tuple
 
 FIXED_LINES = 4     # SPX, ES, VIX, VIX1D underlyings
 ORDER_LINES = 4     # order-entry mid lookups; never lent to anyone else
@@ -37,6 +37,7 @@ class LineBudget:
     def __init__(self, shares: Dict[str, int]):
         self._cap = {k: int(v) for k, v in shares.items()}
         self._used = {k: 0 for k in self._cap}
+        self._ceiling: Optional[int] = None
         self._waiters: Dict[str, Deque[Tuple[int, asyncio.Future]]] = {
             k: deque() for k in self._cap}
 
@@ -51,6 +52,35 @@ class LineBudget:
 
     def shares(self) -> Dict[str, int]:
         return dict(self._cap)
+
+    @property
+    def ceiling(self) -> Optional[int]:
+        """Lowest number of in-use lines at which IB ever refused one (None until it did)."""
+        return self._ceiling
+
+    def observe_limit(self, in_use_total: int) -> Dict[str, int]:
+        """IB refused a line while ``in_use_total`` lines were granted: never plan for more.
+
+        Shrinks the 'stream' share first (kept even: calls and puts are subscribed in pairs), then
+        'poll' (never below 2 lines), never 'fixed' or 'order'. The budget only shrinks within a
+        session. Lines already held above a new cap are released by their owners' next pass.
+        """
+        ceiling = max(0, int(in_use_total))
+        self._ceiling = ceiling if self._ceiling is None else min(self._ceiling, ceiling)
+        excess = sum(self._cap.values()) - ceiling
+        if excess <= 0:
+            return self.shares()
+        if "stream" in self._cap:
+            old = self._cap["stream"]
+            new = max(0, old - excess)
+            new -= new % 2
+            self._cap["stream"] = new
+            excess -= old - new
+        if excess > 0 and "poll" in self._cap:
+            old = self._cap["poll"]
+            new = max(min(old, 2), old - excess)
+            self._cap["poll"] = new
+        return self.shares()
 
     def try_acquire(self, share: str, n: int = 1) -> bool:
         if self.free(share) < n:

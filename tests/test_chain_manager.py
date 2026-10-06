@@ -157,3 +157,18 @@ async def test_subscribe_new_keys_skips_unqualified_keys_and_stops_when_the_budg
     n = await _subscribe_new_keys(ib, app_state, qualified, keys)
     assert n == 4 and (7700.0, "P") not in app_state.chain_stream_tickers
     assert ib.line_budget.used("stream") == 4
+
+
+from spx_trade_desk.ib.client import TickStream
+from spx_trade_desk.market.chain_manager import drop_failed_streams
+
+
+def test_drop_failed_streams_removes_refused_streams_only(app_state):
+    ok, bad = TickStream(1, None), TickStream(2, None)
+    bad.failed_code = 101
+    app_state.chain_stream_tickers = {(7700.0, "C"): ok, (7700.0, "P"): bad}
+    app_state.chain_stream_contracts = {(7700.0, "C"): "c", (7700.0, "P"): "p"}
+    assert drop_failed_streams(app_state) == 1
+    assert set(app_state.chain_stream_tickers) == {(7700.0, "C")}
+    assert set(app_state.chain_stream_contracts) == {(7700.0, "C")}
+    assert drop_failed_streams(app_state) == 0

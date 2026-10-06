@@ -294,6 +294,17 @@ async def _subscribe_new_keys(ib, state, qualified: Dict, new_keys: List) -> int
     return subscribed
 
 
+def drop_failed_streams(state) -> int:
+    """Forget streams IB refused (error 101): the client already released their lines."""
+    dropped = 0
+    for key, stream in list(state.chain_stream_tickers.items()):
+        if getattr(stream, "failed_code", None) is not None:
+            state.chain_stream_tickers.pop(key, None)
+            state.chain_stream_contracts.pop(key, None)
+            dropped += 1
+    return dropped
+
+
 async def chain_stream_loop(ib, state, broadcast_fn):
     """Maintain persistent market-data subscriptions for the strikes nearest the focus.
 
@@ -344,6 +355,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             if available_pairs:
                 desired_keys = {k for k in desired_keys if k in available_pairs}
 
+            drop_failed_streams(state)
             current_keys = set(state.chain_stream_tickers.keys())
             for key in current_keys - desired_keys:
                 stream = state.chain_stream_tickers.pop(key, None)

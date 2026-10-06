@@ -150,6 +150,7 @@ class TickStream:
         # time.monotonic() of the latest tick, written on the socket thread (a float
         # assignment): lets readers tell a silent subscription from a live one.
         self.last_tick_mono = 0.0
+        self.failed_code = None      # IB error code that refused this subscription (101: ticker limit)
 
     def received_any_tick(self):
         return self._first_tick
@@ -278,6 +279,9 @@ class IBClient(EWrapper, EClient):
     def error(self, reqId, errorTime, errorCode, errorString, advancedOrderRejectJson=""):
         logger.warning("IB error reqId=%s code=%s: %s", reqId, errorCode, errorString)
         self._snapshot_settle(reqId)   # don't let a dead stream hold a batch
+        if errorCode == 101 and self._loop is not None:
+            # Max number of tickers reached: IB refused a market-data line. Handle it on the loop thread.
+            self._loop.call_soon_threadsafe(self._handle_line_limit, reqId)
         # Resolve any pending one-shot request so awaiting callers don't hang:
         # IB rejects some requests (e.g. error 200 contract-not-found, 321 invalid
         # contract id) with an error but no matching ...End callback, which would
@@ -292,6 +296,26 @@ class IBClient(EWrapper, EClient):
             contract = handle.contract if handle is not None else None
             self._loop.call_soon_threadsafe(
                 handler, reqId, errorCode, errorString, contract)
+
+    def _handle_line_limit(self, req_id):
+        """Error 101 for a tracked market-data request: free its line and cap the budget.
+
+        The cap is the number of lines granted at the moment of refusal; it only ever shrinks
+        within a session (see ``LineBudget.observe_limit``). Runs on the loop thread.
+        """
+        share = self._stream_share.pop(req_id, None)
+        if share is None:
+            return                      # not a market-data request this client tracks
+        perf.count("ib.error_101")
+        stream = self._streams.pop(req_id, None)
+        if stream is not None:
+            stream.failed_code = 101
+        self.line_budget.release(share)
+        in_use = sum(self.line_budget.used(s) for s in self.line_budget.shares())
+        before = self.line_budget.shares()
+        if self.line_budget.observe_limit(in_use) != before:
+            logger.warning("IB refused a line with %d in use; capping the budget at %d; "
+                           "set MARKET_DATA_LINES <= %d", in_use, in_use, in_use)
 
     # -- order placement / lifecycle ----------------------------------------
 
