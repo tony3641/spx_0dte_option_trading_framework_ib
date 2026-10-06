@@ -160,6 +160,7 @@ PERF_LOG_SECONDS = _get_setting("PERF_LOG_SECONDS", 60.0, float)    # 0 disables
 IB_REQUEST_RATE = _get_setting("IB_REQUEST_RATE", 30.0, float)     # data-lane messages/s; <= 0 disables the pacer
 IB_REQUEST_BURST = _get_setting("IB_REQUEST_BURST", 5, int)
 ORDER_USE_CONTRACT_CACHE = _get_setting("ORDER_USE_CONTRACT_CACHE", True, _as_bool)   # False: live lookup per order leg
+ORDER_MID_MAX_AGE_S = _get_setting("ORDER_MID_MAX_AGE_S", 2.0, float)      # quote-book mid accepted for dynamic fill
 
 # ---------------------------------------------------------------------------
 # Monthly/account/risk-free

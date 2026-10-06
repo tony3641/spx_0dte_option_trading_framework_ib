@@ -13,18 +13,55 @@ polling ``orderStatus``. Contracts/orders are native ibapi objects.
 import asyncio
 import json
 import logging
+import time
+from types import SimpleNamespace
 from typing import Optional
 
 from ibapi.contract import Contract, ComboLeg
 from ibapi.order import Order
 from ibapi.tag_value import TagValue
 
+from spx_trade_desk.core import config
 from spx_trade_desk.core.config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.client import _PENDING_STATUSES, _TERMINAL_STATUSES
+from spx_trade_desk.ib.contracts import ContractRegistry, _exact_match, _option_contract, norm_key
 from spx_trade_desk.ib.line_budget import LineBudgetExceeded
-from spx_trade_desk.ib.contracts import _exact_match, _option_contract  # noqa: F401  (moved; re-exported for existing importers)
 
 logger = logging.getLogger(__name__)
+
+CANCEL_CONFIRM_TIMEOUT_S = 2.0       # how long a cancel waits for IB's confirmation
+
+
+def _registry_for(state) -> ContractRegistry:
+    """The state's shared registry; a throw-away one (no caching) for a state without it."""
+    registry = getattr(state, "contracts", None)
+    return registry if registry is not None else ContractRegistry()
+
+
+async def _resolve_legs(ib, state, requested):
+    """Exact IB contracts for ``requested`` (SMART route) from the registry, or ``None``.
+
+    The registry key rounds the strike to 0.1, so every result, cached or live, is checked once more
+    against the request with the exact-match guard: a bare conId would otherwise ship the neighbouring
+    strike for an off-grid request.
+    """
+    resolved = await _registry_for(state).resolve_for_order(ib, requested)
+    if resolved is None:
+        return None
+    for req, q in zip(requested, resolved):
+        if _exact_match([SimpleNamespace(contract=q.contract)], req) is None:
+            return None
+    return resolved
+
+
+def _record_place_to_ack(ib, kind: str, t0: float) -> None:
+    """Span from sending the order to IB's ack; the first order of a connection is tagged too."""
+    ms = (time.perf_counter() - t0) * 1000.0
+    perf.record(f"order.place_to_ack.{kind}", ms)
+    if not getattr(ib, "_perf_first_order_seen", False):
+        ib._perf_first_order_seen = True
+        perf.record("order.first_after_connect", ms)
 
 
 def _stock_contract(symbol):
@@ -35,22 +72,6 @@ def _stock_contract(symbol):
     c.exchange = "SMART"
     c.currency = "USD"
     return c
-
-
-async def _qualify_contracts(ib, contracts):
-    """Resolve each contract to its exact IB contract (conId), in parallel.
-
-    Returns the list of exact-match contracts in input order, or ``None`` if
-    any contract fails to resolve (wrong contract would be sent otherwise).
-    """
-    results = await asyncio.gather(*(ib.req_contract_details(c) for c in contracts))
-    qualified = []
-    for c, details in zip(contracts, results):
-        match = _exact_match(details, c)
-        if match is None:
-            return None
-        qualified.append(match)
-    return qualified
 
 
 async def watch_and_push_status(ws, handle, timeout: float = 30.0,
@@ -238,19 +259,30 @@ async def _place_single_leg(ib, state, payload, leg,
             "message": f"Unsupported secType for liquidate/order path: {sec_type}"
         }}
 
-    details = await ib.req_contract_details(contract)
-    exact = _exact_match(details, contract)
-    if exact is None or not getattr(exact, "conId", 0):
-        return {"type": "order_status", "data": {"status": "Error", "message": "Failed to qualify contract"}}
-    contract = exact
+    min_tick = 0.0
+    if sec_type == "OPT":
+        with perf.timer("order.qualify"):
+            resolved = await _resolve_legs(ib, state, [contract])
+        if resolved is None:
+            return {"type": "order_status", "data": {"status": "Error", "message": "Failed to qualify contract"}}
+        contract = resolved[0].contract
+        min_tick = resolved[0].min_tick
+    else:
+        details = await ib.req_contract_details(contract)
+        exact = _exact_match(details, contract)
+        if exact is None or not getattr(exact, "conId", 0):
+            return {"type": "order_status", "data": {"status": "Error", "message": "Failed to qualify contract"}}
+        contract = exact
+        try:
+            if details and getattr(details[0], "minTick", 0):
+                min_tick = float(details[0].minTick)
+        except Exception:
+            pass
 
     is_spx_opt = (sec_type == "OPT" and leg.get("symbol", "").upper() == "SPX")
     tick_size = 0.05 if is_spx_opt else 0.01
-    try:
-        if details and getattr(details[0], "minTick", 0):
-            tick_size = max(0.0001, float(details[0].minTick))
-    except Exception:
-        pass
+    if min_tick > 0:
+        tick_size = max(0.0001, min_tick)
 
     def _effective_tick_for_price(price: float) -> float:
         if is_spx_opt:
@@ -270,7 +302,25 @@ async def _place_single_leg(ib, state, payload, leg,
         except Exception:
             return False
 
+    def _book_mid() -> Optional[float]:
+        """Mid of a fresh two-sided quote in the shared quote book, or None."""
+        book = getattr(state, "quote_book", None)
+        if sec_type != "OPT" or book is None or book.expiry != leg["expiry"]:
+            return None
+        if getattr(state, "trading_class", "") != getattr(contract, "tradingClass", None):
+            return None                    # the book holds another series (e.g. SPX monthly on a third Friday)
+        hit = book.get(norm_key(strike_val, leg["right"]), time.monotonic())
+        if hit is None:
+            return None
+        opt, age = hit
+        if age > config.ORDER_MID_MAX_AGE_S or not (_valid_quote(opt.bid) and _valid_quote(opt.ask)):
+            return None
+        return _round_to_tick((float(opt.bid) + float(opt.ask)) / 2.0)
+
     async def _get_mid_price() -> Optional[float]:
+        mid = _book_mid()
+        if mid is not None:
+            return mid
         try:
             stream = ib.subscribe_tick(contract, "", share="order")
         except LineBudgetExceeded as e:
@@ -321,6 +371,7 @@ async def _place_single_leg(ib, state, payload, leg,
                     "message": f"Invalid lmtPrice: {leg.get('lmtPrice')}"
                 }}
 
+    t_place = time.perf_counter()
     handle = ib.place_order(contract, order)
     stop_handle = None
 
@@ -352,7 +403,6 @@ async def _place_single_leg(ib, state, payload, leg,
             stop_order.outsideRth = outside_rth
             stop_order.transmit = True
             stop_handle = ib.place_order(contract, stop_order)
-            await asyncio.sleep(0.05)
             state.active_trades[stop_order.orderId] = stop_handle
             logger.info(
                 f"Stop-limit attached: {stop_action} {leg['qty']} "
@@ -370,6 +420,7 @@ async def _place_single_leg(ib, state, payload, leg,
     # the pending set — no reqOpenOrders re-poll).
     try:
         await handle.ack(timeout=3.0 if (dynamic_fill and order_type == "LMT") else 10.0)
+        _record_place_to_ack(ib, "single_bracket" if stop_handle else "single", t_place)
     except asyncio.TimeoutError:
         pass
     final_status = handle.status or "PendingSubmit"
@@ -504,7 +555,7 @@ async def _place_multi_leg(ib, state, payload, legs,
             expiry=leg["expiry"],
             strike=strike_val,
             right=leg["right"],
-            exchange="CBOE" if use_direct_cboe_combo else "SMART",
+            exchange="SMART",
             trading_class=leg.get("trading_class", "SPXW"),
         )
         individual_contracts.append(c)
@@ -512,7 +563,9 @@ async def _place_multi_leg(ib, state, payload, legs,
     # Resolve each leg to its exact IB contract in parallel. A mismatch is
     # refused loudly: a ComboLeg is sent to IBKR as a bare conId, so an
     # unresolved leg would ship the wrong strike.
-    qualified = await _qualify_contracts(ib, individual_contracts)
+    with perf.timer("order.qualify"):
+        resolved = await _resolve_legs(ib, state, individual_contracts)
+    qualified = [q.contract for q in resolved] if resolved is not None else None
 
     if qualified is None or len(qualified) != len(legs):
         return {"type": "order_status", "data": {
@@ -604,6 +657,7 @@ async def _place_multi_leg(ib, state, payload, legs,
     if order_type == "LMT":
         order.lmtPrice = bag_lmt
 
+    t_place = time.perf_counter()
     handle = ib.place_order(bag, order)
 
     # Attach stop-limit bracket for BAG
@@ -651,7 +705,6 @@ async def _place_multi_leg(ib, state, payload, legs,
             if not use_direct_cboe_combo:
                 bag_stop_order.smartComboRoutingParams = [TagValue("NonGuaranteed", "1")]
             bag_stop_handle = ib.place_order(close_bag, bag_stop_order)
-            await asyncio.sleep(0.05)
             state.active_trades[bag_stop_order.orderId] = bag_stop_handle
             logger.info(
                 f"BAG stop-limit attached: {stop_action} combo STP LMT @ "
@@ -667,6 +720,7 @@ async def _place_multi_leg(ib, state, payload, legs,
     # Wait for initial IB ack (event-driven; no reqOpenOrders re-poll)
     try:
         await handle.ack(timeout=5.0)
+        _record_place_to_ack(ib, "combo_bracket" if bag_stop_handle else "combo", t_place)
     except asyncio.TimeoutError:
         pass
     bag_status = handle.status or "PendingSubmit"
@@ -738,16 +792,29 @@ async def handle_cancel_order(ib, state, order_id: int,
                 "message": f"Order {order_id} not found in open trades"
             }}
 
+        t0 = time.perf_counter()
         ib.cancel_order(order_id)
-        await asyncio.sleep(0.1)
+        try:
+            await asyncio.wait_for(handle.terminal_event.wait(), timeout=CANCEL_CONFIRM_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            pass
+        if handle.is_terminal():
+            perf.record("order.cancel_to_terminal", (time.perf_counter() - t0) * 1000.0)
         if refresh_fn:
             refresh_fn(ib, state)
 
-        logger.debug(f"Order {order_id} cancellation requested")
+        final = handle.status
+        if final in ("Cancelled", "ApiCancelled"):
+            status, message = "Cancelled", f"Cancel request sent for order {order_id}"
+        elif handle.is_terminal():
+            status, message = final, f"Order {order_id} is already {final}"      # e.g. the fill won the race
+        else:
+            status, message = "PendingCancel", "Cancel requested; IB has not confirmed yet"
+        logger.debug(f"Order {order_id} cancel result: {status}")
         return {"type": "order_status", "data": {
-            "status": "Cancelled",
+            "status": status,
             "orderId": order_id,
-            "message": f"Cancel request sent for order {order_id}",
+            "message": message,
         }}
     except Exception as e:
         logger.debug(f"Cancel order {order_id} failed: {e}")
