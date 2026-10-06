@@ -177,7 +177,16 @@ class ContractRegistry:
         return QualifiedContract(copy.copy(q.contract), q.min_tick, q.source, q.ts)
 
     def clear(self) -> None:
-        """Forget everything (IB reconnect). In-flight requests finish harmlessly: conIds are global."""
+        """Forget everything (IB reconnect), including the listing flights still in the air.
+
+        A flight is bound to the old connection and may hang until its timeout, so it is cancelled
+        and dropped: the next ``ensure_chain`` starts a fresh request on the new connection instead of
+        joining it. A cancelled flight raises before it writes, so it cannot put entries, unknown marks
+        or a bulk-failure backoff into the cleared registry.
+        """
+        inflight, self._inflight = self._inflight, {}
+        for task in inflight.values():
+            task.cancel()
         self._items.clear()
         self._unknown.clear()
         self._listed.clear()

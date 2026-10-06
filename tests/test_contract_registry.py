@@ -280,6 +280,49 @@ async def test_clear_forgets_everything():
     assert ib.bulk_calls == 2
 
 
+async def _until_requested(ib):
+    """Let the loop run until ``ib`` has received its bulk request (the flight is in the air)."""
+    for _ in range(100):
+        if ib.bulk_calls:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the bulk request was never sent")
+
+
+@pytest.mark.asyncio
+async def test_clear_cancels_the_inflight_listing_so_the_new_session_never_joins_the_dead_one():
+    dead, live = ListIb([det(7799, "P", 99)]), ListIb([det(7700, "P", 1)])
+    dead.gate = asyncio.Event()                         # the old connection never answers
+    reg = _reg()
+    old = asyncio.create_task(reg.ensure_chain(dead, "SPX", EXP, "SPXW", now=0.0))
+    await _until_requested(dead)
+    reg.clear()                                         # IB reconnect
+    got = await asyncio.wait_for(reg.ensure_chain(live, "SPX", EXP, "SPXW", now=1.0), timeout=1.0)
+    assert got == 1 and live.bulk_calls == 1            # a fresh flight, not a join of the dead one
+    await asyncio.wait({old}, timeout=1.0)
+    assert old.cancelled()                              # the dead flight is gone, its waiter does not hang
+    dead.gate.set()
+    await asyncio.sleep(0)
+    assert reg.get(_key(7799, "P")) is None and reg.get(_key(7700, "P")).contract.conId == 1
+
+
+@pytest.mark.asyncio
+async def test_a_cleared_listing_flight_cannot_stamp_a_bulk_failure_into_the_new_registry():
+    dead, live = ListIb([]), ListIb([det(7700, "P", 1)])       # an empty answer would count as a failed bulk
+    dead.gate = asyncio.Event()
+    reg = _reg()
+    old = asyncio.create_task(reg.ensure_chain(dead, "SPX", EXP, "SPXW", now=0.0))
+    await _until_requested(dead)
+    reg.clear()
+    dead.gate.set()                                     # the old request "answers" right after the clear
+    await asyncio.wait({old}, timeout=1.0)
+    assert old.cancelled()
+    assert len(reg) == 0 and reg.unknown_count() == 0
+    got = await reg.qualify_keys(live, EXP, "SPXW", [(7700, "P")], now=1.0)
+    assert set(got) == {(7700.0, "P")}
+    assert live.bulk_calls == 1 and live.single_calls == []    # no stale backoff: it listed in bulk
+
+
 # -- order path --------------------------------------------------------------------------------
 
 @pytest.mark.asyncio
