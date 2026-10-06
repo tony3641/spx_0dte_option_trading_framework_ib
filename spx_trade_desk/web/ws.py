@@ -243,7 +243,6 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                 if msg == "refresh_chain":
                     logger.info("Client requested chain refresh")
                     clear_qualification_cache("option-tab manual refresh")
-                    state.manual_refresh_requested = True
                     if state.force_chain_fetch_event is not None:
                         state.force_chain_fetch_event.set()
 

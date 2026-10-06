@@ -13,19 +13,16 @@ Source: spx_trade_desk/core/config.py
 - CHAIN_REFRESH_SECONDS = 10
 - DASHBOARD_CHAIN_REFRESH_SECONDS = 300
 - CHAIN_TAB_FULL_REFRESH_SECONDS = 300
-- SNAPSHOT_REFRESH_SECONDS = 300
 - PRICE_PUSH_INTERVAL = 1.0
 - SERVER_HOST = "0.0.0.0"
 - SERVER_PORT = 8000
-- CHAIN_STREAM_MAX_LINES = 96
+- MARKET_DATA_LINES = 100 (account IB line allowance; split into fixed/order/poll/stream shares at startup)
 - CHAIN_STREAM_UPDATE_INTERVAL = 0.5
 - VIEWPORT_CENTER_MIN_INTERVAL = 0.2
 
 ## 2) Backend hardcoded tunables (not env-wired today)
 
 ### spx_trade_desk/server.py
-- Initial chain snapshot wait loop: 120 iterations
-- Initial chain snapshot poll sleep: 0.5 s
 - Reconnect endpoint valid port range: 1..65535
 
 ### spx_trade_desk/core/app_state.py
@@ -48,20 +45,30 @@ Source: spx_trade_desk/core/config.py
 - build_chain_quotes annual_vol default: 0.20
 - same-day minimum minutes-left floor: 1.0 min
 - annualization basis: 390 minutes/day, 252 days/year
-- connection/expiration retry sleep: 10 s
-- missing spot retry sleep: 30 s
-- CBOE daily gap skip sleep: 10 s
-- compute_annual_vol lookback_days: 30
-- fetch_option_chain std_dev_range during snapshot fetch: 8.0
 - chain stream startup delay: 2 s
 - chain stream no-data sleep: 5 s
 - chain stream no strikes sleep: 10 s
-- chain stream qualify batch size: 40
-- chain stream qualify batch delay: 0.05 s
+- chain stream qualification: the shared QualificationCache (market/qualification.py), QUALIFY_BATCH_SIZE contracts per batch (core/config.py, default 150), no inter-batch delay
+- chain stream quote-book writes: only rows whose stream ticked since the previous pass
 - chain stream tick-log cadence: 10.0 s
 - chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py)
 - monthly cache TTL: 600 s
 - monthly fetch std_dev_range: 8.0
+
+### spx_trade_desk/market/chain_poller.py
+- CHAIN_STD_DEV_RANGE: 8.0 daily sigmas, strikes that are multiples of 5
+- ANNUAL_VOL_REFRESH_S: 300 s (compute_annual_vol lookback_days: 30)
+- POLL_PACE_S: 1.0 s between productive cycles; POLL_IDLE_S: 10 s after a cycle that wrote nothing
+- POLL_START_DELAY_S: 1.0 s
+- connection/expiration retry sleep: 10 s; missing spot retry sleep: 30 s; CBOE daily gap sleep: 10 s
+- snapshot timeout: 6.0 s per batch; batch size: the 'poll' line share
+
+### spx_trade_desk/market/chain_publisher.py
+- publish cadence: CHAIN_REFRESH_SECONDS (10 s); heartbeat touched on every successful tick
+
+### spx_trade_desk/market/capture.py
+- HEARTBEAT_STALE_S: 180 s; IDLE_CHECK_S: 60 s; STEP_S: 5 s
+- MAX_FAILURES: 5 (a failed sweep waits a record interval, 60-120 s, before the next attempt)
 
 ### spx_trade_desk/ib/connection.py
 - connectAsync timeout: 15 s
@@ -172,10 +179,9 @@ Source: spx_trade_desk/core/config.py
 ## 4) Duplicate/overlap notes
 
 - There are existing env keys in spx_trade_desk/core/config.py that appear to be legacy/unused in current runtime path:
-  - CHAIN_REFRESH_SECONDS
   - DASHBOARD_CHAIN_REFRESH_SECONDS
   - CHAIN_TAB_FULL_REFRESH_SECONDS
-- The active periodic snapshot loop currently keys off SNAPSHOT_REFRESH_SECONDS.
+- The chain publisher keys off CHAIN_REFRESH_SECONDS; the wing poller runs continuously on the 'poll' line share.
 
 ## 5) Suggested normalization path (optional next step)
 

@@ -95,6 +95,8 @@ def _get_time_setting(name: str, default_hhmm: str) -> time:
 IB_HOST = _get_setting("IB_HOST", "127.0.0.1", str)
 IB_PORT = _get_setting("IB_PORT", 7497, int)
 IB_CLIENT_ID = _get_setting("IB_CLIENT_ID", 1, int)
+# Standalone chain capture (python -m spx_trade_desk.market.capture) — its own IB client id.
+CAPTURE_CLIENT_ID = _get_setting("CAPTURE_CLIENT_ID", 97, int)
 
 # ---------------------------------------------------------------------------
 # Refresh cadences (seconds)
@@ -102,7 +104,6 @@ IB_CLIENT_ID = _get_setting("IB_CLIENT_ID", 1, int)
 CHAIN_REFRESH_SECONDS = _get_setting("CHAIN_REFRESH_SECONDS", 10, int)
 DASHBOARD_CHAIN_REFRESH_SECONDS = _get_setting("DASHBOARD_CHAIN_REFRESH_SECONDS", 300, int)
 CHAIN_TAB_FULL_REFRESH_SECONDS = _get_setting("CHAIN_TAB_FULL_REFRESH_SECONDS", 300, int)
-SNAPSHOT_REFRESH_SECONDS = _get_setting("SNAPSHOT_REFRESH_SECONDS", 300, int)
 PRICE_PUSH_INTERVAL = _get_setting("PRICE_PUSH_INTERVAL", 1.0, float)
 
 # ---------------------------------------------------------------------------
@@ -121,8 +122,13 @@ SIM_WORKERS = _get_setting("SIM_WORKERS", 0, int)
 # ---------------------------------------------------------------------------
 # Chain streaming
 # ---------------------------------------------------------------------------
-CHAIN_STREAM_MAX_LINES = _get_setting("CHAIN_STREAM_MAX_LINES", 96, int)
+# Market-data line budget (ib/line_budget.py). MARKET_DATA_LINES is the account's IB
+# allowance shared by every API client; the split into shares is computed at startup.
+MARKET_DATA_LINES = _get_setting("MARKET_DATA_LINES", 100, int)
+CHAIN_STREAM_MAX_LINES_CAP = _get_setting("CHAIN_STREAM_MAX_LINES_CAP", 160, int)
 CHAIN_STREAM_UPDATE_INTERVAL = _get_setting("CHAIN_STREAM_UPDATE_INTERVAL", 0.5, float)
+# Quotes older than this are dimmed in the chain tab and skipped by the strategy engine.
+CHAIN_QUOTE_MAX_AGE_S = _get_setting("CHAIN_QUOTE_MAX_AGE_S", 180.0, float)
 CHAIN_STREAM_UNKNOWN_RETRY_SECS = _get_setting("CHAIN_STREAM_UNKNOWN_RETRY_SECS", 120.0, float)
 VIEWPORT_CENTER_MIN_INTERVAL = _get_setting("VIEWPORT_CENTER_MIN_INTERVAL", 0.2, float)
 

@@ -11,6 +11,8 @@ from typing import Dict, List, Optional, Set
 
 from spx_trade_desk.core import config
 from spx_trade_desk.market.gex import GEXResult, OptionData
+from spx_trade_desk.market.qualification import QualificationCache
+from spx_trade_desk.market.quote_book import QuoteBook
 from spx_trade_desk.strategy.models import RuntimeState
 
 
@@ -63,13 +65,12 @@ class AppState:
         # Option chain data for Tab 2
         self.chain_data: List[OptionData] = []
         self.chain_quotes_cache: Optional[dict] = None
-        self.chain_fetch_active: Optional[asyncio.Event] = None
         self.chain_stream_tickers: dict = {}
         self.chain_stream_contracts: dict = {}
-        self.chain_stream_unknown_keys: dict = {}  # (strike, right) -> monotonic ts of last failed qualification
+        self.quote_book = QuoteBook()              # merged stream + poll quotes (chain service)
+        self.qual_cache = QualificationCache()     # shared by the stream and the wing poller
         self.force_chain_fetch_event: Optional[asyncio.Event] = None
         self.active_tab: str = "dashboard"
-        self.manual_refresh_requested: bool = False
         self.viewport_center_strike: float = 0.0
         self.viewport_center_last_ts: float = 0.0
 
@@ -96,6 +97,7 @@ class AppState:
         self.strategy_candidates: dict = {}      # {name: [Candidate.to_dict()]}
         self.vix: float | None = None            # spot VIX (index)
         self.vix_stream = None                   # Optional[TickStream] (native)
+        self.vix1d_stream = None             # Optional[TickStream] (chain recorder regime key)
         self.auto_trade_kill_switch: bool = False
         self.strategy_log: list = []             # audit entries for auto trades
         self.strategy_open_positions: dict = {}   # {strategy_name: entered Candidate dict}

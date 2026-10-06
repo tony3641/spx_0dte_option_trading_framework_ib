@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional
 
+from spx_trade_desk.core.config import CHAIN_QUOTE_MAX_AGE_S
 from spx_trade_desk.strategy.conditions import (
     spread_width, spread_margin, combo_credit, nearest_row,
     wilder_rsi, percent_change, atm_iv,
@@ -55,6 +56,22 @@ def _side_field(row: dict, right: str, field: str):
     return row.get(f"{prefix}_{field}")
 
 
+def _fresh(row: dict, right: str, max_age: float = CHAIN_QUOTE_MAX_AGE_S,
+           extra_age: float = 0.0) -> bool:
+    """A side without an age (stream payloads, older caches) counts as fresh.
+
+    ``extra_age`` is how long ago the cache itself was built: the published ages are
+    frozen at build time, so a cache that stops being replaced keeps ageing here."""
+    age = _side_field(row, right, "age_s")
+    return age is None or age + extra_age <= max_age
+
+
+def _cache_age(state) -> float:
+    """Seconds since the chain cache was published (0 for a cache without a stamp)."""
+    built = (getattr(state, "chain_quotes_cache", None) or {}).get("built_mono")
+    return max(0.0, time.monotonic() - built) if built else 0.0
+
+
 def _num(params: dict, key: str) -> Optional[float]:
     """Float value of a param, or None when absent/"" (i.e. the bound is 'n/a')."""
     v = params.get(key)
@@ -77,6 +94,7 @@ def _hi(params: dict, key: str) -> float:
 
 def generate_candidates(strategy: Strategy, state, max_n: int = 20) -> List[Candidate]:
     rows = chain_rows(state)
+    cache_age = _cache_age(state)
     spot = float(getattr(state, "spx_price", 0) or 0.0)
     cond = {c.kind: c for c in strategy.conditions if c.enabled}
     delta_c = cond.get("short_delta")
@@ -101,6 +119,8 @@ def generate_candidates(strategy: Strategy, state, max_n: int = 20) -> List[Cand
         sd = _side_field(short_row, short_right, "delta")
         if sd is None or not (dmin <= abs(sd) <= dmax):
             continue
+        if not _fresh(short_row, short_right, extra_age=cache_age):
+            continue
         for long_row in rows:
             l_strike = long_row.get("strike")
             if not l_strike:
@@ -111,6 +131,8 @@ def generate_candidates(strategy: Strategy, state, max_n: int = 20) -> List[Cand
             if long_sign > 0 and l_strike <= s_strike:
                 continue
             if long_sign < 0 and l_strike >= s_strike:
+                continue
+            if not _fresh(long_row, short_right, extra_age=cache_age):
                 continue
             cr = combo_credit(short_row, long_row, short_right)
             if cr["mid"] is None or not (cmin <= cr["mid"] <= cmax):

@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from spx_trade_desk.ib.client import IBClient
 
 from spx_trade_desk.core import config
-from spx_trade_desk.resources import STATIC_DIR
+from spx_trade_desk.resources import CHAIN_LIBRARY_DIR, STATIC_DIR
 from spx_trade_desk.core.app_state import AppState
 from spx_trade_desk.ib.connection import (
     connect_ib, setup_spx_subscription, setup_chain_info,
@@ -42,7 +42,10 @@ from spx_trade_desk.ib.account import (
     setup_account_subscription, account_push_loop,
 )
 from spx_trade_desk.market.bars import fetch_historical_bars, price_push_loop
-from spx_trade_desk.market.chain_manager import chain_fetch_loop, chain_stream_loop
+from spx_trade_desk.market.chain_manager import chain_stream_loop
+from spx_trade_desk.market.chain_poller import chain_poll_loop
+from spx_trade_desk.market.chain_publisher import chain_publish_loop
+from spx_trade_desk.market.chain_recorder import ChainRecorder
 from spx_trade_desk.web.ws import (
     broadcast, make_broadcast_fn, make_ib_error_handler, status_push_loop,
     websocket_endpoint as ws_endpoint,
@@ -51,7 +54,7 @@ from spx_trade_desk.market.hours import is_within_rth, market_status, get_expira
 from spx_trade_desk.core.rates import get_risk_free_rate
 from spx_trade_desk.strategy.store import load_strategies
 from spx_trade_desk.strategy.engine import strategy_evaluation_loop, take_profit_loop
-from spx_trade_desk.ib.connection import setup_vix_subscription
+from spx_trade_desk.ib.connection import setup_vix_subscription, setup_vix1d_subscription
 from spx_trade_desk.core.log_buffer import LogStoreHandler, log_push_loop
 from spx_trade_desk.discord.settings import (
     DiscordSettings, DiscordSettingsManager, load_initial_settings,
@@ -76,6 +79,7 @@ logger = logging.getLogger("server")
 ib: Optional[IBClient] = None
 state = AppState()
 broadcast_fn = None  # set in lifespan
+chain_recorder = ChainRecorder(CHAIN_LIBRARY_DIR, source="dashboard")
 discord_manager: Optional[DiscordSettingsManager] = None
 
 
@@ -150,6 +154,7 @@ async def lifespan(_app):
         # volatility condition
         state.strategies = load_strategies()
         await setup_vix_subscription(ib, state)
+        await setup_vix1d_subscription(ib, state)
 
         # Start background loops
         state.background_tasks.append(asyncio.create_task(price_push_loop(ib, state, broadcast_fn)))
@@ -159,26 +164,14 @@ async def lifespan(_app):
         state.background_tasks.append(asyncio.create_task(strategy_evaluation_loop(ib, state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(take_profit_loop(ib, state, broadcast_fn)))
 
-        # Chain snapshot loop — force immediate first snapshot
+        # Chain service: wing poller (poll share), live stream (stream share) and the
+        # publisher that turns the merged quote book into GEX + chain payload. Nothing
+        # pauses the stream any more.
         if state.force_chain_fetch_event is None:
             state.force_chain_fetch_event = asyncio.Event()
-        state.manual_refresh_requested = True
-        state.force_chain_fetch_event.set()
-        state.background_tasks.append(asyncio.create_task(chain_fetch_loop(ib, state, broadcast_fn)))
-
-        # Wait for initial snapshot
-        snapshot_ready = False
-        for _ in range(120):
-            if state.latest_gex is not None and len(state.chain_data) > 0:
-                snapshot_ready = True
-                break
-            await asyncio.sleep(0.5)
-        if snapshot_ready:
-            logger.info("Initial dashboard snapshot ready; starting chain stream")
-        else:
-            logger.warning("Initial snapshot timeout; starting chain stream anyway")
-
+        state.background_tasks.append(asyncio.create_task(chain_poll_loop(ib, state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(chain_stream_loop(ib, state, broadcast_fn)))
+        state.background_tasks.append(asyncio.create_task(chain_publish_loop(ib, state, broadcast_fn, recorder=chain_recorder)))
         logger.info("All background tasks started")
 
     except Exception as e:
@@ -238,8 +231,6 @@ async def reconnect_ib_on(port: int) -> dict:
     global ib
     logger.info(f"Reconnecting to IB on port {port}")
     state.connected = False
-    if state.chain_fetch_active is not None:
-        state.chain_fetch_active.clear()
 
     # Stop the old background loops up front. If the reconnect fails below, we
     # must not leave them running against the (soon to be disconnected) old
@@ -258,7 +249,9 @@ async def reconnect_ib_on(port: int) -> dict:
         pass
     state.chain_stream_tickers.clear()
     state.chain_stream_contracts.clear()
-    state.chain_stream_unknown_keys.clear()
+    state.qual_cache.clear()
+    state.quote_book.reset("")
+    state.chain_quotes_cache = None     # the engine must not score against the old session's quotes
 
     # Disconnect the old client, then swap in a fresh IBClient — the native
     # bridge does not support re-connecting a disconnected instance.
@@ -287,16 +280,17 @@ async def reconnect_ib_on(port: int) -> dict:
         state.background_tasks.append(asyncio.create_task(status_push_loop(state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(account_push_loop(ib, state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(log_push_loop(state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(chain_fetch_loop(ib, state, broadcast_fn)))
+        state.background_tasks.append(asyncio.create_task(chain_poll_loop(ib, state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(chain_stream_loop(ib, state, broadcast_fn)))
+        state.background_tasks.append(asyncio.create_task(chain_publish_loop(ib, state, broadcast_fn, recorder=chain_recorder)))
         # Strategy engine: re-subscribe VIX, reload strategies, and restart the
         # auto-entry / take-profit loops so a manual reconnect does NOT silently
         # stop auto-trading or position management.
         await setup_vix_subscription(ib, state)
+        await setup_vix1d_subscription(ib, state)
         state.strategies = load_strategies()
         state.background_tasks.append(asyncio.create_task(strategy_evaluation_loop(ib, state, broadcast_fn)))
         state.background_tasks.append(asyncio.create_task(take_profit_loop(ib, state, broadcast_fn)))
-        state.manual_refresh_requested = True
         if state.force_chain_fetch_event is not None:
             state.force_chain_fetch_event.set()
         await broadcast(state, {"type": "status", "data": {

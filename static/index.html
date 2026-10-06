@@ -132,6 +132,9 @@
             <div>
                 <div id="chainRangeInfo">Visible range: -</div>
                 <div id="chainLastUpdateInfo" style="font-size:11px;color:#64748b;">Last update: -</div>
+                <span class="help" tabindex="0" aria-label="Chain quote freshness">?
+                    <span class="tooltip" role="tooltip">Strikes near spot stream live. The rest of the chain is polled continuously in small batches, so the live stream never pauses. A side is dimmed when its quote is older than CHAIN_QUOTE_MAX_AGE_S (180 s by default), and the strategy engine ignores dimmed legs.</span>
+                </span>
             </div>
             <button class="chain-refresh-btn" onclick="manualRefreshChain()">Manual Update</button>
         </div>

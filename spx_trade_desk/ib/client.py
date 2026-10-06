@@ -12,6 +12,7 @@ import asyncio
 import itertools
 import logging
 import threading
+import time
 from collections import namedtuple
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
@@ -20,6 +21,9 @@ from zoneinfo import ZoneInfo
 from ibapi.client import EClient
 from ibapi.common import BarData  # noqa: F401  (used in Task 4)
 from ibapi.wrapper import EWrapper
+
+from spx_trade_desk.core.config import CHAIN_STREAM_MAX_LINES_CAP, MARKET_DATA_LINES
+from spx_trade_desk.ib.line_budget import LineBudget, LineBudgetExceeded, split_lines
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +139,9 @@ class TickStream:
         self.model_greeks = Greeks()
         self._first_tick = False
         self._has_quote = False
+        # time.monotonic() of the latest tick, written on the socket thread (a float
+        # assignment): lets readers tell a silent subscription from a live one.
+        self.last_tick_mono = 0.0
 
     def received_any_tick(self):
         return self._first_tick
@@ -144,6 +151,7 @@ class TickStream:
 
     def _mark(self, has_quote):
         self._first_tick = True
+        self.last_tick_mono = time.monotonic()
         if has_quote:
             self._has_quote = True
 
@@ -185,8 +193,17 @@ class OrderHandle:
         return self.status in _TERMINAL_STATUSES
 
 
-class IBClient(EWrapper, EClient):
+class _SnapshotBatch:
+    """One fetch_snapshot call's completion state (per call, never shared)."""
+    __slots__ = ("pending", "done")
+
     def __init__(self):
+        self.pending: set = set()
+        self.done = asyncio.Event()
+
+
+class IBClient(EWrapper, EClient):
+    def __init__(self, line_shares: Optional[Dict[str, int]] = None):
         EClient.__init__(self, self)
         # ibapi 10.45 useProtoBuf() crashes on None serverVersion when unconnected
         # (`unifiedVersion <= None`). Default to 0 so one-shot request methods degrade
@@ -200,8 +217,10 @@ class IBClient(EWrapper, EClient):
         self._account_code: Optional[str] = None
         self._requests: Dict[int, _Request] = {}
         self._streams: Dict[int, "TickStream"] = {}
-        self._snapshot_pending: Optional[set] = None
-        self._snapshot_done: Optional[asyncio.Event] = None
+        self._snapshot_batches: Dict[int, _SnapshotBatch] = {}   # req_id -> its batch
+        self._stream_share: Dict[int, str] = {}                  # req_id -> budget share
+        self.line_budget = LineBudget(
+            line_shares or split_lines(MARKET_DATA_LINES, CHAIN_STREAM_MAX_LINES_CAP))
         self._orders: Dict[int, "OrderHandle"] = {}
         self._thread: Optional[threading.Thread] = None
         self._connected_evt: Optional[asyncio.Event] = None
@@ -247,10 +266,7 @@ class IBClient(EWrapper, EClient):
 
     def error(self, reqId, errorTime, errorCode, errorString, advancedOrderRejectJson=""):
         logger.warning("IB error reqId=%s code=%s: %s", reqId, errorCode, errorString)
-        if self._snapshot_pending is not None:
-            self._snapshot_pending.discard(reqId)   # don't let a dead stream hold a batch
-            if not self._snapshot_pending and self._loop is not None and self._snapshot_done is not None:
-                self._loop.call_soon_threadsafe(self._snapshot_done.set)
+        self._snapshot_settle(reqId)   # don't let a dead stream hold a batch
         # Resolve any pending one-shot request so awaiting callers don't hang:
         # IB rejects some requests (e.g. error 200 contract-not-found, 321 invalid
         # contract id) with an error but no matching ...End callback, which would
@@ -568,13 +584,27 @@ class IBClient(EWrapper, EClient):
         self._streams[req_id] = stream
         return stream
 
-    def subscribe_tick(self, contract, generic=""):
+    def subscribe_tick(self, contract, generic="", share="fixed"):
+        if not self.line_budget.try_acquire(share):
+            raise LineBudgetExceeded(
+                f"no free '{share}' market-data line "
+                f"({self.line_budget.used(share)}/{self.line_budget.capacity(share)})")
         stream = self._register_stream(contract)
-        EClient.reqMktData(self, stream.req_id, contract, generic, False, False, [])
+        self._stream_share[stream.req_id] = share
+        try:
+            EClient.reqMktData(self, stream.req_id, contract, generic, False, False, [])
+        except BaseException:
+            self._streams.pop(stream.req_id, None)
+            self._stream_share.pop(stream.req_id, None)
+            self.line_budget.release(share)
+            raise
         return stream
 
     def unsubscribe_tick(self, req_id):
         self._streams.pop(req_id, None)
+        share = self._stream_share.pop(req_id, None)
+        if share is not None:
+            self.line_budget.release(share)
         try:
             EClient.cancelMktData(self, req_id)
         except Exception:
@@ -592,31 +622,48 @@ class IBClient(EWrapper, EClient):
 
     # -- snapshot completion state ------------------------------------------
 
-    def _on_stream_tick(self, stream):
-        if self._snapshot_pending is not None:
-            self._snapshot_pending.discard(stream.req_id)
-            if not self._snapshot_pending and self._loop is not None and self._snapshot_done is not None:
-                self._loop.call_soon_threadsafe(self._snapshot_done.set)
+    def _snapshot_settle(self, req_id):
+        batch = self._snapshot_batches.pop(req_id, None)
+        if batch is None:
+            return
+        batch.pending.discard(req_id)
+        if not batch.pending and self._loop is not None:
+            self._loop.call_soon_threadsafe(batch.done.set)
 
-    async def fetch_snapshot(self, contracts, generic="101", timeout=5.0, grace=0.5):
+    def _on_stream_tick(self, stream):
+        self._snapshot_settle(stream.req_id)
+
+    async def fetch_snapshot(self, contracts, generic="101", timeout=5.0, grace=0.5,
+                             share="poll"):
+        contracts = list(contracts)
+        if not contracts:
+            return []
+        if len(contracts) > self.line_budget.capacity(share):
+            raise ValueError(f"snapshot batch of {len(contracts)} exceeds the '{share}' "
+                             f"share ({self.line_budget.capacity(share)})")
+        await self.line_budget.acquire(share, len(contracts))
+        batch = _SnapshotBatch()
         # Register the streams and mark them pending BEFORE issuing reqMktData so a
         # fast first tick can't land in the gap between subscribe and pending-set.
-        self._snapshot_done = asyncio.Event()
         streams = [self._register_stream(c) for c in contracts]
-        self._snapshot_pending = {s.req_id for s in streams}
         for s in streams:
-            EClient.reqMktData(self, s.req_id, s.contract, generic, False, False, [])
+            self._stream_share[s.req_id] = share
+            batch.pending.add(s.req_id)
+            self._snapshot_batches[s.req_id] = batch
         try:
-            await asyncio.wait_for(self._snapshot_done.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            pass
-        # Grace window: the batch completes on first-tick per stream, which is
-        # often a bid/ask arriving before OI (tick 27/28) or greeks (10-13). Let
-        # that initial burst land before cancelling so snapshots keep OI/greeks.
-        if grace > 0:
-            await asyncio.sleep(grace)
-        for s in streams:
-            self.unsubscribe_tick(s.req_id)
-        self._snapshot_pending = None
-        self._snapshot_done = None
+            for s in streams:
+                EClient.reqMktData(self, s.req_id, s.contract, generic, False, False, [])
+            try:
+                await asyncio.wait_for(batch.done.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                pass
+            # Grace window: the batch completes on first-tick per stream, which is
+            # often a bid/ask arriving before OI (tick 27/28) or greeks (10-13). Let
+            # that initial burst land before cancelling so snapshots keep OI/greeks.
+            if grace > 0:
+                await asyncio.sleep(grace)
+        finally:
+            for s in streams:
+                self._snapshot_batches.pop(s.req_id, None)
+                self.unsubscribe_tick(s.req_id)      # releases the line
         return streams
