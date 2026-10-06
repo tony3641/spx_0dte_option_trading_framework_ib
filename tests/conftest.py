@@ -147,6 +147,8 @@ class MockIBClient:
         self.pacer = RequestPacer(0, 1)                 # disabled: tests never wait on pacing
         self.unlisted_strikes: set = set()              # strikes IB cannot resolve (single requests)
         self.chain_listings: Dict[tuple, list] = {}     # (symbol, expiry, trading_class) -> forced bulk result
+        self.live_bars_initial: list = []               # initial bars of every keepUpToDate request
+        self.live_bar_subs: Dict[int, tuple] = {}       # req_id -> (on_update, on_error) until cancelled
 
     # -- Connection ----------------------------------------------------------
 
@@ -243,6 +245,32 @@ class MockIBClient:
                               "duration": duration, "bar_size": bar_size,
                               "what_to_show": what_to_show})
         return []
+
+    async def req_historical_bars_live(self, contract, on_update, on_error=None, *, duration="1 D",
+                                       bar_size="1 min", what_to_show="TRADES", use_rth=True,
+                                       timeout=30.0):
+        """keepUpToDate fake: returns ``live_bars_initial``; ``push_live_bar`` / ``push_live_error``
+        drive the callbacks until ``cancel_historical_bars``."""
+        req_id = self._next_req_id
+        self._next_req_id += 1
+        self.live_bar_subs[req_id] = (on_update, on_error)
+        self.call_log.append({"method": "req_historical_bars_live", "reqId": req_id,
+                              "symbol": getattr(contract, "symbol", ""), "bar_size": bar_size})
+        return req_id, list(self.live_bars_initial)
+
+    def cancel_historical_bars(self, req_id):
+        self.call_log.append({"method": "cancel_historical_bars", "reqId": req_id})
+        self.live_bar_subs.pop(req_id, None)
+
+    def push_live_bar(self, req_id, bar):
+        sub = self.live_bar_subs.get(req_id)
+        if sub is not None:
+            sub[0](bar)
+
+    def push_live_error(self, req_id, code, msg):
+        sub = self.live_bar_subs.get(req_id)
+        if sub is not None and sub[1] is not None:
+            sub[1](code, msg)
 
     # -- Market data ---------------------------------------------------------
 

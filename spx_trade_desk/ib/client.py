@@ -19,7 +19,6 @@ from typing import Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from ibapi.client import EClient
-from ibapi.common import BarData  # noqa: F401  (used in Task 4)
 from ibapi.contract import Contract
 from ibapi.wrapper import EWrapper
 
@@ -83,6 +82,15 @@ class _Request:
     def __init__(self, loop):
         self.future = loop.create_future()
         self.items: list = []
+
+
+class _LiveBars:
+    """Callbacks of one keepUpToDate historical-data request (loop thread)."""
+    __slots__ = ("on_update", "on_error")
+
+    def __init__(self, on_update, on_error):
+        self.on_update = on_update
+        self.on_error = on_error
 
 
 SecDefOptParams = namedtuple(
@@ -228,6 +236,7 @@ class IBClient(EWrapper, EClient):
         self._next_order_id: Optional[int] = None
         self._account_code: Optional[str] = None
         self._requests: Dict[int, _Request] = {}
+        self._live_bars: Dict[int, _LiveBars] = {}               # keepUpToDate bar requests
         self._streams: Dict[int, "TickStream"] = {}
         self._snapshot_batches: Dict[int, _SnapshotBatch] = {}   # req_id -> its batch
         self._stream_share: Dict[int, str] = {}                  # req_id -> budget share
@@ -285,6 +294,11 @@ class IBClient(EWrapper, EClient):
         if errorCode == 101 and self._loop is not None:
             # Max number of tickers reached: IB refused a market-data line. Handle it on the loop thread.
             self._loop.call_soon_threadsafe(self._handle_line_limit, reqId)
+        # A keepUpToDate bar request hears its own errors (codes >= 2000 are warnings); during its
+        # initial load the pending future below is resolved as well.
+        live = self._live_bars.get(reqId)
+        if live is not None and live.on_error is not None and errorCode < 2000 and self._loop is not None:
+            self._loop.call_soon_threadsafe(live.on_error, errorCode, errorString)
         # Resolve any pending one-shot request so awaiting callers don't hang:
         # IB rejects some requests (e.g. error 200 contract-not-found, 321 invalid
         # contract id) with an error but no matching ...End callback, which would
@@ -541,6 +555,46 @@ class IBClient(EWrapper, EClient):
         finally:
             self._requests.pop(req_id, None)
         return [_coerce_bar(b) for b in bars]
+
+    async def req_historical_bars_live(self, contract, on_update, on_error=None, *, duration="1 D",
+                                       bar_size="1 min", what_to_show="TRADES", use_rth=True,
+                                       timeout=30.0):
+        """keepUpToDate request: return (req_id, initial bars); later bars go to ``on_update``.
+
+        ``on_update(bar)`` and ``on_error(code, message)`` (codes below 2000 only) run on the loop
+        thread. The request stays open until ``cancel_historical_bars``, also when an error ended
+        the initial load early with fewer or no bars; an initial load that times out is cancelled
+        here and returns ``(req_id, [])``. Data lane: waits on the pacer.
+        """
+        await self.pacer.acquire()
+        req_id, req = self._start_request()
+        self._live_bars[req_id] = _LiveBars(on_update, on_error)
+        EClient.reqHistoricalData(self, req_id, contract, "", duration, bar_size,
+                                  what_to_show, use_rth, 2, True, [])
+        try:
+            bars = await asyncio.wait_for(req.future, timeout=timeout)
+        except asyncio.TimeoutError:
+            self.cancel_historical_bars(req_id)
+            return req_id, []
+        finally:
+            self._requests.pop(req_id, None)
+        return req_id, [_coerce_bar(b) for b in bars]
+
+    def cancel_historical_bars(self, req_id) -> None:
+        """Stop a keepUpToDate request; a second call (or an unknown id) sends nothing."""
+        if self._live_bars.pop(req_id, None) is None:
+            return
+        self._requests.pop(req_id, None)
+        try:
+            EClient.cancelHistoricalData(self, req_id)
+        except Exception:
+            pass
+        self.pacer.debit()
+
+    def historicalDataUpdate(self, reqId, bar):
+        live = self._live_bars.get(reqId)
+        if live is not None and self._loop is not None:
+            self._loop.call_soon_threadsafe(live.on_update, _coerce_bar(bar))
 
     def historicalData(self, reqId, bar):
         req = self._requests.get(reqId)

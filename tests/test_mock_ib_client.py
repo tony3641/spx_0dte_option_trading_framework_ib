@@ -339,3 +339,20 @@ async def test_mock_bulk_listing_returns_a_forced_result_for_its_key():
     mock.chain_listings[("SPX", "20261005", "SPXW")] = []
     assert await mock.req_chain_contract_details("SPX", "20261005", "SPXW") == []
     assert len(await mock.req_chain_contract_details("SPX", "20261006", "SPXW")) == 801 * 2
+
+
+@pytest.mark.asyncio
+async def test_mock_live_bars_return_the_initial_bars_and_push_until_cancelled():
+    mock = MockIBClient()
+    mock.live_bars_initial = ["bar-0"]
+    got, errors = [], []
+    req_id, bars = await mock.req_historical_bars_live(_contract(), got.append,
+                                                       lambda c, m: errors.append(c))
+    assert bars == ["bar-0"] and req_id in mock.live_bar_subs
+    assert mock.count_calls("req_historical_bars_live") == 1
+    mock.push_live_bar(req_id, "bar-1")
+    mock.push_live_error(req_id, 162, "query cancelled")
+    mock.cancel_historical_bars(req_id)
+    mock.push_live_bar(req_id, "bar-2")
+    assert got == ["bar-1"] and errors == [162] and mock.live_bar_subs == {}
+    assert mock.count_calls("cancel_historical_bars") == 1

@@ -516,6 +516,7 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/core/perf.py` | Timing recorder behind `/api/perf` and the periodic perf log line |
 | `spx_trade_desk/ib/line_probe.py` | Calibration tool for the market-data line allowance (`python -m spx_trade_desk.ib.line_probe`) |
 | `spx_trade_desk/ib/latency_probe.py` | Paper-only acceptance probe for order, cancel, qualification and boot latency (`python -m spx_trade_desk.ib.latency_probe`) |
+| `spx_trade_desk/ib/bars_probe.py` | Read-only paper probe for SPX 1-minute `keepUpToDate` bar updates (`python -m spx_trade_desk.ib.bars_probe`) |
 | `spx_trade_desk/market/qualification.py` | Key helpers for the chain loops (`Key`, `norm_key`, `unknown_retry_due`); the cache itself moved to `ib/contracts.py` |
 | `spx_trade_desk/market/quote_book.py` | The merged 0DTE quote book fed by the stream and the poller; every row carries its source and quote age |
 | `spx_trade_desk/market/chain_poller.py` | Wing poller: continuous batched snapshots of every in-range strike the stream does not hold |
@@ -601,6 +602,7 @@ Additional tunables (chain streaming, batch sizes, viewport sync, SPXW cease/gap
 - The browser push shows up on `/api/perf` too: `push.broadcast` (enqueueing one message for every browser), `push.queue_wait` (time a message waited in a browser's queue) and `push.send` (one socket send). Render timings a page sends back in a `perf_report:` WebSocket message are recorded as `client.*` spans (for example `client.chain_tick.paint`), up to 50 names and 200 samples per name per report; malformed names (anything but lowercase dotted words) and samples outside 0 to 60000 ms are dropped.
 - `python -m spx_trade_desk.ib.line_probe` finds how many market-data lines your account really has (stop the dashboard and close TWS watchlists first; it only reads market data) and prints a `MARKET_DATA_LINES` value with 10% head-room. Setting it above 100 lets the chain stream cover more strikes, up to `CHAIN_STREAM_MAX_LINES_CAP` lines (lines beyond the cap go to the poller, whose snapshot batches stay at 50 lines or fewer); keep it opt-in until you have watched the Log tab for error 101.
 - `python -m spx_trade_desk.ib.latency_probe` is the acceptance run on a **paper** account (it refuses any other): it places and cancels non-fillable orders and prints each latency target as PASS / NEAR / MISS. It refuses live ports and exits non-zero on a MISS or an unmeasured target.
+- `python -m spx_trade_desk.ib.bars_probe` checks how IB keeps SPX 1-minute bars up to date (`keepUpToDate`): it prints the initial bars and how often updates arrive over `--seconds` (default 180); it is read-only, refuses live ports (run it on paper TWS) and needs regular hours, since IB sends no updates outside them.
 
 ## Discord Bot
 
