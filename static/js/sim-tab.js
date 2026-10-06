@@ -45,7 +45,6 @@
             stop_extra: num('simStopExtra', 0.10),
             nu_override: num('simNu'),
             gamma_mult: num('simGammaMult', 1.0),
-            vol_beta: num('simVolBeta', 0.75),
             flat_iv: $('simFlatIv').checked,
             // ATM IV entered as annual percent -> decimal; blank = data-fitted GARCH level
             atm_iv: (v => v === null ? null : v / 100.0)(num('simAtmIv')),
@@ -365,7 +364,7 @@
         $('simDataInfo').textContent =
             `source: ${m.source} · ${m.bar_size} · ${m.steps_per_day} bars/day · ` +
             `garch ${m.garch.converged ? 'fitted' : 'PRESET'}${workers}\n` +
-            [...(m.garch_warnings || []), ...(m.data_warnings || [])].join('\n');
+            [...(m.config_warnings || []), ...(m.garch_warnings || []), ...(m.data_warnings || [])].join('\n');
         $('simExport').disabled = false;
     }
 
@@ -386,7 +385,7 @@
         });
         g.fields = {
             run_config: 'The exact run-form values used for this simulation (captured at run time).',
-            meta: 'Run context: strategy, data source, bar size, GARCH fit (with warnings), smile, dials, seed, worker processes used (results are identical regardless of this count).',
+            meta: 'Run context: strategy, data source, bar size, GARCH fit (with warnings), pricing tier (fallbacks, anchor, harness score), dials, seed, worker processes used (results are identical regardless of this count).',
             spx_fan: 'Simulated SPX price quantiles per bar: minutes are minute-of-day offsets from RTH open, quantiles are percentiles p0..p95, values[i] is the price curve for quantiles[i].',
             cells: 'One entry per (SL ×, k) sweep configuration; the webpage charts/tiles reflect the selected cell.',
             sl_multiplier: 'Stop-loss multiplier applied to the spread credit; "inf" means hold to expiry.',
@@ -432,25 +431,40 @@
         if (prev && state.strategies.some(s => s.name === prev)) sel.value = prev;
     }
 
+    function pricingText(r) {
+        const days = r.library
+            ? `${r.library.days} days, last ${r.library.last_capture || 'none'}` : 'no library';
+        const score = r.scores ? `harness ${r.scores.passed}/${r.scores.scored}` : 'no harness score';
+        const flags = [r.stale ? 'STALE' : '', r.provisional ? 'provisional' : '',
+                       (r.fallback_buckets || []).length ? `${r.fallback_buckets.length} fallback buckets` : '']
+            .filter(Boolean).join(', ');
+        return `pricing: ${r.tier} · ${days} · ${score}${flags ? ' · ' + flags : ''}`;
+    }
+
     async function onShow() {
         refreshStrategies();
-        if (!$('simSmileInfo').textContent) {
+        if (!$('simPricingInfo').textContent) {
             try {
-                const r = await (await fetch('/api/sim/smile')).json();
-                $('simSmileInfo').textContent = `smile: ${r.source}`;
+                const r = await (await fetch('/api/sim/pricing')).json();
+                $('simPricingInfo').textContent = pricingText(r);
             } catch (e) { /* panel stays blank */ }
         }
     }
 
-    async function captureSmile() {
+    async function rebuildPricing() {
+        const btn = $('simRebuildPricing');
+        btn.disabled = true;
+        $('simPricingInfo').textContent = 'rebuilding pricing library…';
         try {
-            const r = await fetch('/api/sim/smile/capture', { method: 'POST' });
+            const r = await fetch('/api/sim/pricing/rebuild', { method: 'POST' });
             const body = await r.json().catch(() => ({}));
-            $('simSmileInfo').textContent = r.ok
-                ? `smile: captured (${body.points} pts)` : `capture failed: ${body.detail || r.status}`;
+            $('simPricingInfo').textContent = r.ok
+                ? pricingText(body) : `rebuild failed: ${body.detail || r.status}`;
         } catch (err) {
             // A network error must show inline, not surface as an unhandled rejection.
-            $('simSmileInfo').textContent = `capture failed: ${err.message || err}`;
+            $('simPricingInfo').textContent = `rebuild failed: ${err.message || err}`;
+        } finally {
+            btn.disabled = false;
         }
     }
 
@@ -459,7 +473,7 @@
         $('simCancel').addEventListener('click', cancel);
         $('simClear').addEventListener('click', clearReport);
         $('simExport').addEventListener('click', exportReport);
-        $('simCaptureSmile').addEventListener('click', captureSmile);
+        $('simRebuildPricing').addEventListener('click', rebuildPricing);
     }
 
     document.addEventListener('DOMContentLoaded', init);

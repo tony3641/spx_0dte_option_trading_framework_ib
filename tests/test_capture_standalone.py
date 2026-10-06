@@ -254,3 +254,22 @@ async def test_capture_backs_off_when_a_sweep_records_nothing(tmp_path, app_stat
                                   sleep=clock.sleep, fetch=empty)
     assert n == 0
     assert calls["n"] <= 10             # one sweep per 60 s interval, not one per 5 s step
+
+
+def test_rebuild_pricing_library_runs_the_builder(monkeypatch):
+    from spx_trade_desk.sim import library
+    calls = []
+    monkeypatch.setattr(library, "build_and_write", lambda *a, **k: calls.append(1) or {"days": 3})
+    cap.rebuild_pricing_library()
+    assert calls == [1]
+
+
+def test_rebuild_pricing_library_never_raises(monkeypatch, caplog):
+    from spx_trade_desk.sim import library
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(library, "build_and_write", boom)
+    with caplog.at_level("WARNING"):
+        cap.rebuild_pricing_library()
+    assert "Pricing library rebuild failed" in caplog.text

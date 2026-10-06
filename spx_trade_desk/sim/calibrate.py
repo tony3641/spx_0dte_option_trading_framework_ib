@@ -4,7 +4,6 @@ Preset fallback on non-convergence keeps runs alive; warnings surface in the UI
 calibration panel. All functions are pure — no IO.
 """
 import math
-import warnings
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -100,9 +99,7 @@ def fit_gjr_t(returns: np.ndarray, nu_init: float = 6.0) -> Tuple[GarchParams, L
                        nu=max(nu, 2.2), converged=True), warnings
 
 
-# ---------- smile, U-shape, VIX mapping, full pipeline ----------
-import json
-import os
+# ---------- U-shape, VIX mapping, full pipeline ----------
 from dataclasses import dataclass, field
 
 from spx_trade_desk.resources import CONFIG_DIR
@@ -111,94 +108,9 @@ from spx_trade_desk.sim.data import BarSeries
 from spx_trade_desk.sim import library as sim_library
 from spx_trade_desk.sim.pricing_tables import PricingTables
 
-SMILE_CAPTURE_PATH = str(CONFIG_DIR / "sim_smile.json")
-SMILE_DEFAULT_PATH = str(CONFIG_DIR / "sim_smile_default.json")
 # The pre-SP2 captured smile. Nothing reads it any more; a leftover file is only warned about.
 LEGACY_SMILE_PATH = CONFIG_DIR / "sim_smile.json"
 RTH_START_MIN = 570
-
-
-@dataclass
-class SmileParams:
-    a: float               # SVI level offset
-    b: float               # SVI wing steepness (>= 0)
-    rho: float             # SVI skew (negative => put skew)
-    m0: float              # SVI vertex moneyness (log)
-    sigma: float           # SVI curvature width
-    half_spread_atm: float = 0.05
-
-    def iv(self, m):
-        m = np.asarray(m, dtype=float)
-        x = m - self.m0
-        return self.a + self.b * (self.rho * x + np.sqrt(x * x + self.sigma * self.sigma))
-
-    def to_dict(self) -> dict:
-        return {"a": self.a, "b": self.b, "rho": self.rho, "m0": self.m0,
-                "sigma": self.sigma, "half_spread_atm": self.half_spread_atm}
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "SmileParams":
-        if "rho" not in d or "m0" not in d or "sigma" not in d:
-            raise ValueError(
-                f"legacy quadratic smile snapshot keys {sorted(d)}; re-capture or delete the file")
-        return cls(a=float(d["a"]), b=float(d["b"]), rho=float(d["rho"]),
-                   m0=float(d["m0"]), sigma=float(d["sigma"]),
-                   half_spread_atm=float(d.get("half_spread_atm", 0.05)))
-
-
-DEFAULT_SMILE = SmileParams(a=0.04, b=1.8, rho=-0.75, m0=0.03, sigma=0.06,
-                            half_spread_atm=0.05)
-
-# SVI fit guards. The sim prices puts out to +/-ladder_range_pct (0.15 default),
-# while live chain put-IV data only reaches ~+/-5-6%, so the smile is extrapolated.
-# These caps keep that extrapolation sane (no >100% IV / inverted/arbitrage-invalid puts).
-SVI_EDGE = 0.15            # == default SimRunConfig.ladder_range_pct
-SVI_WIDE = 0.30            # wider floor/negativity horizon
-SVI_WING_CAP = 1.0         # max IV (decimal) allowed across [-SVI_EDGE, SVI_EDGE]
-SVI_FLOOR = 0.005          # min IV allowed anywhere
-_SVI_BOUNDS = [(0.005, 3.0), (1e-4, 6.0), (-0.999, 0.999), (-0.15, 0.10), (1e-4, 0.5)]
-_SVI_TOL = 1e-9            # float slack so a boundary solution is not rejected
-SVI_MIN_PUT_SKEW = 0.01    # a fit flatter than 1 vol point ATM->-15% carries no skew info
-
-# Capture input hygiene. A live 0DTE chain carries rows whose IV is not information:
-# far-OTM puts with no bid (ask pinned on the 0.05 tick), strikes whose mid is stuck on
-# the tick floor (a constant price across ~14 strikes -> an IV "hump" no convex SVI can
-# match), and deep-ITM puts whose mid is almost pure intrinsic. Feeding those to the fit
-# drives the seed wing slopes to the b bound and makes the capture fail its own guards.
-CAPTURE_M_LO = -SVI_EDGE   # same band as the sim ladder
-CAPTURE_M_HI = 0.02        # small ITM anchor around ATM
-CAPTURE_MIN_BID = 0.10     # 2x the 0.05 SPX tick: below this the quote is tick-pinned
-CAPTURE_MIN_ABS_DELTA = 0.005   # below this the option has no vega left
-CAPTURE_MAX_ABS_DELTA = 0.75    # above this the mid is ~intrinsic and IV is noise
-
-
-def smile_capture_points(strikes, spot) -> Tuple[np.ndarray, np.ndarray]:
-    """(m, iv) capture points from live chain rows, dropping vega-less quotes.
-
-    Rows that omit a field keep passing (wire payloads and tests may not carry it); a
-    row that supplies one must clear it — the same "absent key passes" convention the
-    capture endpoint already used for open interest.
-    """
-    pts_m, pts_iv = [], []
-    for row in strikes:
-        iv = row.get("put_iv")
-        k = row.get("strike")
-        if not iv or not spot or not k:
-            continue
-        oi = row.get("put_oi")
-        if oi is not None and oi <= 0:
-            continue
-        bid = row.get("put_bid")
-        if bid is not None and bid < CAPTURE_MIN_BID:
-            continue
-        delta = row.get("put_delta")
-        if delta is not None and not (CAPTURE_MIN_ABS_DELTA <= abs(delta) <= CAPTURE_MAX_ABS_DELTA):
-            continue
-        m = math.log(float(k) / spot)
-        if CAPTURE_M_LO <= m <= CAPTURE_M_HI:
-            pts_m.append(m)
-            pts_iv.append(float(iv) / 100.0)
-    return np.array(pts_m), np.array(pts_iv)
 
 
 @dataclass
@@ -237,178 +149,6 @@ def fit_ushape(returns: np.ndarray, minute_of_day: np.ndarray, steps_per_day: in
     smooth = np.convolve(fill, kernel, mode="same")
     out = smooth / max(float(np.mean(smooth)), 1e-12)
     return np.clip(out, 0.25, 4.0)
-
-
-def _svi_objective(theta, m, iv) -> float:
-    a, b, rho, m0, sigma = theta
-    # L-BFGS-B enforces the bounds; the hard penalties guard against a seed that
-    # straddles a bound and any non-finite evaluation.
-    if b <= 0 or abs(rho) >= 1 or sigma <= 0:
-        return 1e6
-    x = m - m0
-    v = a + b * (rho * x + np.sqrt(x * x + sigma * sigma))
-    if not np.isfinite(v).all():
-        return 1e6
-    return float(np.sum((v - iv) ** 2))
-
-
-def _svi_seeds(m, iv):
-    """Deterministic multi-initializations for the bounded SVI fit (cheap: few points)."""
-    coef, *_ = np.linalg.lstsq(np.vstack([np.ones_like(m), m, m * m]).T, iv, rcond=None)
-    c0, c1, c2 = (float(coef[k]) if np.isfinite(coef[k]) else 0.0 for k in range(3))
-    if c2 > 1e-6:
-        m0_q = float(np.clip(-c1 / (2 * c2), -0.10, 0.05))
-    else:
-        put_rich = float(np.mean(iv[m <= 0])) if (m <= 0).any() else 0.0
-        call_rich = float(np.mean(iv[m > 0])) if (m > 0).any() else 0.0
-        m0_q = -0.02 if put_rich > call_rich else 0.02
-    sigma_q = 0.05
-    iv_atm = float(iv[np.argmin(np.abs(m))])
-
-    def _wing_slope(mask):
-        if mask.sum() < 2:
-            return None
-        mm, vv = m[mask], iv[mask]
-        denom = float(((mm - mm.mean()) ** 2).sum())
-        if denom < 1e-12:
-            return None
-        return float(((mm - mm.mean()) * (vv - vv.mean())).sum() / denom)
-
-    sL, sR = _wing_slope(m <= 0), _wing_slope(m >= 0)
-    if sL is not None and sR is not None:
-        span = max(sR - sL, 1e-9)
-        b0 = float(np.clip(max((sR - sL) / 2.0, 1e-4), 1e-4, 6.0))
-        rho0 = float(np.clip((sR + sL) / span, -0.99, 0.99))
-    else:
-        b0, rho0 = 1.0, -0.5
-    a0 = float(np.clip(iv_atm - b0 * (rho0 * (-m0_q) + np.sqrt(m0_q * m0_q + sigma_q * sigma_q)),
-                       0.01, 3.0))
-    base = (a0, b0, rho0, m0_q, sigma_q)
-    return [base] + [(base[0], base[1], base[2], base[3], s) for s in (0.04, 0.15)] \
-                  + [(base[0], base[1], r, base[3], base[4]) for r in (-0.85, -0.4)] \
-                  + [(base[0], base[1], base[2], m0, base[4]) for m0 in (-0.02, 0.03)]
-
-
-def _svi_guards(smile: SmileParams, m, iv) -> List[str]:
-    """Reject fits that are degenerate, non-monotone, or explode at the ladder edge.
-
-    Returns [] on pass, else a human-readable warning (the capture endpoint surfaces
-    the first one). Keeps the extrapolation used by the sim (out to +/-
-    ladder_range_pct) sane — the reason the old quadratic blew up to >100% IV.
-    """
-    core = np.linspace(-SVI_EDGE, SVI_EDGE, 301)
-    g = smile.iv(core)
-    if (not np.isfinite(g).all() or g.max() > SVI_WING_CAP + _SVI_TOL
-            or g.min() < SVI_FLOOR - _SVI_TOL):
-        return ["smile: fit IV exceeds bounds at +-%g — using fallback snapshot" % SVI_EDGE]
-    wide = smile.iv(np.linspace(-SVI_WIDE, SVI_WIDE, 401))
-    if not np.isfinite(wide).all() or wide.min() < SVI_FLOOR - _SVI_TOL:
-        return ["smile: fit IV negative/non-finite outside +-%g — using fallback snapshot" % SVI_EDGE]
-    pw = smile.iv(np.linspace(-SVI_EDGE, 0.0, 201))
-    if np.any(np.diff(pw) > 1e-6):
-        return ["smile: fit non-monotone put wing — using fallback snapshot"]
-    if smile.iv(-SVI_EDGE) - smile.iv(0.0) < SVI_MIN_PUT_SKEW:
-        return ["smile: fit flat (no put skew) — using fallback snapshot"]
-    pred = smile.iv(m)
-    rmse = float(np.sqrt(np.mean((pred - iv) ** 2)))
-    # Compare against a robust spread, not an RMSE baseline: one wild quote inflates
-    # any mean/median-squared baseline enough to admit a fit that ignores the rest of
-    # the chain (the stray-outlier case this guard exists to catch).
-    if rmse > _robust_scale(iv) + 0.005:
-        return ["smile: SVI fit does not track the chain — using fallback snapshot"]
-    return []
-
-
-def _robust_scale(iv) -> float:
-    """1.4826 * MAD — a spread estimate a single wild quote cannot inflate."""
-    med = float(np.median(iv))
-    return 1.4826 * float(np.median(np.abs(np.asarray(iv) - med)))
-
-
-def _svi_constraints() -> list:
-    """The guard envelope as scalar inequalities, so the solver honours it directly.
-
-    IV(m) = a + b*(rho*x + sqrt(x^2+sigma^2)) is convex in m, so its maximum over the
-    core band sits at an endpoint and its minimum over the wide band at the vertex or an
-    endpoint; the put-wing monotonicity is one slope sign at m = 0. That turns the
-    guards' 800-point scan into four cheap inequalities.
-    """
-    def iv_at(theta, xs):
-        a, b, rho, m0, sigma = theta
-        x = np.asarray(xs) - m0
-        return a + b * (rho * x + np.sqrt(x * x + sigma * sigma))
-
-    def vertex(theta):
-        return theta[3] + theta[4] * (-theta[2]) / np.sqrt(1.0 - theta[2] ** 2)
-
-    return [
-        {"type": "ineq", "fun": lambda t: SVI_WING_CAP - iv_at(t, -SVI_EDGE)},
-        {"type": "ineq", "fun": lambda t: SVI_WING_CAP - iv_at(t, SVI_EDGE)},
-        # convex in m, so the band minimum is at the vertex clamped into the band
-        {"type": "ineq", "fun": lambda t: iv_at(t, np.clip(vertex(t), -SVI_WIDE, SVI_WIDE))
-         - SVI_FLOOR},
-        # IV'(0) <= 0 keeps the put wing monotone (IV is convex, so the largest slope
-        # over [-EDGE, 0] is at m = 0)
-        {"type": "ineq", "fun": lambda t: -(t[2] - t[3] / np.sqrt(t[3] ** 2 + t[4] ** 2))},
-    ]
-
-
-def fit_smile(m_points, iv_points, fallback: SmileParams) -> Tuple[SmileParams, List[str]]:
-    """Bounded SVI fit of IV(m); falls back when too few points or degenerate fit."""
-    m = np.asarray(m_points, dtype=float)
-    iv = np.asarray(iv_points, dtype=float)
-    ok = np.isfinite(m) & np.isfinite(iv) & (iv > 0.005) & (iv < 5.0)
-    m, iv = m[ok], iv[ok]
-    if len(m) < 5:
-        return fallback, ["smile: too few IV points — using fallback snapshot"]
-    in_win = np.abs(m) <= SVI_EDGE + 1e-9
-    m, iv = m[in_win], iv[in_win]
-    if len(m) < 5:
-        return fallback, ["smile: too few IV points inside +-%g — using fallback snapshot" % SVI_EDGE]
-    best_ok, best_val = None, float("inf")
-    constraints = _svi_constraints()
-    for x0 in _svi_seeds(m, iv):
-        # SLSQP, not L-BFGS-B: on a steep 0DTE skew the unconstrained optimum sits on
-        # the b bound and its wings blow past SVI_WING_CAP, so every seed used to be
-        # thrown away even though a bounded fit exists. Constrain the search instead.
-        with warnings.catch_warnings():
-            # scipy's SLSQP line search clips iterates to the box and carries on; the
-            # returned solution is re-checked against the bounds, so the noise is benign.
-            warnings.filterwarnings(
-                "ignore", message="Values in x were outside bounds during a minimize step")
-            res = minimize(_svi_objective, x0, args=(m, iv), method="SLSQP",
-                           bounds=_SVI_BOUNDS, constraints=constraints,
-                           options=dict(maxiter=400, ftol=1e-12))
-        if not res.success or not np.isfinite(res.fun):
-            continue
-        cand = SmileParams(*(float(v) for v in res.x),
-                           half_spread_atm=fallback.half_spread_atm)
-        if not _svi_guards(cand, m, iv):                 # keep the best ACCEPTABLE fit
-            if float(res.fun) < best_val:
-                best_ok, best_val = cand, float(res.fun)
-    if best_ok is None:
-        return fallback, ["smile: SVI fit failed guards — using fallback snapshot"]
-    return best_ok, []
-
-
-fit_svi = fit_smile   # discoverable alias
-
-
-def load_smile_snapshot() -> Tuple[SmileParams, str]:
-    """captured (config/sim_smile.json) -> default file -> built-in constants."""
-    for path, src in ((SMILE_CAPTURE_PATH, "captured"), (SMILE_DEFAULT_PATH, "default")):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return SmileParams.from_dict(json.load(f)), src
-        except Exception:
-            continue
-    return DEFAULT_SMILE, "builtin"
-
-
-def save_smile_snapshot(smile: SmileParams) -> None:
-    os.makedirs(os.path.dirname(SMILE_CAPTURE_PATH), exist_ok=True)
-    with open(SMILE_CAPTURE_PATH, "w", encoding="utf-8") as f:
-        json.dump(smile.to_dict(), f, indent=2)
 
 
 def _drop_overnight_returns(closes: np.ndarray, minute_of_day: np.ndarray):

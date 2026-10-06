@@ -348,6 +348,15 @@ def resolve_pricing(tier: str = "auto", now: Optional[datetime] = None):
     return tables, info, vix1d_prev, warnings
 
 
+def pricing_summary(tier: str = "auto") -> dict:
+    """What a sim run would price with now (Sim tab): the resolved tier, fallbacks,
+    staleness, stored harness scores, the VIX1D prior close and the library summary."""
+    _, info, vix1d_prev, warnings = resolve_pricing(tier)
+    model, _ = read_model_file(MODEL_PATH)
+    return dict(info, vix1d_prev=vix1d_prev,
+                library=model_summary(model) if model else None, warnings=warnings)
+
+
 def _parse_overrides(items) -> Dict[str, float]:
     out = {}
     for it in items or []:

@@ -1,7 +1,7 @@
 """Pricing validation harness (SP2 spec section 4.2).
 
     python -m spx_trade_desk.sim.validate DAY_FILE... [--tier auto|cold|thin|library]
-        [--pricer z|legacy] [--root DIR] [--out PATH] [--store] [--vix1d-prev YYYYMMDD=VALUE]
+        [--root DIR] [--out PATH] [--store] [--vix1d-prev YYYYMMDD=VALUE]
 
 For every record of a library day, the sim's pricing function prices the chain at the
 record's real spot and time, with the ATM level the tier gives a sim run (the opening
@@ -69,25 +69,6 @@ class ZPricer:
         mid = bsm_put(spot, k, T, self.rate, sigma)
         delta = bsm_put_delta(spot, k, T, self.rate, sigma)
         return mid, delta, half_spread_at(t.hs[int(tau_bucket(tau))], mid)
-
-
-class LegacyPricer:
-    """The pre-SP2 sim at its neutral state (baseline only): the SVI smile snapshot used
-    directly as a sim-clock vol, and the old spread rule."""
-    name = "legacy"
-
-    def __init__(self):
-        from spx_trade_desk.sim.calibrate import load_smile_snapshot
-        self.smile, self.source = load_smile_snapshot()
-
-    def price(self, spot: float, strikes, tau: float, atm: Optional[float] = None):
-        k = np.asarray(strikes, dtype=float)
-        m = np.log(k / spot)
-        iv = np.clip(self.smile.iv(m), 0.01, 5.0)
-        T = float(t_sim(tau))
-        mid = bsm_put(spot, k, T, RISK_FREE_RATE, iv)
-        delta = bsm_put_delta(spot, k, T, RISK_FREE_RATE, iv)
-        return mid, delta, np.clip(self.smile.half_spread_atm * (1.0 + 8.0 * np.abs(m)), 0.01, 2.0)
 
 
 def _real_puts(rec: dict) -> Dict[float, tuple]:
@@ -169,7 +150,7 @@ def _date(day: str) -> date:
     return datetime.strptime(day, "%Y%m%d").date()
 
 
-def run_harness(day_paths, tier: str = "auto", pricer_kind: str = "z", root=None, cold=None,
+def run_harness(day_paths, tier: str = "auto", root=None, cold=None,
                 overrides: Optional[Dict[str, float]] = None,
                 daily: Optional[Dict[str, float]] = None) -> dict:
     root = Path(root) if root else CHAIN_LIBRARY_DIR
@@ -182,29 +163,23 @@ def run_harness(day_paths, tier: str = "auto", pricer_kind: str = "z", root=None
     forecast, real, notes, resolved, scored = [], [], [], {}, []
     for path in map(Path, day_paths):
         day = path.name[:8]
-        if pricer_kind == "legacy":
-            pricer = LegacyPricer()
-            resolved[day] = "legacy"
-        else:
-            others = [d for d in all_days if d.day != day]
-            model = build_model_dict(others, prev) if others else None
-            tables, info, _ = select_tables(model, cold, tier, prev.get(day), _date(day))
-            resolved[day] = info["tier"]
-            if prev.get(day) is None or not math.isfinite(tables.atm_vix1d_ratio):
-                notes.append(f"{day}: no VIX1D prior close; skipped (pass --vix1d-prev)")
-                continue
-            pricer = ZPricer(tables, prev[day] / 100.0 * tables.atm_vix1d_ratio)
+        others = [d for d in all_days if d.day != day]
+        model = build_model_dict(others, prev) if others else None
+        tables, info, _ = select_tables(model, cold, tier, prev.get(day), _date(day))
+        resolved[day] = info["tier"]
+        if prev.get(day) is None or not math.isfinite(tables.atm_vix1d_ratio):
+            notes.append(f"{day}: no VIX1D prior close; skipped (pass --vix1d-prev)")
+            continue
+        pricer = ZPricer(tables, prev[day] / 100.0 * tables.atm_vix1d_ratio)
         records = list(iter_records(path))
         forecast += score_records(records, pricer, day)
         real += score_records(records, pricer, day, use_real_atm=True)
         scored.append(day)
-    if pricer_kind == "legacy":
-        notes.append("legacy pricer has no ATM input: both columns use its fixed smile")
-    elif tier == "cold":
+    if tier == "cold":
         notes.append("cold tier is not leave-one-out: a day the Cold default was built from "
                      "scores in-sample")
     fc = summarize(forecast)
-    return {"v": REPORT_VERSION, "pricer": pricer_kind, "tier": tier, "resolved_tiers": resolved,
+    return {"v": REPORT_VERSION, "pricer": "z", "tier": tier, "resolved_tiers": resolved,
             "cold_provisional": bool(cold.provisional), "days": scored, "forecast": fc,
             "real_atm": summarize(real),
             "passed_buckets": sum(1 for r in fc if r["pass"]),
@@ -263,14 +238,13 @@ def main(argv=None) -> int:
                                  description="Score the sim's option pricing against recorded chains.")
     ap.add_argument("days", nargs="+", help="library day files (YYYYMMDD.jsonl.gz)")
     ap.add_argument("--tier", default="auto", choices=TIERS)
-    ap.add_argument("--pricer", default="z", choices=("z", "legacy"))
     ap.add_argument("--root", default=None, help="library directory (default: data/chain_library)")
     ap.add_argument("--out", default=None, help="report path (default: reports/output/)")
     ap.add_argument("--store", action="store_true",
                     help="store the score in the library's pricing_model.json")
     ap.add_argument("--vix1d-prev", action="append", default=[], metavar="YYYYMMDD=VALUE")
     args = ap.parse_args(argv)
-    report = run_harness(args.days, args.tier, args.pricer, args.root,
+    report = run_harness(args.days, args.tier, args.root,
                          overrides=_parse_overrides(args.vix1d_prev))
     print(format_report(report))
     print(f"report: {write_report(report, args.out)}")

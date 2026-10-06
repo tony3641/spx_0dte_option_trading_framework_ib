@@ -470,14 +470,9 @@
               <span class="tooltip" role="tooltip">Multiplier on the leverage term &mdash; the extra volatility triggered by NEGATIVE returns. 1.0 = as fitted; 2.0 makes drawdowns hang heavier; 0 = symmetric up/down moves.</span>
             </span>
             <input id="simGammaMult" type="number" value="1.0" step="0.1"></label>
-          <label>λ (vol-beta)
-            <span class="help" tabindex="0" aria-label="Vol-beta explanation">?
-              <span class="tooltip" role="tooltip">Intended to link option IV to the path's live volatility. Currently the shift is tiny (per-bar vol units against a 0.20 IV), so options are effectively priced at the static smile &mdash; use &ldquo;Capture smile&rdquo; to set the IV level itself.</span>
-            </span>
-            <input id="simVolBeta" type="number" value="0.75" step="0.05"></label>
           <label class="sim-check"><input id="simFlatIv" type="checkbox"> Flat IV (sanity mode)
             <span class="help" tabindex="0" aria-label="Flat IV explanation">?
-              <span class="tooltip" role="tooltip">Sanity mode: every option priced at ATM IV, ignoring the smile's skew. Large differences vs the smile run mean the skew/level was driving the result.</span>
+              <span class="tooltip" role="tooltip">Sanity mode: every strike is priced at the ATM level, ignoring the smile shape from the pricing tables. A large difference vs a normal run means the skew was driving the result.</span>
             </span></label>
           <label>ATM IV % (blank = data-fitted)
             <span class="help" tabindex="0" aria-label="ATM IV explanation">?
@@ -564,8 +559,11 @@
 
           <div class="sim-actions">
             <button id="simExport" disabled>Export report</button>
-            <button id="simCaptureSmile">Capture live smile</button>
-            <span id="simSmileInfo" class="sim-datainfo"></span>
+            <button id="simRebuildPricing">Rebuild pricing library</button>
+            <span class="help" tabindex="0" aria-label="Pricing library explanation">?
+              <span class="tooltip" role="tooltip">Options are priced from tables fitted to recorded SPX 0DTE chains (data/chain_library). Tier: library = 5+ captured days in your VIX1D regime and 10+ in total; thin = pooled from the days you have; cold = the built-in default. A time bucket with too few samples falls back one tier. Score = the last validation-harness result (time buckets within the credit and strike bar). Stale = no capture for 10+ trading days. The capture rebuilds the library after each session; this button rebuilds it now.</span>
+            </span>
+            <span id="simPricingInfo" class="sim-datainfo"></span>
           </div>
         </div>
       </div>

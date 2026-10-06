@@ -232,3 +232,9 @@ def test_run_vix1d_prev():
     assert run_vix1d_prev(daily, datetime(2030, 3, 4, 10, 0, tzinfo=ET)) == 11.0
     assert run_vix1d_prev(daily, datetime(2030, 3, 4, 16, 30, tzinfo=ET)) == 12.0
     assert run_vix1d_prev({}, datetime(2030, 3, 4, 10, 0, tzinfo=ET)) is None
+
+
+def test_pricing_summary_without_a_library_is_cold():
+    s = library.pricing_summary()
+    assert s["tier"] == "cold" and s["library"] is None and s["vix1d_prev"] is None
+    assert any(w.startswith("pricing: tier cold") for w in s["warnings"])

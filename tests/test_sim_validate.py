@@ -54,6 +54,7 @@ def test_missing_vix1d_skips_the_day_with_a_note(tmp_path):
 def test_report_json_schema_and_output(tmp_path):
     rep = _run(tmp_path, truth_tables())
     assert set(rep) == REPORT_KEYS
+    assert rep["pricer"] == "z"
     assert [r["bucket"] for r in rep["forecast"]] == list(TAU_LABELS)
     assert set(rep["forecast"][0]) == {"bucket", "bar", "n", "credit_med_abs_err",
                                        "strike_within_5", "hs_med_abs_err", "pass"}
@@ -69,9 +70,3 @@ def test_store_scores_records_the_resolved_tier(tmp_path):
     validate.store_scores(rep, path)
     s = json.loads(path.read_text())["scores"]["cold"]
     assert s["passed"] == rep["passed_buckets"] and s["scored"] == rep["scored_buckets"]
-
-
-def test_legacy_pricer_scores_the_same_records(tmp_path):
-    rep = _run(tmp_path, truth_tables(), pricer_kind="legacy")
-    assert rep["pricer"] == "legacy" and rep["resolved_tiers"] == {DAY: "legacy"}
-    assert sum(r["n"] for r in rep["forecast"]) > 0
