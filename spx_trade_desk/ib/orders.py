@@ -59,7 +59,7 @@ def _record_place_to_ack(ib, kind: str, t0: float) -> None:
     """Span from sending the order to IB's ack; the first order of a connection is tagged too."""
     ms = (time.perf_counter() - t0) * 1000.0
     perf.record(f"order.place_to_ack.{kind}", ms)
-    if not getattr(ib, "_perf_first_order_seen", False):
+    if not getattr(ib, "_perf_first_order_seen", False):      # IBClient declares it; test doubles may not
         ib._perf_first_order_seen = True
         perf.record("order.first_after_connect", ms)
 
@@ -792,13 +792,14 @@ async def handle_cancel_order(ib, state, order_id: int,
                 "message": f"Order {order_id} not found in open trades"
             }}
 
+        was_terminal = handle.is_terminal()      # a cancel of a finished order waits for nothing: no sample
         t0 = time.perf_counter()
         ib.cancel_order(order_id)
         try:
             await asyncio.wait_for(handle.terminal_event.wait(), timeout=CANCEL_CONFIRM_TIMEOUT_S)
         except asyncio.TimeoutError:
             pass
-        if handle.is_terminal():
+        if handle.is_terminal() and not was_terminal:
             perf.record("order.cancel_to_terminal", (time.perf_counter() - t0) * 1000.0)
         if refresh_fn:
             refresh_fn(ib, state)

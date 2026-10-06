@@ -28,7 +28,8 @@ from spx_trade_desk.strategy.models import Strategy
 
 logger = logging.getLogger(__name__)
 
-_IGNORED_IB_ERROR_CODES = {2104, 2106, 2107, 2108, 2119, 2158}
+# 101 (max market-data lines): IBClient logs it and shrinks the line budget; no toast per refused line.
+_IGNORED_IB_ERROR_CODES = {101, 2104, 2106, 2107, 2108, 2119, 2158}
 
 
 def _unquote_name(name: str) -> str:

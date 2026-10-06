@@ -1965,10 +1965,10 @@ async def test_combo_stop_child_follows_its_parent_without_a_sleep(
 
 
 @pytest.mark.asyncio
-async def test_cancel_waits_for_ibs_confirmation_and_records_the_span(mock_ib, app_state, sample_legs_single):
+async def test_cancel_waits_for_ibs_confirmation_and_records_the_span(mock_ib_pending, app_state, sample_legs_single):
     perf.reset()
-    result = await handle_place_order(mock_ib, app_state, sample_legs_single)
-    out = await handle_cancel_order(mock_ib, app_state, result["data"]["orderId"])
+    result = await handle_place_order(mock_ib_pending, app_state, sample_legs_single)     # a live order
+    out = await handle_cancel_order(mock_ib_pending, app_state, result["data"]["orderId"])
     assert out["data"]["status"] == "Cancelled"
     assert perf.snapshot()["metrics"]["order.cancel_to_terminal"]["n"] == 1
 
@@ -1992,6 +1992,56 @@ async def test_a_cancel_that_races_a_fill_reports_the_real_status(mock_ib, app_s
     out = await handle_cancel_order(mock_ib, app_state, order_id)
     assert out["data"]["status"] == "Filled"
     assert "already" in out["data"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_waits_for_a_late_confirmation_and_returns_only_then(mock_ib_pending, app_state, sample_legs_single):
+    """IB confirms the cancel after the handler has started: the handler must still be waiting until then."""
+    result = await handle_place_order(mock_ib_pending, app_state, sample_legs_single)    # stays Submitted
+    order_id = result["data"]["orderId"]
+    handle = mock_ib_pending.orders[order_id]
+    assert handle.status == "Submitted"
+    confirm_calls = []
+
+    def silent_cancel(oid):                       # the request goes out; IB answers later, from its own thread
+        confirm_calls.append(oid)
+
+    mock_ib_pending.cancel_order = silent_cancel
+    loop = asyncio.get_running_loop()
+    task = asyncio.create_task(handle_cancel_order(mock_ib_pending, app_state, order_id))
+    await asyncio.sleep(0.02)
+    assert confirm_calls == [order_id] and not task.done()                   # waiting: nothing confirmed yet
+    loop.call_later(0.02, mock_ib_pending._apply_status, handle, "Cancelled")
+    out = await asyncio.wait_for(task, timeout=1.0)
+    assert out["data"]["status"] == "Cancelled" and handle.is_terminal()
+
+
+@pytest.mark.asyncio
+async def test_cancel_returns_pending_at_the_timeout_and_a_later_confirmation_does_not_change_that(
+        mock_ib_pending, app_state, sample_legs_single, monkeypatch):
+    monkeypatch.setattr(orders_mod, "CANCEL_CONFIRM_TIMEOUT_S", 0.05)
+    result = await handle_place_order(mock_ib_pending, app_state, sample_legs_single)
+    order_id = result["data"]["orderId"]
+    handle = mock_ib_pending.orders[order_id]
+    monkeypatch.setattr(mock_ib_pending, "cancel_order", lambda oid: None)
+    late = asyncio.get_running_loop().call_later(30.0, mock_ib_pending._apply_status, handle, "Cancelled")
+    try:
+        out = await handle_cancel_order(mock_ib_pending, app_state, order_id)
+    finally:
+        late.cancel()
+    assert out["data"]["status"] == "PendingCancel" and not handle.is_terminal()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_already_terminal_order_records_no_cancel_to_terminal_sample(
+        mock_ib, app_state, sample_legs_single, monkeypatch):
+    result = await handle_place_order(mock_ib, app_state, sample_legs_single)          # filled at once
+    order_id = result["data"]["orderId"]
+    monkeypatch.setattr(mock_ib, "cancel_order", lambda oid: None)
+    perf.reset()
+    out = await handle_cancel_order(mock_ib, app_state, order_id)
+    assert out["data"]["status"] == "Filled"
+    assert "order.cancel_to_terminal" not in perf.snapshot()["metrics"]       # nothing was waited for
 
 
 def _dynamic_payload():

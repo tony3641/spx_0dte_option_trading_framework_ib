@@ -63,6 +63,15 @@ def test_summary_line_lists_metrics_and_counters_and_is_empty_without_data():
     assert "n=1" in line and "ib.error_101=1" in line
 
 
+def test_summary_line_keeps_one_decimal_so_sub_millisecond_spans_do_not_read_zero():
+    p = PerfRecorder()
+    p.record("registry.hit", 0.4)
+    p.record("order.place_to_ack.single", 120.0)
+    line = p.summary_line()
+    assert "registry.hit n=1 p50=0.4ms p95=0.4ms" in line
+    assert "order.place_to_ack.single n=1 p50=120.0ms p95=120.0ms" in line
+
+
 # -- wiring: connect span, periodic log line, /api/perf ---------------------------------------
 
 @pytest.mark.asyncio

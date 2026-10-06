@@ -3,6 +3,10 @@
 Spans are recorded in milliseconds by the IB client, the contract registry, the order path and
 the chain loops through the module-level ``perf``. ``GET /api/perf`` and a periodic log line
 expose it. It imports nothing from the rest of the package.
+
+Loop thread only: ``PerfRecorder`` is not locked, so call ``record``/``count``/``timer`` from the
+asyncio loop thread (never from the ibapi socket thread). The log line shows n / p50 / p95 per
+span; ``max`` and ``last`` are in ``snapshot()`` (``/api/perf``) only.
 """
 import math
 import time
@@ -12,6 +16,8 @@ from typing import Callable, Deque, Dict, Iterator, List
 
 
 class PerfRecorder:
+    """Ring buffers per span plus counters. Loop thread only (see the module docstring)."""
+
     def __init__(self, size: int = 512, clock: Callable[[], float] = time.perf_counter):
         self._size = size
         self._clock = clock
@@ -61,7 +67,7 @@ class PerfRecorder:
 
     def summary_line(self) -> str:
         snap = self.snapshot()
-        parts = [f"{name} n={m['n']} p50={m['p50']:.0f}ms p95={m['p95']:.0f}ms"
+        parts = [f"{name} n={m['n']} p50={m['p50']:.1f}ms p95={m['p95']:.1f}ms"
                  for name, m in sorted(snap["metrics"].items())]
         parts += [f"{name}={n}" for name, n in sorted(snap["counters"].items())]
         return "perf: " + " | ".join(parts) if parts else ""

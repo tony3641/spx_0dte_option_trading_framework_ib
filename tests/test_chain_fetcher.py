@@ -2,9 +2,11 @@
 Ported chain_fetcher tests — native bridge surface (ib_client.py) + MockIBClient.
 
 Covers ``_stream_to_option_data`` conversion (OI fallback, greek priority, IV
-normalization), ``fetch_option_chain`` strike filtering / qualification-cache /
-unknown-blacklist retry, ``get_chain_params`` / ``get_monthly_chain_params``,
-and the BSM-gamma fallback in ``compute_gex``.
+normalization), ``fetch_option_chain`` strike filtering and its use of the shared
+``ContractRegistry`` (one bulk listing per expiry, no requalification on a spot move,
+unknown strikes retried only after the cooldown or a manual relist),
+``get_chain_params`` / ``get_monthly_chain_params``, and the BSM-gamma fallback in
+``compute_gex``.
 """
 
 import pytest
@@ -141,7 +143,7 @@ def test_stream_to_option_data_returns_none_for_stream_without_strike():
 
 
 # ---------------------------------------------------------------------------
-# fetch_option_chain — strike filtering, cache, unknown-blacklist
+# fetch_option_chain — strike filtering, shared contract registry, unknown-strike retry
 # ---------------------------------------------------------------------------
 
 def _underlying():

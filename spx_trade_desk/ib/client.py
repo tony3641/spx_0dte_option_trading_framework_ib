@@ -245,6 +245,7 @@ class IBClient(EWrapper, EClient):
         self.on_account_dirty: Optional[Callable] = None
         self._exec_by_id: Dict[str, ExecutionRecord] = {}
         self.error_handler: Optional[Callable] = None
+        self._perf_first_order_seen = False     # set by the order path after the first order's ack
 
     # -- connection ---------------------------------------------------------
 

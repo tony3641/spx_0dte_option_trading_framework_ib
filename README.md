@@ -594,7 +594,7 @@ Additional tunables (chain streaming, batch sizes, viewport sync, SPXW cease/gap
 
 ### Measuring the IB layer
 
-- `GET /api/perf` (localhost only) and a log line every `PERF_LOG_SECONDS` show p50 / p95 / max for connect, contract lookups, bulk listing, order place-to-ack, cancel-to-terminal, pacer wait, chain stream cycle and startup, plus the error-101 and registry hit/miss counters.
+- `GET /api/perf` (localhost only) shows n / p50 / p95 / max / last for connect, contract lookups, bulk listing, order place-to-ack, cancel-to-terminal, pacer wait, chain stream cycle and startup, plus the error-101 and registry counters (hit, miss, rejected non-SMART rows). The log line every `PERF_LOG_SECONDS` carries n / p50 / p95 and the counters; `max` is on `/api/perf` only.
 - `python -m spx_trade_desk.ib.line_probe` finds how many market-data lines your account really has (stop the dashboard and close TWS watchlists first; it only reads market data) and prints a `MARKET_DATA_LINES` value with 10% head-room. Setting it above 100 lets the chain stream cover more strikes, up to `CHAIN_STREAM_MAX_LINES_CAP` lines (lines beyond the cap go to the poller, whose snapshot batches stay at 50 lines or fewer); keep it opt-in until you have watched the Log tab for error 101.
 - `python -m spx_trade_desk.ib.latency_probe` is the acceptance run on a **paper** account (it refuses any other): it places and cancels non-fillable orders and prints each latency target as PASS / NEAR / MISS. It refuses live ports and exits non-zero on a MISS or an unmeasured target.
 

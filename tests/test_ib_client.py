@@ -600,6 +600,11 @@ def test_default_client_uses_configured_split():
         _cfg.MARKET_DATA_LINES, _cfg.CHAIN_STREAM_MAX_LINES_CAP)
 
 
+def test_a_new_client_has_not_seen_its_first_order():
+    """The order path tags the first order of a connection; the flag is declared here, not set from outside."""
+    assert IBClient()._perf_first_order_seen is False
+
+
 def test_subscribe_tick_refuses_past_share_capacity_and_recovers(monkeypatch):
     _quiet(monkeypatch)
     client = IBClient(line_shares={"fixed": 1, "order": 1, "poll": 1, "stream": 2})

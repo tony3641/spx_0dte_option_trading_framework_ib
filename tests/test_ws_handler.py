@@ -26,6 +26,21 @@ async def test_ib_error_handler_ignores_informational_codes():
 
 
 @pytest.mark.asyncio
+async def test_ib_error_handler_does_not_toast_a_refused_market_data_line():
+    """Error 101 is the line-budget safety net's business (it logs and shrinks the budget): no browser toast."""
+    messages = []
+
+    async def broadcast_fn(message):
+        messages.append(message)
+
+    handler = make_ib_error_handler(SimpleNamespace(active_trades={}), broadcast_fn)
+    handler(42, 101, "Max number of tickers has been reached", None)
+    await asyncio.sleep(0)
+
+    assert messages == []
+
+
+@pytest.mark.asyncio
 async def test_ib_error_handler_broadcasts_actionable_error_with_trade_contract():
     messages = []
 
