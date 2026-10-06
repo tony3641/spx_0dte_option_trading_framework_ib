@@ -50,14 +50,15 @@ async def _run(host: str, port: int, client_id: int, seconds: float) -> int:
             print(f"error {code}: {msg}")
 
         req_id, bars = await ib.req_historical_bars_live(spx, on_update, on_error)
-        if bars:
-            print(f"initial bars: {len(bars)}  first={bars[0].date.isoformat()}  last={bars[-1].date.isoformat()}")
-        else:
-            print("initial bars: 0")
+        if not bars:
+            ib.cancel_historical_bars(req_id)
+            print("initial bars: 0 (no data or an error above): not waiting for updates")
+            return 1
+        print(f"initial bars: {len(bars)}  first={bars[0].date.isoformat()}  last={bars[-1].date.isoformat()}")
         await asyncio.sleep(seconds)
         ib.cancel_historical_bars(req_id)
         print(summarize(times, minutes))
-        return 0 if bars else 1
+        return 0
     finally:
         ib.disconnect()
 

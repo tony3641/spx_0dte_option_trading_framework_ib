@@ -84,6 +84,11 @@ class _Request:
         self.items: list = []
 
 
+def _is_warning(code) -> bool:
+    """IB's warning / notification range (2100-2299, e.g. 2104 farm OK, 2176 fractional size)."""
+    return 2100 <= code <= 2299
+
+
 class _LiveBars:
     """Callbacks of one keepUpToDate historical-data request (loop thread)."""
     __slots__ = ("on_update", "on_error")
@@ -294,17 +299,19 @@ class IBClient(EWrapper, EClient):
         if errorCode == 101 and self._loop is not None:
             # Max number of tickers reached: IB refused a market-data line. Handle it on the loop thread.
             self._loop.call_soon_threadsafe(self._handle_line_limit, reqId)
-        # A keepUpToDate bar request hears its own errors (codes >= 2000 are warnings); during its
-        # initial load the pending future below is resolved as well.
+        # A keepUpToDate bar request hears every error on its id except warnings (10182, 10225 and
+        # 10197 end its updates, so they must reach the caller). A warning is only logged: it
+        # neither reaches on_error nor cuts the initial load short below.
         live = self._live_bars.get(reqId)
-        if live is not None and live.on_error is not None and errorCode < 2000 and self._loop is not None:
+        live_warning = live is not None and _is_warning(errorCode)
+        if live is not None and not live_warning and live.on_error is not None and self._loop is not None:
             self._loop.call_soon_threadsafe(live.on_error, errorCode, errorString)
         # Resolve any pending one-shot request so awaiting callers don't hang:
         # IB rejects some requests (e.g. error 200 contract-not-found, 321 invalid
         # contract id) with an error but no matching ...End callback, which would
         # otherwise leave the request future unresolved forever.
         req = self._requests.get(reqId)
-        if req is not None and not req.future.done():
+        if req is not None and not req.future.done() and not live_warning:
             self._requests.pop(reqId, None)
             self._loop.call_soon_threadsafe(req.future.set_result, list(req.items))
         handler = self.error_handler
@@ -561,10 +568,13 @@ class IBClient(EWrapper, EClient):
                                        timeout=30.0):
         """keepUpToDate request: return (req_id, initial bars); later bars go to ``on_update``.
 
-        ``on_update(bar)`` and ``on_error(code, message)`` (codes below 2000 only) run on the loop
-        thread. The request stays open until ``cancel_historical_bars``, also when an error ended
-        the initial load early with fewer or no bars; an initial load that times out is cancelled
-        here and returns ``(req_id, [])``. Data lane: waits on the pacer.
+        ``on_update(bar)`` and ``on_error(code, message)`` run on the loop thread. ``on_error`` gets
+        every error on the request except IB warnings (2100-2299), including those that end the
+        updates (10182, 10225, 10197); the caller re-requests on them. An error during the initial
+        load reaches ``on_error`` before this coroutine returns, and the return is then short or
+        empty; the request is still registered, so the caller must call ``cancel_historical_bars``.
+        An initial load that times out or is cancelled is cancelled here (timeout: ``(req_id, [])``).
+        Data lane: waits on the pacer.
         """
         await self.pacer.acquire()
         req_id, req = self._start_request()
@@ -576,6 +586,9 @@ class IBClient(EWrapper, EClient):
         except asyncio.TimeoutError:
             self.cancel_historical_bars(req_id)
             return req_id, []
+        except asyncio.CancelledError:
+            self.cancel_historical_bars(req_id)
+            raise
         finally:
             self._requests.pop(req_id, None)
         return req_id, [_coerce_bar(b) for b in bars]
@@ -594,7 +607,12 @@ class IBClient(EWrapper, EClient):
     def historicalDataUpdate(self, reqId, bar):
         live = self._live_bars.get(reqId)
         if live is not None and self._loop is not None:
-            self._loop.call_soon_threadsafe(live.on_update, _coerce_bar(bar))
+            self._loop.call_soon_threadsafe(self._deliver_live_bar, reqId, live, _coerce_bar(bar))
+
+    def _deliver_live_bar(self, req_id, live, bar):
+        """Loop thread: drop an update queued before its request was cancelled (or re-requested)."""
+        if self._live_bars.get(req_id) is live:
+            live.on_update(bar)
 
     def historicalData(self, reqId, bar):
         req = self._requests.get(reqId)
