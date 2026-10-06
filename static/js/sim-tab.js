@@ -434,7 +434,10 @@
     function pricingText(r) {
         const days = r.library
             ? `${r.library.days} days, last ${r.library.last_capture || 'none'}` : 'no library';
-        const score = r.scores ? `harness ${r.scores.passed}/${r.scores.scored}` : 'no harness score';
+        const sc = r.scores;
+        const score = sc ? `harness ${sc.passed}/${sc.scored}` +
+            `${sc.days ? ` on ${sc.days} day${sc.days === 1 ? '' : 's'}` : ''}${sc.in_sample ? ' (in-sample)' : ''}`
+            : 'no harness score';
         const flags = [r.stale ? 'STALE' : '', r.provisional ? 'provisional' : '',
                        (r.fallback_buckets || []).length ? `${r.fallback_buckets.length} fallback buckets` : '']
             .filter(Boolean).join(', ');
@@ -445,8 +448,10 @@
         refreshStrategies();
         if (!$('simPricingInfo').textContent) {
             try {
-                const r = await (await fetch('/api/sim/pricing')).json();
-                $('simPricingInfo').textContent = pricingText(r);
+                const resp = await fetch('/api/sim/pricing');
+                const r = await resp.json().catch(() => ({}));
+                $('simPricingInfo').textContent = resp.ok
+                    ? pricingText(r) : `pricing unavailable: ${r.detail || resp.status}`;
             } catch (e) { /* panel stays blank */ }
         }
     }
