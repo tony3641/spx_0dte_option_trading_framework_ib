@@ -4,6 +4,22 @@ All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboa
 
 ---
 
+## Session: October 6, 2026 - IB layer latency
+
+Sub-project 1 of 3 (IB layer, then push pipeline + render, then visual redesign).
+
+- **Why**: measured on a paper TWS, an order placed during a chain requalification waited about 6 s because the 300-request qualification burst queued ahead of it in the single TWS request queue; an idle order spent 45% (single leg) to 66% (put spread) of its time re-qualifying contracts the chain had already listed; qualifying a whole 0DTE chain took about 6.5 s with a double-digit share of failed lookups.
+- **Request pacer** (`ib/pacing.py`): data-lane requests go through a token bucket (`IB_REQUEST_RATE` 30/s, `IB_REQUEST_BURST` 5); orders and cancels bypass it.
+- **Contract registry** (`ib/contracts.py`): one bulk `reqContractDetails` per (expiry, trading class) replaces the two qualification caches and the per-batch requalification; misses are authoritative only off the order path; the order path resolves from cached ids with the exact-match guard kept, and `ORDER_USE_CONTRACT_CACHE=false` turns it off. `QUAL_CACHE_REQUALIFY_MOVE` is gone.
+- **Order hygiene**: the 50 ms stop-child sleeps are gone; a cancel waits for IB's confirmation (`PendingCancel` after 2 s, the real status if a fill won the race); dynamic fill takes a fresh two-sided mid from the quote book (`ORDER_MID_MAX_AGE_S`).
+- **Line budget safety net**: error 101 releases the refused line and shrinks the budget to what IB granted (stream first, then poller; never fixed or order lines); `ib/line_probe.py` measures the account's allowance. Full-stream mode (raise `MARKET_DATA_LINES`) stays opt-in until the push pipeline work lands.
+- **One boot** (`ib/session.py`): the server start and the manual reconnect share a dependency-parallel boot; the SGOV lookup no longer blocks the event loop.
+- **Measuring**: `core/perf.py`, `GET /api/perf` (localhost), a log line every `PERF_LOG_SECONDS`, and the paper-only `ib/latency_probe.py`.
+- **Acceptance (paper TWS)**: Acceptance run not done yet
+- **Not done / next**: ibapi 10.45.1 is desupported by IB on 2026-12-15 (minimum 10.50.1): upgrade and re-test separately; sub-projects 2 and 3 get their own specs.
+
+---
+
 ## Session: October 5, 2026 - Sim option pricing z-model (SP2)
 
 The simulator's SVI smile is replaced by a z-model fitted from the recorded 0DTE chain

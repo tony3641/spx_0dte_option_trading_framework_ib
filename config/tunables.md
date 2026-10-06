@@ -17,6 +17,11 @@ Source: spx_trade_desk/core/config.py
 - SERVER_HOST = "0.0.0.0"
 - SERVER_PORT = 8000
 - MARKET_DATA_LINES = 100 (account IB line allowance; split into fixed/order/poll/stream shares at startup)
+- IB_REQUEST_RATE = 30 (messages per second the data lane may send to TWS; orders and cancels are never paced; 0 disables the pacer)
+- IB_REQUEST_BURST = 5 (messages that may go out back to back before the rate applies)
+- ORDER_USE_CONTRACT_CACHE = true (order path reuses cached contract ids; false forces a live lookup for every order)
+- ORDER_MID_MAX_AGE_S = 2.0 (dynamic fill takes its mid from the quote book only if the quote is at most this old)
+- PERF_LOG_SECONDS = 60 (one perf summary log line per interval; 0 disables; the same data is at /api/perf on localhost)
 - CHAIN_STREAM_UPDATE_INTERVAL = 0.5
 - VIEWPORT_CENTER_MIN_INTERVAL = 0.2
 
@@ -32,8 +37,7 @@ Source: spx_trade_desk/core/config.py
 
 ### spx_trade_desk/market/chain_fetcher.py
 - BATCH_SIZE: 200
-- QUALIFY_BATCH_SIZE: 150
-- QUAL_CACHE_REQUALIFY_MOVE: 20.0 points
+- QUALIFY_BATCH_SIZE: 150 (only sizes the single-qualification fallback batches)
 - DEFAULT_ANNUAL_VOL: 0.20
 - TRADING_DAYS_PER_YEAR: 252
 - fetch_option_chain std_dev_range default: 5.0
@@ -48,7 +52,7 @@ Source: spx_trade_desk/core/config.py
 - chain stream startup delay: 2 s
 - chain stream no-data sleep: 5 s
 - chain stream no strikes sleep: 10 s
-- chain stream qualification: the shared QualificationCache (market/qualification.py), QUALIFY_BATCH_SIZE contracts per batch (core/config.py, default 150), no inter-batch delay
+- chain contract lookup: one shared ContractRegistry (ib/contracts.py): one bulk reqContractDetails per (expiry, trading class), single-qualification fallback in QUALIFY_BATCH_SIZE batches through the request pacer (ib/pacing.py); strikes missing from the listing are retried after CHAIN_STREAM_UNKNOWN_RETRY_SECS with one re-list
 - chain stream quote-book writes: only rows whose stream ticked since the previous pass
 - chain stream tick-log cadence: 10.0 s
 - chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py)

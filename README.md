@@ -476,7 +476,7 @@ Two-row subplot showing:
 - Live streaming 0DTE option chain with greeks
 - Markers on Put Wall, Call Wall, and Gamma Flip location
 
-The strikes nearest spot (or nearest your scroll position in the chain tab) stream live on the chain stream's line share. Every other strike in the +-8 sigma range is polled continuously in small batches on the poller's share, so the live stream never pauses. Both feed one quote book. Every `CHAIN_REFRESH_SECONDS` it is published as GEX, the chain table and the strategy engine's chain cache. Each side carries its quote age; sides older than `CHAIN_QUOTE_MAX_AGE_S` are dimmed and are never used as a candidate leg. A streamed row ages from its stream's last tick, so a silent data farm ages out the same way.
+The strikes nearest spot (or nearest your scroll position in the chain tab) stream live on the chain stream's line share. Every other strike in the +-8 sigma range is polled continuously in small batches on the poller's share, so the live stream never pauses. Both feed one quote book. Every `CHAIN_REFRESH_SECONDS` it is published as GEX, the chain table and the strategy engine's chain cache. Each side carries its quote age; sides older than `CHAIN_QUOTE_MAX_AGE_S` are dimmed and are never used as a candidate leg. A streamed row ages from its stream's last tick, so a silent data farm ages out the same way. Contract ids come from one bulk listing per expiry, requests to TWS are paced, and if IB refuses a market-data line (error 101) the app shrinks its line budget to the lines IB actually granted and logs the value to set in MARKET_DATA_LINES.
 
 ## Status Bar
 
@@ -509,7 +509,13 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/market/chain_fetcher.py` | Batched SPXW option chain fetcher (streaming mode, ±8σ strike filter) |
 | `spx_trade_desk/ib/line_budget.py` | Market-data line accounting: splits the account allowance into fixed/order/poll/stream shares and refuses over-cap requests locally |
 | `spx_trade_desk/market/chain_manager.py` | Chain stream loop (live near-money subscriptions into the quote book), `chain_quotes` payload builder, monthly GEX fetch and 0DTE coordination |
-| `spx_trade_desk/market/qualification.py` | Shared option-contract qualification cache (per expiry and trading class, retry cooldown for strikes IB could not resolve) |
+| `spx_trade_desk/ib/contracts.py` | Contract registry: one bulk listing per (expiry, trading class), exact-match single qualification fallback, order-path lookups from cached contract ids |
+| `spx_trade_desk/ib/pacing.py` | Token-bucket pacer for the data lane (orders and cancels bypass it) |
+| `spx_trade_desk/ib/session.py` | One boot for the server start and the manual IB reconnect, plus the list of background loops |
+| `spx_trade_desk/core/perf.py` | Timing recorder behind `/api/perf` and the periodic perf log line |
+| `spx_trade_desk/ib/line_probe.py` | Calibration tool for the market-data line allowance (`python -m spx_trade_desk.ib.line_probe`) |
+| `spx_trade_desk/ib/latency_probe.py` | Paper-only acceptance probe for order, cancel, qualification and boot latency (`python -m spx_trade_desk.ib.latency_probe`) |
+| `spx_trade_desk/market/qualification.py` | Key helpers for the chain loops (`Key`, `norm_key`, `unknown_retry_due`); the cache itself moved to `ib/contracts.py` |
 | `spx_trade_desk/market/quote_book.py` | The merged 0DTE quote book fed by the stream and the poller; every row carries its source and quote age |
 | `spx_trade_desk/market/chain_poller.py` | Wing poller: continuous batched snapshots of every in-range strike the stream does not hold |
 | `spx_trade_desk/market/chain_publisher.py` | Publish loop: quote book to GEX, chain table and the strategy engine's chain cache every `CHAIN_REFRESH_SECONDS`; refreshes the dashboard heartbeat |
@@ -564,6 +570,11 @@ Settings are resolved in order: **environment variable → repo-root `.env` → 
 | `CHAIN_TAB_FULL_REFRESH_SECONDS` | `300` | Chain tab full refresh cadence |
 | `MARKET_DATA_LINES` | `100` | Your IB account's market-data line allowance (all API clients). Split at startup into underlyings 4, order entry 4, wing poller 12, chain stream (rest, up to `CHAIN_STREAM_MAX_LINES_CAP`), 2 spare |
 | `CHAIN_STREAM_MAX_LINES_CAP` | `160` | Most lines the live chain stream may use; lines beyond it go to the poller |
+| `IB_REQUEST_RATE` | `30` | Messages per second the data lane (qualification, snapshots, stream subscribes) may send to TWS. TWS handles one request queue per connection, so an unpaced burst delays an order behind it; orders and cancels are never paced. `0` disables |
+| `IB_REQUEST_BURST` | `5` | Messages that may go out back to back before the rate applies |
+| `ORDER_USE_CONTRACT_CACHE` | `true` | Order placement reuses the contract ids the chain service already listed (every cache miss still does a live lookup). `false` looks every order up live |
+| `ORDER_MID_MAX_AGE_S` | `2.0` | A dynamic-fill order takes its starting mid from the chain's quote book when the quote is at most this old and two-sided; otherwise it subscribes to the contract |
+| `PERF_LOG_SECONDS` | `60` | Seconds between perf summary log lines (`0` disables). Same data: `GET /api/perf` on localhost |
 | `CHAIN_QUOTE_MAX_AGE_S` | `180` | Quotes older than this are dimmed in the chain tab and ignored by the strategy engine |
 | `CAPTURE_CLIENT_ID` | `97` | IB client id of the standalone chain capture |
 | `CHAIN_LIBRARY_DIR` | `data/chain_library` | Where daily 0DTE chain files are written (env var only; gitignored) |
@@ -580,6 +591,12 @@ Settings are resolved in order: **environment variable → repo-root `.env` → 
 Additional tunables (chain streaming, batch sizes, viewport sync, SPXW cease/gap windows) live in `config.py` and `config/params.yaml`.
 
 `numpy` and `scipy` are new runtime requirements; `requirements-dev.txt` adds `pytest-playwright` for the UI E2E tier.
+
+### Measuring the IB layer
+
+- `GET /api/perf` (localhost only) and a log line every `PERF_LOG_SECONDS` show p50 / p95 / max for connect, contract lookups, bulk listing, order place-to-ack, cancel-to-terminal, pacer wait, chain stream cycle and startup, plus the error-101 and registry hit/miss counters.
+- `python -m spx_trade_desk.ib.line_probe` finds how many market-data lines your account really has (stop the dashboard and close TWS watchlists first; it only reads market data) and prints a `MARKET_DATA_LINES` value with 10% head-room. Setting it above 100 lets the chain stream cover more strikes; keep it opt-in until you have watched the Log tab for error 101.
+- `python -m spx_trade_desk.ib.latency_probe` is the acceptance run on a **paper** account (it refuses any other): it places and cancels non-fillable orders and prints each latency target as PASS / NEAR / MISS. It refuses live ports and exits non-zero on a MISS or an unmeasured target.
 
 ## Discord Bot
 
