@@ -13,6 +13,7 @@ FIXED_LINES = 4     # SPX, ES, VIX, VIX1D underlyings
 ORDER_LINES = 4     # order-entry mid lookups; never lent to anyone else
 POLL_LINES = 12     # wing poller + monthly GEX fetch
 SPARE_LINES = 2     # head-room for IB-side accounting lag
+MIN_MARKET_DATA_LINES = FIXED_LINES + ORDER_LINES + POLL_LINES + SPARE_LINES + 2   # one call/put pair streams
 
 
 class LineBudgetExceeded(RuntimeError):
@@ -22,8 +23,8 @@ class LineBudgetExceeded(RuntimeError):
 def split_lines(total: int, stream_cap: int = 160) -> Dict[str, int]:
     """Split ``total`` lines into shares. Lines past ``stream_cap`` go to the poller."""
     base = FIXED_LINES + ORDER_LINES + POLL_LINES + SPARE_LINES
-    if total < base + 2:
-        raise ValueError(f"MARKET_DATA_LINES={total} is below the minimum of {base + 2}")
+    if total < MIN_MARKET_DATA_LINES:
+        raise ValueError(f"MARKET_DATA_LINES={total} is below the minimum of {MIN_MARKET_DATA_LINES}")
     stream = min(total - base, max(0, int(stream_cap)))
     stream -= stream % 2                      # calls and puts are subscribed in pairs
     poll = POLL_LINES + (total - base - stream)

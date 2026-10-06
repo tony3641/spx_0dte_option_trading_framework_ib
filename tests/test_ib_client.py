@@ -839,6 +839,39 @@ async def test_error_101_on_a_stream_releases_its_line_marks_it_failed_and_caps_
 
 
 @pytest.mark.asyncio
+async def test_the_101_advice_names_the_lines_to_configure_when_they_are_above_the_minimum(monkeypatch, caplog):
+    _quiet(monkeypatch)
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    for i in range(4):
+        client.subscribe_tick(_opt(i), "", share="fixed")
+    for i in range(70):
+        client.subscribe_tick(_opt(100 + i), "101", share="stream")
+    refused = client.subscribe_tick(_opt(999), "101", share="stream")
+    with caplog.at_level(logging.WARNING):
+        client.error(refused.req_id, 0, 101, "Max number of tickers has been reached", "")
+        await asyncio.sleep(0)
+    assert "set MARKET_DATA_LINES <= 74" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_101_advice_never_recommends_less_than_the_minimum_the_app_can_run_on(monkeypatch, caplog):
+    from spx_trade_desk.ib import line_budget
+    _quiet(monkeypatch)
+    client = IBClient(line_shares={"fixed": 10, "order": 0, "poll": 0, "stream": 10})
+    client._loop = asyncio.get_running_loop()
+    for i in range(3):
+        client.subscribe_tick(_opt(i), "", share="fixed")
+    refused = client.subscribe_tick(_opt(999), "101", share="stream")          # IB granted only 3 lines
+    with caplog.at_level(logging.WARNING):
+        client.error(refused.req_id, 0, 101, "Max number of tickers has been reached", "")
+        await asyncio.sleep(0)
+    assert "MARKET_DATA_LINES <= 3" not in caplog.text
+    assert "below the minimum of 24" in caplog.text and "MARKET_DATA_LINES = 24" in caplog.text
+    assert line_budget.MIN_MARKET_DATA_LINES == 24
+
+
+@pytest.mark.asyncio
 async def test_a_burst_of_101_refusals_converges_on_the_lines_actually_granted(monkeypatch):
     _quiet(monkeypatch)
     client = IBClient()

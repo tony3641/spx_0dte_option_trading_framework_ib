@@ -30,7 +30,9 @@ from spx_trade_desk.core.config import (
     MARKET_DATA_LINES,
 )
 from spx_trade_desk.core.perf import perf
-from spx_trade_desk.ib.line_budget import LineBudget, LineBudgetExceeded, split_lines
+from spx_trade_desk.ib.line_budget import (
+    MIN_MARKET_DATA_LINES, LineBudget, LineBudgetExceeded, split_lines,
+)
 from spx_trade_desk.ib.pacing import RequestPacer
 
 logger = logging.getLogger(__name__)
@@ -314,8 +316,15 @@ class IBClient(EWrapper, EClient):
         in_use = sum(self.line_budget.used(s) for s in self.line_budget.shares())
         before = self.line_budget.shares()
         if self.line_budget.observe_limit(in_use) != before:
-            logger.warning("IB refused a line with %d in use; capping the budget at %d; "
-                           "set MARKET_DATA_LINES <= %d", in_use, in_use, in_use)
+            if in_use >= MIN_MARKET_DATA_LINES:
+                logger.warning("IB refused a line with %d in use; capping the budget at %d; "
+                               "set MARKET_DATA_LINES <= %d", in_use, in_use, in_use)
+            else:
+                logger.warning("IB refused a line with %d in use; capping the budget at %d, which is "
+                               "below the minimum of %d that MARKET_DATA_LINES accepts: set "
+                               "MARKET_DATA_LINES = %d and free the lines held by other API clients "
+                               "and TWS watchlists", in_use, in_use, MIN_MARKET_DATA_LINES,
+                               MIN_MARKET_DATA_LINES)
 
     # -- order placement / lifecycle ----------------------------------------
 
