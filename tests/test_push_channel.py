@@ -409,6 +409,20 @@ async def test_a_send_timeout_still_warns(caplog):
     await asyncio.sleep(0.2)
     assert ch.closed
     assert [r for r in caplog.records if r.levelno == logging.WARNING and "Dropping a WebSocket client" in r.getMessage()]
+    await ch.aclose(drain=False)
+
+
+@pytest.mark.asyncio
+async def test_send_text_stamps_ts_and_drops_invalid_payloads(caplog):
+    ws = SlowWS()
+    ch = push.ClientChannel(ws)
+    await ch.send_text(json.dumps({"type": "order_status", "data": {"status": "Filled"}}))
+    await ch.send_text('{"type":"order_status","data":{"x":NaN}}')
+    await ch.send_text("not json")
+    await ch.aclose(drain=True)
+    assert len(ws.sent) == 1
+    assert ws.sent[0]["data"] == {"status": "Filled"} and isinstance(ws.sent[0]["ts"], float)
+    assert "order_status" in caplog.text and "not json" in caplog.text
 
 
 def test_record_client_perf_survives_deeply_nested_json():
@@ -425,3 +439,10 @@ def test_record_client_perf_accepts_only_sane_samples():
     m = perf.snapshot()["metrics"]
     assert m["client.chain_tick.paint"]["n"] == 2 and m["client.longtask"]["n"] == 1
     assert push.record_client_perf("not json") == 0
+
+
+def test_record_client_perf_skips_a_huge_int_sample():
+    perf.reset()
+    raw = '{"spans": {"chain_tick.paint": [' + "9" * 400 + ', 2.0, true, "3"]}}'
+    assert push.record_client_perf(raw) == 1
+    assert perf.snapshot()["metrics"]["client.chain_tick.paint"]["n"] == 1

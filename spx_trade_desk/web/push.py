@@ -114,8 +114,21 @@ class ClientChannel:
             self.enqueue(stamped, text)
 
     async def send_text(self, text: str) -> None:
-        """Sender interface for code that holds a socket-like object (``ib/orders.py``)."""
-        self._push_critical(text)
+        """Sender interface for code that holds a socket-like object (``ib/orders.py``).
+
+        The text is re-encoded so it gets a ``ts`` and a NaN payload is dropped, as in ``send_message``.
+        """
+        try:
+            message = json.loads(text)
+        except (TypeError, ValueError, RecursionError) as e:
+            logger.error(f"Dropping a non-JSON message for one client: {text[:80]!r}: {e}")
+            return
+        if not isinstance(message, dict):
+            logger.error(f"Dropping a non-object message for one client: {text[:80]!r}")
+            return
+        out = encode(stamp(message))
+        if out is not None:
+            self._push_critical(out)
 
     def enqueue(self, message: dict, text: Optional[str]) -> None:
         if self.closed or self._closing or text is None:
@@ -279,7 +292,7 @@ class ClientChannel:
                     break
         self.closed = True
         if self._close_task is not None and not self._close_task.done():
-            try:
+            try:   # on timeout wait_for cancels the hung close: intended, the client is gone either way
                 await asyncio.wait_for(self._close_task, timeout=self._send_timeout)
             except asyncio.TimeoutError:
                 logger.debug("push: closing the socket timed out")
@@ -299,7 +312,13 @@ def record_client_perf(raw: str) -> int:
         if not isinstance(name, str) or not _CLIENT_SPAN_RE.match(name) or not isinstance(samples, list):
             continue
         for v in samples[-_CLIENT_MAX_SAMPLES:]:
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and 0 <= v < 60000:
-                perf.record(f"client.{name}", float(v))
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                continue
+            try:
+                ms = float(v)            # JSON ints are unbounded: a huge one overflows here
+            except (OverflowError, ValueError, TypeError):
+                continue
+            if math.isfinite(ms) and 0 <= ms < 60000:
+                perf.record(f"client.{name}", ms)
                 kept += 1
     return kept

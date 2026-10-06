@@ -224,3 +224,17 @@ async def test_endpoint_registers_and_removes_its_channel():
     await ws_mod.websocket_endpoint(sock, None, state, _noop)
     assert state.ws_clients == {}
     assert [m["type"] for m in sock.sent][:2] == ["init", "strategy_list"]
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_perf_report_keeps_the_connection(monkeypatch):
+    state = create_app_state()
+
+    def boom(_raw):
+        raise RuntimeError("bad report")
+
+    monkeypatch.setattr(ws_mod, "record_client_perf", boom)
+    huge = '{"spans": {"chain_tick.paint": [' + "9" * 400 + "]}}"
+    sock = ScriptWS([f"perf_report:{huge}", "set_tab:log"])
+    await ws_mod.websocket_endpoint(sock, None, state, _noop)
+    assert any(m["type"] == "log_history" for m in sock.sent)

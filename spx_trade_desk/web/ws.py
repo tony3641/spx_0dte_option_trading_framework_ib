@@ -263,7 +263,7 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
             state.strategies = load_strategies()
         out.send_message(_strategy_list_payload(state))
 
-        while True:
+        while not out.closed:      # the channel closed itself (slow or gone client): stop reading
             try:
                 msg = await asyncio.wait_for(ws.receive_text(), timeout=30)
 
@@ -382,7 +382,10 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                     task.add_done_callback(_CANCEL_TASKS.discard)
 
                 elif msg.startswith("perf_report:"):
-                    record_client_perf(msg.split(":", 1)[1])
+                    try:
+                        record_client_perf(msg.split(":", 1)[1])
+                    except Exception as e:      # a bad report never ends the connection
+                        logger.debug(f"perf_report ignored: {e!r}")
 
                 elif msg.startswith("viewport_center:"):
                     try:
@@ -397,12 +400,7 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                     state.viewport_center_last_ts = now_mono
                     state.viewport_center_strike = round(strike, 1)
 
-                if out.closed:
-                    break
-
             except asyncio.TimeoutError:
-                if out.closed:
-                    break
                 out.send_message({"type": "ping"})
 
     except WebSocketDisconnect:
