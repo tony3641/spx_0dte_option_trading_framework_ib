@@ -36,7 +36,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from spx_trade_desk.resources import EXPERIMENTS_DIR
-from spx_trade_desk.sim.config import SimRunConfig
+from spx_trade_desk.sim.config import REMOVED_KEYS, SimRunConfig, removed_key_warnings
 from spx_trade_desk.sim.data import load_bars
 from spx_trade_desk.sim.engine import _reject_unsupported_strategy
 from spx_trade_desk.sim.jobs import execute_pipeline
@@ -62,9 +62,9 @@ _DATASET_KEYS = ("source", "csv_path", "bar_size", "spot0", "lookback_days")
 _RUN_KEYS = ("seed", "n_paths", "chunk_size", "equity", "ruin_threshold_pct",
              "bootstrap_seqs", "bootstrap_len")
 # Market/pricing stress dials + fill model, frozen for the whole experiment.
-_STRESS_KEYS = ("nu_override", "gamma_mult", "vol_beta", "flat_iv", "atm_iv",
-                "vol_cap_mult", "skew_beta", "skew_t_gamma", "atm_budget",
-                "budget_beta", "stop_extra", "tick_size", "ladder_range_pct")
+_STRESS_KEYS = ("nu_override", "gamma_mult", "flat_iv", "atm_iv", "vol_cap_mult",
+                "skew_beta", "budget_beta", "pricing_tier", "stop_extra", "tick_size",
+                "ladder_range_pct")
 
 CSV_COLUMNS = ("variant", "seed", "mean", "median", "std", "win_rate", "cvar5",
                "cvar1", "worst_day", "n", "entered", "never_entered_pct",
@@ -195,6 +195,10 @@ def validate_spec(spec: dict) -> dict:
     dataset = dict(spec.get("dataset") or {})
     run = dict(spec.get("run") or {})
     stress = dict(spec.get("stress") or {})
+    for w in removed_key_warnings(stress):
+        print(f"warning: spec stress {w}", file=sys.stderr)
+    stress = {k: v for k, v in stress.items() if k not in REMOVED_KEYS}
+    spec["stress"] = stress
     _check_keys(dataset, _DATASET_KEYS, "dataset")
     _check_keys(run, _RUN_KEYS, "run")
     _check_keys(stress, _STRESS_KEYS, "stress")

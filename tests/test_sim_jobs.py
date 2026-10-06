@@ -131,3 +131,28 @@ def test_registry_pruned_to_last_ten_keeping_active():
     assert jobs._registry["queued_run"]["state"] == "queued"
     terminal = [jid for jid, j in jobs._registry.items() if j["state"] == "done"]
     assert len(terminal) == 10
+
+
+def test_calibration_cache_key_tracks_tier_and_model_file(tmp_path, monkeypatch):
+    from spx_trade_desk.sim import library
+    path = tmp_path / "pricing_model.json"
+    monkeypatch.setattr(library, "MODEL_PATH", path)
+    cfg = _cfg()
+    k0 = jobs._calib_key(cfg)
+    path.write_text('{"v": 1}')
+    k1 = jobs._calib_key(cfg)
+    path.write_text('{"v": 1, "days": 2}')
+    k2 = jobs._calib_key(cfg)
+    assert len({k0, k1, k2}) == 3
+    assert jobs._calib_key(_cfg(pricing_tier="cold")) != k2
+
+
+def test_pipeline_meta_reports_pricing_and_config_warnings():
+    cfg = SimRunConfig.from_dict(dict(_cfg().to_dict(), vol_beta=0.75))
+    payload = jobs.execute_pipeline(cfg, load_bars(cfg), lambda p, m: None, spot0=SPOT0)
+    meta = payload["meta"]
+    assert "smile" not in meta
+    assert meta["pricing"]["tier"] == "cold" and meta["pricing"]["anchor"] == "garch"
+    assert meta["pricing"]["atm_open"] > 0 and meta["pricing"]["vix1d_prev"] is None
+    assert meta["dials"]["pricing_tier"] == "auto" and "vol_beta" not in meta["dials"]
+    assert meta["config_warnings"] and "vol_beta" in meta["config_warnings"][0]

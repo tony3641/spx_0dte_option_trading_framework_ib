@@ -1,7 +1,7 @@
 # tests/test_sim_paths.py
 import numpy as np
 
-from spx_trade_desk.sim.calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
+from spx_trade_desk.sim.calibrate import CalibratedModel, GarchParams
 from spx_trade_desk.sim.config import SimRunConfig
 from spx_trade_desk.sim.paths import simulate_chunk
 from spx_trade_desk.sim.clock import CAL_TO_SIM, rth_day_vol
@@ -19,7 +19,7 @@ def _model(nu=6.0, gamma=0.10):
     return CalibratedModel(
         garch=GarchParams(omega=2.5e-9, alpha=0.05, gamma=gamma, beta=0.85, nu=nu, converged=True),
         ushape=np.interp(np.arange(390), [0, 30, 195, 360, 385], [1.35, 0.85, 0.8, 1.2, 1.4]),
-        sigma0=0.0005 / np.sqrt(5), smile=DEFAULT_SMILE, vix0=15.0, source="test")
+        sigma0=0.0005 / np.sqrt(5), pricing=None, vix0=15.0, source="test")
 
 
 def test_reproducible_and_shape():
@@ -64,7 +64,7 @@ def test_atm_iv_caps_conditional_sigma():
     # atm_iv anchor hard-caps each per-bar sigma at cap_mult * IV-implied per-bar vol.
     m = CalibratedModel(
         garch=GarchParams(omega=2.5e-9, alpha=0.06, gamma=0.01, beta=0.92, nu=7.0, converged=True),
-        ushape=np.ones(390), sigma0=0.0005 / np.sqrt(5), smile=DEFAULT_SMILE, vix0=15.0,
+        ushape=np.ones(390), sigma0=0.0005 / np.sqrt(5), pricing=None, vix0=15.0,
         source="test")
     cfg = SimRunConfig(strategy_name="Main", bar_size="1m", atm_iv=ATM_IV_CAL, vol_cap_mult=2.0)
     steps = cfg.steps_per_day()            # 78
@@ -82,7 +82,7 @@ def test_atm_iv_anchors_terminal_breadth():
     # the near-integrated GARCH produces on its own.
     m = CalibratedModel(
         garch=GarchParams(omega=2.5e-9, alpha=0.06, gamma=0.01, beta=0.92, nu=7.0, converged=True),
-        ushape=np.ones(390), sigma0=0.0005 / np.sqrt(5), smile=DEFAULT_SMILE, vix0=15.0,
+        ushape=np.ones(390), sigma0=0.0005 / np.sqrt(5), pricing=None, vix0=15.0,
         source="test")
     img_cfg = SimRunConfig(strategy_name="Main", bar_size="1m", atm_iv=ATM_IV_CAL)
     sp = simulate_chunk(m, img_cfg, 6000.0, 8000, np.random.SeedSequence([5, 0, 0]))

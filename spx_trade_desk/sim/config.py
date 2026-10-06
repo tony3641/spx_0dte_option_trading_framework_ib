@@ -1,11 +1,31 @@
 """Run configuration for the intraday Monte Carlo simulator."""
 from dataclasses import dataclass, field, fields
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 BAR_SECONDS = {"5s": 5, "15s": 15, "30s": 30, "1m": 60, "5m": 300}
 _MODES = ("single", "family")
 _SOURCES = ("csv", "yfinance", "ib", "auto")
 _STRIKE_MODES = ("engine", "dynamic_k")
+
+# Keys removed by the z-model pricer (SP2). A saved config or tuning spec that still
+# carries one loads; the key is dropped with a warning.
+REMOVED_KEYS: Dict[str, str] = {
+    "vol_beta": "vol_beta was removed: the ATM level now follows the path's GJR state",
+    "skew_t_gamma": "skew_t_gamma was removed: the tau buckets of the pricing tables carry "
+                    "the expiry steepening",
+    "atm_budget": "atm_budget was removed: the variance-budget level link is always on",
+}
+
+
+def removed_key_warnings(d: dict) -> List[str]:
+    """Warnings for removed keys whose value asked for behavior that no longer exists
+    (a zero skew_t_gamma or a true atm_budget is what the sim does now: no warning)."""
+    out = []
+    for k, msg in REMOVED_KEYS.items():
+        if k not in d or (k == "skew_t_gamma" and not d[k]) or (k == "atm_budget" and d[k]):
+            continue
+        out.append(f"config: {msg}")
+    return out
 
 
 @dataclass
@@ -30,18 +50,17 @@ class SimRunConfig:
     width_points: float = 50.0          # spread width in dynamic_k mode
     nu_override: Optional[float] = None             # stress: Student-t dof
     gamma_mult: float = 1.0             # stress: GJR leverage-term multiplier
-    vol_beta: float = 0.75              # smile vol-link coefficient (lambda)
-    flat_iv: bool = False               # sanity mode: no smile
+    flat_iv: bool = False               # sanity mode: every strike at the ATM level (no smile)
+    pricing_tier: str = "auto"          # option pricing tables: auto | cold | thin | library
     atm_iv: Optional[float] = None      # annual ATM IV (decimal) to anchor the SPX fan; None = historical GARCH level
     vol_cap_mult: float = 2.0           # per-bar sigma cap as a multiple of the IV-implied per-bar vol
     stop_extra: float = 0.10            # market-order stop: trigger + this
     tick_size: float = 0.05
     ladder_range_pct: float = 0.15
-    skew_beta: float = 0.0              # smile tilt per unit vol-shock (>=0); 0 = legacy
-    skew_t_gamma: float = 0.0           # expiry amplification exponent (0..1); 0 = Phase-A-only tilt
-    atm_budget: bool = False            # variance-budget ATM anchor (spec §7); False = legacy level shift
-    budget_beta: float = 1.0            # budget state-sensitivity scale (1.0 = theory)
+    skew_beta: float = 0.0              # wing tilt per unit of the level link L - 1 (>= 0); 0 = off
+    budget_beta: float = 1.0            # level-link state sensitivity (1.0 = theory)
     n_workers: int = 0                  # worker processes; 0 = auto (SIM_WORKERS env, else CPU count)
+    load_warnings: List[str] = field(default_factory=list, compare=False, repr=False)
 
     def steps_per_day(self) -> int:
         return (390 * 60) // BAR_SECONDS[self.bar_size]
@@ -77,12 +96,13 @@ class SimRunConfig:
             v = getattr(self, name)
             if v is not None and v <= 2.0:
                 raise ValueError(f"{name} must be > 2.0 (Student-t needs finite variance)")
-        if self.gamma_mult <= 0 or self.vol_beta < 0:
-            raise ValueError("gamma_mult must be > 0 and vol_beta >= 0")
+        if self.gamma_mult <= 0:
+            raise ValueError("gamma_mult must be > 0")
         if self.skew_beta < 0:
             raise ValueError("skew_beta must be >= 0")
-        if not (0 <= self.skew_t_gamma <= 1):
-            raise ValueError("skew_t_gamma must be in [0, 1]")
+        from spx_trade_desk.sim.pricing_tables import TIERS   # lazy: config stays import-light
+        if self.pricing_tier not in TIERS:
+            raise ValueError(f"pricing_tier must be one of {TIERS}")
         if self.budget_beta < 0:
             raise ValueError("budget_beta must be >= 0")
         if self.vol_cap_mult <= 0:
@@ -103,6 +123,8 @@ class SimRunConfig:
     def to_dict(self) -> dict:
         d = {}
         for f in fields(self):
+            if f.name == "load_warnings":
+                continue
             v = getattr(self, f.name)
             if isinstance(v, list):
                 v = ["inf" if x == float("inf") else x for x in v]
@@ -113,9 +135,10 @@ class SimRunConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "SimRunConfig":
-        known = {f.name for f in fields(cls)}
+        d = dict(d or {})
+        known = {f.name for f in fields(cls)} - {"load_warnings"}
         kwargs = {}
-        for k, v in dict(d or {}).items():
+        for k, v in d.items():
             if k not in known:
                 continue
             if isinstance(v, list):
@@ -123,7 +146,9 @@ class SimRunConfig:
             elif v == "inf":
                 v = float("inf")
             kwargs[k] = v
-        return cls(**kwargs)
+        cfg = cls(**kwargs)
+        cfg.load_warnings = removed_key_warnings(d)
+        return cfg
 
 
 def sweep_cells(cfg: SimRunConfig) -> list:

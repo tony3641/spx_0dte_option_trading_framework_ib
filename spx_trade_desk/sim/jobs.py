@@ -1,18 +1,24 @@
 """Simulation job registry: background execution, progress, cancel, memoized calibration."""
 import asyncio
+import hashlib
 import logging
 import threading
 import time
 import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from spx_trade_desk.sim.calibrate import CalibratedModel, build_dynamics, calibrate
+from spx_trade_desk.market.hours import ET
+from spx_trade_desk.sim import library as sim_library
+from spx_trade_desk.sim.calibrate import CalibratedModel, calibrate
 from spx_trade_desk.sim.config import SimRunConfig, sweep_cells
 from spx_trade_desk.sim.data import BarSeries, load_bars
 from spx_trade_desk.sim.parallel import chunk_payloads, compute_chunk, resolve_workers, spawn_pool
 from spx_trade_desk.sim.pricing import build_ladder
+from spx_trade_desk.sim.pricing_model import build_pricing_model
 from spx_trade_desk.sim.risk import build_cell_payload, spot_fan_quantiles
 
 logger = logging.getLogger(__name__)
@@ -133,6 +139,23 @@ def _get_strategy(cfg: SimRunConfig, state=None):
     return _STRATEGY_CACHE[cfg.strategy_name]
 
 
+def _model_file_hash() -> str:
+    """Content hash of the chain library's pricing model ("" when absent)."""
+    try:
+        return hashlib.sha256(Path(sim_library.MODEL_PATH).read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _calib_key(cfg: SimRunConfig) -> tuple:
+    """Calibration cache key. Besides the bars, the pricing tables depend on the tier, the
+    library model file (a rebuild changes it) and the run's VIX1D prior close, which moves
+    with the ET date and at the close."""
+    now = datetime.now(ET)
+    return (cfg.source, cfg.csv_path, cfg.bar_size, cfg.lookback_days, cfg.pricing_tier,
+            _model_file_hash(), now.date().isoformat(), now.hour >= 16)
+
+
 def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
                      spot0: float, cancel_check: Optional[Callable[[], bool]] = None,
                      state=None) -> dict:
@@ -146,7 +169,7 @@ def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
     if cancel_check is None:
         cancel_check = lambda: False   # noqa: E731
     progress_cb(0.0, "calibrating")
-    key = (cfg.source, cfg.csv_path, cfg.bar_size, cfg.lookback_days)
+    key = _calib_key(cfg)
     model = _CALIB_CACHE.get(key)
     if model is None:
         model = calibrate(bars, cfg)
@@ -156,10 +179,10 @@ def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
     if cfg.mode == "family" and state is not None:
         children = [s for s in state.strategies.values() if s.parent_name == strat.name]
     ladder = build_ladder(spot0, cfg.ladder_range_pct)
-    dyn = build_dynamics(model, cfg)   # per-run dials; NOT cached with the model
+    pricer = build_pricing_model(model, cfg)   # per-run dials + anchor; NOT cached with the model
     cells = sweep_cells(cfg)
     n_chunks = (cfg.n_paths + cfg.chunk_size - 1) // cfg.chunk_size
-    payloads = chunk_payloads(cfg, model, strat, children, ladder, dyn, cells,
+    payloads = chunk_payloads(cfg, model, strat, children, ladder, pricer, cells,
                               n_chunks, spot0)
     workers = resolve_workers(cfg, len(payloads))
 
@@ -221,15 +244,13 @@ def execute_pipeline(cfg: SimRunConfig, bars: BarSeries, progress_cb: Callable,
                 n_paths=cfg.n_paths, seed=cfg.seed, spot0=spot0,
                 garch=vars(model.garch),
                 garch_warnings=model.warnings, data_warnings=bars.warnings,
-                smile=vars(model.smile), dials=dict(nu_override=cfg.nu_override,
-                                                    gamma_mult=cfg.gamma_mult,
-                                                    vol_beta=cfg.vol_beta, flat_iv=cfg.flat_iv,
-                                                    atm_iv=cfg.atm_iv,
-                                                    vol_cap_mult=cfg.vol_cap_mult,
-                                                    skew_beta=cfg.skew_beta,
-                                                    skew_t_gamma=cfg.skew_t_gamma,
-                                                    atm_budget=cfg.atm_budget,
-                                                    budget_beta=cfg.budget_beta),
+                config_warnings=list(cfg.load_warnings),
+                pricing=dict(model.pricing_info, anchor=pricer.anchor_source,
+                             atm_open=pricer.atm_open, vix1d_prev=model.vix1d_prev),
+                dials=dict(nu_override=cfg.nu_override, gamma_mult=cfg.gamma_mult,
+                           flat_iv=cfg.flat_iv, atm_iv=cfg.atm_iv,
+                           vol_cap_mult=cfg.vol_cap_mult, skew_beta=cfg.skew_beta,
+                           budget_beta=cfg.budget_beta, pricing_tier=cfg.pricing_tier),
                 workers=workers, cancelled=cancelled)
     # SPX path fan: a property of the market simulation, not of any sweep cell (spot
     # dynamics ignore SL/k), so the first cell's full path set represents the run. A

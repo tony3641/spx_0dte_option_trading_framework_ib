@@ -183,70 +183,9 @@ def test_calibrate_end_to_end():
     assert model.source == "csv"
     ann = model.sigma_annual(SimRunConfig(strategy_name="Main"))
     assert 0.02 < ann < 5.0
-
-
-def test_build_dynamics_neutral_fields():
-    from spx_trade_desk.sim.calibrate import build_dynamics
-    from spx_trade_desk.sim.config import SimRunConfig
-    bars = _make_bars()
-    cfg = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
-    model = calibrate(bars, cfg)
-    dyn = build_dynamics(model, cfg)
-    assert dyn.sigma0 == model.sigma0
-    assert dyn.vol_beta == cfg.vol_beta == 0.75
-    assert dyn.flat_iv is False
-    assert dyn.iv0 == float(model.smile.iv(0.0))
-    assert dyn.skew_beta == 0.0
-    assert dyn.skew_t_gamma == 0.0
-    assert dyn.atm_budget is False
-    assert dyn.a_tab is None and dyn.b_tab is None
-    assert dyn.t_scale.shape == (cfg.steps_per_day(),)
-    assert np.array_equal(dyn.t_scale, np.ones(cfg.steps_per_day()))
-
-
-def test_build_dynamics_t_scale_table():
-    from spx_trade_desk.sim.calibrate import build_dynamics
-    from spx_trade_desk.sim.config import SimRunConfig
-    model = calibrate(_make_bars(), SimRunConfig(strategy_name="T", source="csv",
-                                                 bar_size="1m"))
-    cfg0 = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
-    assert np.array_equal(build_dynamics(model, cfg0).t_scale, np.ones(390))
-    cfg4 = SimRunConfig(strategy_name="T", source="csv", bar_size="1m",
-                        skew_t_gamma=0.4)
-    ts = build_dynamics(model, cfg4).t_scale
-    assert ts.shape == (390,)
-    assert ts[0] == 1.0                                  # anchored at the first bar
-    assert np.all(np.diff(ts) > 0.0)                     # grows monotonically to expiry
-    assert ts[-1] == pytest.approx(389 / 0.5)  # T_floor = half a 1-min bar (raw; gamma applied at eval)
-
-
-def _budget_cfg(**kw):
-    from spx_trade_desk.sim.config import SimRunConfig
-    return SimRunConfig(strategy_name="T", source="csv", bar_size="1m",
-                        atm_budget=True, **kw)
-
-
-def test_budget_tables_match_direct_summation():
-    from spx_trade_desk.sim.calibrate import build_dynamics
-    bars = _make_bars()
-    cfg = _budget_cfg()
-    model = calibrate(bars, cfg)
-    dyn = build_dynamics(model, cfg)
-    steps = 390
-    barf = 60 / (252 * 6.5 * 3600.0)
-    u2 = np.asarray(model.ushape, dtype=float)[:steps] ** 2 * barf
-    p_eff = (model.garch.alpha + model.garch.gamma * cfg.gamma_mult / 2.0
-             + model.garch.beta)
-    v_bar = model.garch.omega / (1.0 - p_eff)
-    for t in (0, 1, 39, 76):
-        ks = np.arange(t + 1, steps)
-        s_direct = float(np.sum(u2[t + 1:]))
-        p_direct = float(np.sum(p_eff ** (ks - t) * u2[ks]))
-        assert dyn.a_tab[t] + dyn.b_tab[t] * v_bar == pytest.approx(v_bar * s_direct,
-                                                                    rel=1e-12)
-        assert dyn.b_tab[t] == pytest.approx(p_direct, rel=1e-12)
-    assert dyn.v0 == pytest.approx(v_bar * float(np.sum(u2[1:])), rel=1e-12)
-    assert dyn.v_bar == pytest.approx(v_bar, rel=1e-15)
+    assert model.pricing_info["tier"] == "cold" and model.vix1d_prev is None
+    assert model.pricing.f.shape == (7, 37)
+    assert any(w.startswith("pricing: tier cold") for w in model.warnings)
 
 
 def test_conditional_expectation_closed_form():
@@ -298,10 +237,11 @@ def test_fit_smile_flat_degenerate_is_rejected():
     assert warnings and smile == DEFAULT_SMILE
 
 
-def test_budget_off_leaves_tables_empty():
-    from spx_trade_desk.sim.calibrate import build_dynamics
+def test_calibrate_warns_about_a_leftover_smile_snapshot(tmp_path, monkeypatch):
+    from spx_trade_desk.sim import calibrate as sc
     from spx_trade_desk.sim.config import SimRunConfig
-    cfg = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
-    model = calibrate(_make_bars(), cfg)
-    dyn = build_dynamics(model, cfg)
-    assert dyn.a_tab is None and dyn.b_tab is None and dyn.v0 == 0.0
+    legacy = tmp_path / "sim_smile.json"
+    legacy.write_text("{}")
+    monkeypatch.setattr(sc, "LEGACY_SMILE_PATH", legacy)
+    model = sc.calibrate(_make_bars(), SimRunConfig(strategy_name="Main"))
+    assert any("sim_smile.json is no longer used" in w for w in model.warnings)

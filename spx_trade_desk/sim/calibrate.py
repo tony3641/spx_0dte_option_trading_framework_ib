@@ -6,7 +6,7 @@ calibration panel. All functions are pure — no IO.
 import math
 import warnings
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from scipy.optimize import minimize
@@ -108,9 +108,13 @@ from dataclasses import dataclass, field
 from spx_trade_desk.resources import CONFIG_DIR
 from spx_trade_desk.sim.config import BAR_SECONDS, SimRunConfig
 from spx_trade_desk.sim.data import BarSeries
+from spx_trade_desk.sim import library as sim_library
+from spx_trade_desk.sim.pricing_tables import PricingTables
 
 SMILE_CAPTURE_PATH = str(CONFIG_DIR / "sim_smile.json")
 SMILE_DEFAULT_PATH = str(CONFIG_DIR / "sim_smile_default.json")
+# The pre-SP2 captured smile. Nothing reads it any more; a leftover file is only warned about.
+LEGACY_SMILE_PATH = CONFIG_DIR / "sim_smile.json"
 RTH_START_MIN = 570
 
 
@@ -202,78 +206,15 @@ class CalibratedModel:
     garch: GarchParams
     ushape: np.ndarray            # (steps_per_day,), mean ~ 1
     sigma0: float                 # mean per-bar conditional vol (decimal return units)
-    smile: SmileParams
+    pricing: Optional[PricingTables]   # z-model tables chosen by tier (None: paths-only use)
     vix0: float
     source: str
     warnings: List[str] = field(default_factory=list)
+    pricing_info: dict = field(default_factory=dict)   # tier, regime, fallbacks, staleness, scores
+    vix1d_prev: Optional[float] = None                 # VIX1D prior close for the run's session
 
     def sigma_annual(self, cfg: SimRunConfig) -> float:
         return float(self.sigma0 * np.sqrt(cfg.steps_per_day() * 252))
-
-
-@dataclass(frozen=True)
-class SmileDynamics:
-    """Run-level smile response dials + precomputed tables (smile-dynamics spec §4).
-
-    Neutral values (skew_beta=0, skew_t_gamma=0, atm_budget=False) reproduce the
-    legacy IV formula clip(smile.iv(m) + vol_beta*(sigma - sigma0), 0.01, 5.0)
-    bit-for-bit — tests/test_sim_regression.py enforces the chain.
-    """
-    sigma0: float
-    vol_beta: float
-    flat_iv: bool
-    iv0: float
-    skew_beta: float = 0.0
-    t_scale: object = None      # (steps,) T_ref/max(T_t,T_floor); ones = neutral
-    skew_t_gamma: float = 0.0
-    atm_budget: bool = False
-    budget_beta: float = 1.0
-    v_bar: float = 0.0
-    a_tab: object = None        # (steps,) A(t) = v_bar*(S(t)-P(t))
-    b_tab: object = None        # (steps,) B(t) = P(t)
-    v0: float = 0.0
-
-
-def build_dynamics(model: CalibratedModel, cfg: SimRunConfig) -> SmileDynamics:
-    """Per-run smile dynamics from cfg dials. O(steps) precompute.
-
-    Never cache this with the model: sim_jobs._CALIB_CACHE keys on the data source
-    only, while these dials vary per run.
-    """
-    steps = cfg.steps_per_day()
-    # Same bar fraction as sim_pricing.bar_year_frac (avoided here to keep
-    # sim_calibrate free of a sim_pricing import): 252 RTH days x 6.5 h.
-    barf = BAR_SECONDS[cfg.bar_size] / (252 * 6.5 * 3600.0)
-    t_scale = np.ones(steps)
-    if cfg.skew_t_gamma > 0.0 or cfg.atm_budget:
-        t_left = np.arange(steps - 1, -1, -1) * barf     # years to expiry after bar t
-        t_scale = t_left[0] / np.maximum(t_left, 0.5 * barf)
-    v_bar = a_tab = b_tab = None
-    v0 = 0.0
-    if cfg.atm_budget:
-        g = model.garch
-        # p_eff must mirror sim_paths.py:21 (gamma_mult scales the GJR term); the
-        # 1/2 comes from E[neg * eps^2] = E[eps^2]/2 by symmetry of the shocks.
-        p_eff = g.alpha + g.gamma * cfg.gamma_mult / 2.0 + g.beta
-        v_bar_val = g.omega / (1.0 - p_eff)
-        u2 = np.asarray(model.ushape, dtype=float)[:steps] ** 2 * barf
-        # S(t) = sum_{k>t} u2[k];  P(t) = sum_{k>t} p_eff^(k-t) u2[k]
-        S = np.zeros(steps)
-        P = np.zeros(steps)
-        for t in range(steps - 2, -1, -1):
-            S[t] = S[t + 1] + u2[t + 1]
-            P[t] = p_eff * u2[t + 1] + p_eff * P[t + 1]
-        v_bar = v_bar_val
-        a_tab = v_bar_val * (S - P)      # A(t) = v_bar*(S(t)-P(t))
-        b_tab = P                        # B(t) = P(t)
-        v0 = v_bar_val * float(S[0])     # V(0, initial state sigma^2 = v_bar)
-    return SmileDynamics(
-        sigma0=model.sigma0, vol_beta=cfg.vol_beta, flat_iv=cfg.flat_iv,
-        iv0=float(model.smile.iv(0.0)), skew_beta=cfg.skew_beta,
-        t_scale=t_scale, skew_t_gamma=cfg.skew_t_gamma,
-        atm_budget=cfg.atm_budget, budget_beta=cfg.budget_beta,
-        v_bar=v_bar if v_bar is not None else 0.0,
-        a_tab=a_tab, b_tab=b_tab, v0=v0)
 
 
 def fit_ushape(returns: np.ndarray, minute_of_day: np.ndarray, steps_per_day: int) -> np.ndarray:
@@ -491,20 +432,23 @@ def _drop_overnight_returns(closes: np.ndarray, minute_of_day: np.ndarray):
 
 
 def calibrate(bars: BarSeries, cfg: SimRunConfig) -> CalibratedModel:
-    """Full calibration: returns -> GJR-t MLE -> U-shape -> smile snapshot -> VIX mapping."""
+    """Full calibration: returns -> GJR-t MLE -> U-shape -> pricing tables by tier -> VIX mapping."""
     warnings: List[str] = list(bars.warnings)
     rets, mods = _drop_overnight_returns(bars.closes, bars.minute_of_day)
     garch, w = fit_gjr_t(rets)
     warnings += w
     ushape = fit_ushape(rets, mods, cfg.steps_per_day())
     sigma0 = float(np.mean(np.sqrt(gjr_variance_path(garch, rets))))
-    smile, smile_src = load_smile_snapshot()
-    if smile_src != "captured":
-        warnings.append(f"smile: {smile_src} snapshot (capture a live chain for best results)")
+    tables, pricing_info, vix1d_prev, pricing_warnings = sim_library.resolve_pricing(cfg.pricing_tier)
+    warnings += pricing_warnings
+    if LEGACY_SMILE_PATH.exists():
+        warnings.append(f"pricing: {LEGACY_SMILE_PATH.name} is no longer used (the z-model "
+                        f"replaced the SVI smile); delete it")
     vix0 = 20.0
     if bars.vix_closes is not None and len(bars.vix_closes):
         vix0 = float(np.mean(bars.vix_closes[-20:]))
     else:
         warnings.append("VIX series unavailable — mapping anchored at VIX0=20")
-    return CalibratedModel(garch=garch, ushape=ushape, sigma0=sigma0, smile=smile,
-                           vix0=vix0, source=bars.source, warnings=warnings)
+    return CalibratedModel(garch=garch, ushape=ushape, sigma0=sigma0, pricing=tables,
+                           vix0=vix0, source=bars.source, warnings=warnings,
+                           pricing_info=pricing_info, vix1d_prev=vix1d_prev)
