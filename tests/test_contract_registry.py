@@ -178,6 +178,39 @@ async def test_manual_relist_forces_the_next_listing_even_inside_the_cooldown():
     assert ib.bulk_calls == 2
 
 
+@pytest.mark.asyncio
+async def test_manual_relist_during_a_failed_bulk_retries_the_bulk_instead_of_waiting_out_the_cooldown():
+    ib = ListIb(RuntimeError("farm down"))
+    ib.unlisted = {7705.0}                              # the single fallback cannot resolve it either
+    reg = _reg(min_bulk=40)
+    await reg.qualify_keys(ib, EXP, "SPXW", [(7705, "P")], now=0.0)
+    assert (ib.bulk_calls, len(ib.single_calls)) == (1, 1)
+    await reg.qualify_keys(ib, EXP, "SPXW", [(7705, "P")], now=10.0)
+    assert (ib.bulk_calls, len(ib.single_calls)) == (1, 1)                   # backing off: nothing sent
+    reg.relist("20261006")                              # another expiry: no effect here
+    await reg.qualify_keys(ib, EXP, "SPXW", [(7705, "P")], now=11.0)
+    assert (ib.bulk_calls, len(ib.single_calls)) == (1, 1)
+    ib.listing = [det(s, r, 100 + i) for i, (s, r) in
+                  enumerate((s, r) for s in range(7700, 7800, 5) for r in "CP")]     # 40 rows
+    reg.relist(EXP)
+    got = await reg.qualify_keys(ib, EXP, "SPXW", [(7705, "P")], now=12.0)
+    assert (7705.0, "P") in got
+    assert (ib.bulk_calls, len(ib.single_calls)) == (2, 1)                   # re-listed, no per-key request
+
+
+@pytest.mark.asyncio
+async def test_disjoint_key_sets_cause_one_relist_per_cooldown_not_one_per_caller():
+    ib = ListIb([det(7700, "P", 1)])
+    reg = _reg()
+    await reg.qualify_keys(ib, EXP, "SPXW", [(7705, "P")], now=1.0)           # first listing; 7705 unknown
+    await reg.qualify_keys(ib, EXP, "SPXW", [(7710, "P")], now=121.0)         # other caller: its miss is due
+    assert ib.bulk_calls == 2
+    await reg.qualify_keys(ib, EXP, "SPXW", [(7705, "P")], now=122.0)         # the re-list covered 7705 too
+    assert ib.bulk_calls == 2
+    await reg.qualify_keys(ib, EXP, "SPXW", [(7705, "P")], now=242.0)         # a full cooldown later: one more
+    assert ib.bulk_calls == 3
+
+
 # -- invariants --------------------------------------------------------------------------------
 
 @pytest.mark.asyncio

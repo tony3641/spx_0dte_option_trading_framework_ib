@@ -186,10 +186,18 @@ class ContractRegistry:
         self._last_today = ""
 
     def relist(self, expiry: Optional[str] = None) -> None:
-        """Manual refresh: conIds do not change, but the next miss re-reads the listing."""
+        """Manual refresh: conIds do not change, but the next miss re-reads the listing.
+
+        It also forgets the unknown keys and any bulk-failure backoff of the affected expiry, so a
+        refresh during a sec-def outage retries the bulk request instead of waiting out the cooldown.
+        """
         for lk in list(self._listed):
             if expiry is None or lk[2] == expiry:
                 self._relist.add(lk)
+        for lk in [k for k in self._bulk_failed if expiry is None or k[2] == expiry]:
+            del self._bulk_failed[lk]
+        for ck in [k for k in self._unknown if expiry is None or k.expiry == expiry]:
+            del self._unknown[ck]
 
     def _drop_expired(self) -> None:
         today = self._today()
@@ -257,7 +265,10 @@ class ContractRegistry:
             return 0
         for ck, qc in accepted.items():
             self._items[ck] = qc
-            self._unknown.pop(ck, None)
+        # A fresh listing supersedes every unknown mark of this series: the next miss is stamped
+        # with the new listing time, so there is one re-list per cooldown across all callers.
+        for ck in [k for k in self._unknown if (k.symbol, k.trading_class, k.expiry) == lk]:
+            del self._unknown[ck]
         self._listed[lk] = (now, len(accepted))
         self._relist.discard(lk)
         self._bulk_failed.pop(lk, None)
