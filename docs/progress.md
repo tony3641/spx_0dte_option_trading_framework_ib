@@ -15,8 +15,8 @@ Sub-project 1 of 3 (IB layer, then push pipeline + render, then visual redesign)
 - **Line budget safety net**: error 101 releases the refused line and shrinks the budget to what IB granted (stream first, then poller; never fixed or order lines); `ib/line_probe.py` measures the account's allowance. Full-stream mode (raise `MARKET_DATA_LINES`) stays opt-in until the push pipeline work lands.
 - **One boot** (`ib/session.py`): the server start and the manual reconnect share a dependency-parallel boot; the SGOV lookup no longer blocks the event loop.
 - **Measuring**: `core/perf.py`, `GET /api/perf` (localhost), a log line every `PERF_LOG_SECONDS`, and the paper-only `ib/latency_probe.py`.
-- **Acceptance (paper TWS)**: not run yet
-- **Not done / next**: ibapi 10.45.1 is desupported by IB on 2026-12-15 (minimum 10.50.1): upgrade and re-test separately; sub-projects 2 and 3 get their own specs.
+- **Acceptance (paper TWS)**: not passed yet. Two probe runs on the code before the review fixes, made at 15:51 and 15:57 ET (the 0DTE contracts stopped trading during the second), missed most targets and are not representative: single-leg ack p50 1733 / 191 ms (target 100), put-spread combo 745 / 797 ms (target 100), cancel p50 150 / 147 ms (target 105), boot 1.76 / 1.97 s (target 1.5 s). The bulk listing of the 0DTE chain took 0.5 to 0.75 s with 0 failed lookups (pass). On a fresh second connection with no streams acks were about 97 ms, so the streaming connection itself may add latency; not yet explained. Re-run in regular hours on the final code, then replace this bullet with the table, the NEAR rows and the rate 30 vs 40 comparison.
+- **Not done / next**: the server-wiring check on a paper TWS (start, `/api/perf`, manual reconnect, chain fill), the optional `line_probe` run and the regular-hours checks (dynamic-fill mid from the quote book, `chain.stream_cycle` p95, full-stream mode); ibapi 10.45.1 is desupported by IB on 2026-12-15 (minimum 10.50.1): upgrade and re-test separately; sub-projects 2 and 3 get their own specs.
 
 ---
 
