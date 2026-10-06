@@ -7,12 +7,9 @@ tick rules. Pure functions — no state.
 import numpy as np
 from scipy.special import ndtr
 
+from spx_trade_desk.sim.clock import bar_year_frac  # noqa: F401  (re-export; defined in clock)
+
 RISK_FREE_RATE = 0.043   # mirrors config.DEFAULT_RISK_FREE_RATE fallback
-
-
-def bar_year_frac(bar_seconds: int) -> float:
-    """Year fraction of one bar: 252 RTH days x 6.5 h."""
-    return bar_seconds / (252 * 6.5 * 3600.0)
 
 
 def bsm_put(S, K, T, r, sigma):

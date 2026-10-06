@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from spx_trade_desk.sim.calibrate import CalibratedModel
+from spx_trade_desk.sim.clock import rth_day_vol
 from spx_trade_desk.sim.config import SimRunConfig
 
 
@@ -31,8 +32,9 @@ def simulate_chunk(model: CalibratedModel, cfg: SimRunConfig, s0: float,
     # the market's own implied distribution. None -> historical GARCH level, uncapped.
     cap = float("inf")
     if cfg.atm_iv is not None:
-        target_daily_vol = cfg.atm_iv / float(np.sqrt(252.0))
-        cap = cfg.vol_cap_mult * target_daily_vol / float(np.sqrt(steps))
+        # atm_iv is a calendar-unit annual IV (VIX1D or an IB 0DTE quote): the clock module
+        # turns it into the 1-day RTH vol, spread evenly over the day's bars.
+        cap = cfg.vol_cap_mult * rth_day_vol(cfg.atm_iv) / float(np.sqrt(steps))
 
     spots = np.empty((n_paths, steps))
     sig_out = np.empty((n_paths, steps))
