@@ -14,7 +14,9 @@ from typing import Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from spx_trade_desk.core import config
 from spx_trade_desk.core.config import VIEWPORT_CENTER_MIN_INTERVAL
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import now_et, market_status, get_expiration_display, is_within_rth
 from spx_trade_desk.market.chain_fetcher import clear_qualification_cache
 from spx_trade_desk.market.chain_manager import monthly_gex_fetch
@@ -159,8 +161,19 @@ def make_ib_error_handler(state, broadcast_fn):
     return _on_ib_error
 
 
+def maybe_log_perf(last_ts: float, now: float, interval: float) -> float:
+    """Log the perf summary when ``interval`` seconds passed since ``last_ts``; return the new stamp."""
+    if interval <= 0 or now - last_ts < interval:
+        return last_ts
+    line = perf.summary_line()
+    if line:
+        logger.info(line)
+    return now
+
+
 async def status_push_loop(state, broadcast_fn):
     """Push status updates every few seconds."""
+    last_perf_log = time.monotonic()
     while True:
         try:
             await asyncio.sleep(5)
@@ -187,6 +200,7 @@ async def status_push_loop(state, broadcast_fn):
                 },
             }
             await broadcast_fn(status)
+            last_perf_log = maybe_log_perf(last_perf_log, time.monotonic(), config.PERF_LOG_SECONDS)
         except asyncio.CancelledError:
             break
         except Exception as e:

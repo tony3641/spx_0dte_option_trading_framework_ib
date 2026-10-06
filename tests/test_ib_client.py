@@ -687,3 +687,20 @@ def test_subscribe_tick_releases_its_line_if_the_request_raises(monkeypatch):
         client.subscribe_tick(c, "101", share="stream")
     assert client.line_budget.used("stream") == used_before
     assert not client._streams and not client._stream_share
+
+
+@pytest.mark.asyncio
+async def test_req_contract_details_records_a_span():
+    from spx_trade_desk.core.perf import perf
+    perf.reset()
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    c = Contract(); c.symbol = "SPX"; c.secType = "IND"
+    fut = asyncio.create_task(client.req_contract_details(c))
+    await asyncio.sleep(0.01)
+    req_id = next(iter(client._requests))
+    cd = ContractDetails(); cd.contract = c
+    client.contractDetails(req_id, cd)
+    client.contractDetailsEnd(req_id)
+    await asyncio.wait_for(fut, timeout=1)
+    assert perf.snapshot()["metrics"]["ib.details"]["n"] == 1

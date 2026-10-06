@@ -142,6 +142,11 @@ DEFAULT_ANNUAL_VOL = _get_setting("DEFAULT_ANNUAL_VOL", 0.20, float)
 TRADING_DAYS_PER_YEAR = _get_setting("TRADING_DAYS_PER_YEAR", 252, int)
 
 # ---------------------------------------------------------------------------
+# IB layer: request lanes, contract cache, perf log (ib/pacing.py, ib/contracts.py, core/perf.py)
+# ---------------------------------------------------------------------------
+PERF_LOG_SECONDS = _get_setting("PERF_LOG_SECONDS", 60.0, float)    # 0 disables the periodic perf log line
+
+# ---------------------------------------------------------------------------
 # Monthly/account/risk-free
 # ---------------------------------------------------------------------------
 MONTHLY_CACHE_TTL = _get_setting("MONTHLY_CACHE_TTL", 600, int)

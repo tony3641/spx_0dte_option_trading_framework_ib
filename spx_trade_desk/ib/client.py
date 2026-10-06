@@ -23,6 +23,7 @@ from ibapi.common import BarData  # noqa: F401  (used in Task 4)
 from ibapi.wrapper import EWrapper
 
 from spx_trade_desk.core.config import CHAIN_STREAM_MAX_LINES_CAP, MARKET_DATA_LINES
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.line_budget import LineBudget, LineBudgetExceeded, split_lines
 
 logger = logging.getLogger(__name__)
@@ -454,12 +455,13 @@ class IBClient(EWrapper, EClient):
     async def req_contract_details(self, contract, timeout=30.0):
         req_id, req = self._start_request()
         EClient.reqContractDetails(self, req_id, contract)
-        try:
-            return await asyncio.wait_for(req.future, timeout=timeout)
-        except asyncio.TimeoutError:
-            return []
-        finally:
-            self._requests.pop(req_id, None)
+        with perf.timer("ib.details"):
+            try:
+                return await asyncio.wait_for(req.future, timeout=timeout)
+            except asyncio.TimeoutError:
+                return []
+            finally:
+                self._requests.pop(req_id, None)
 
     async def req_sec_def_opt_params(self, symbol, fut_fop_exchange, sec_type, con_id,
                                      timeout=30.0):

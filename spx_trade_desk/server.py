@@ -32,6 +32,7 @@ from spx_trade_desk.ib.client import IBClient
 from spx_trade_desk.core import config
 from spx_trade_desk.resources import CHAIN_LIBRARY_DIR, STATIC_DIR
 from spx_trade_desk.core.app_state import AppState
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.connection import (
     connect_ib, setup_spx_subscription, setup_chain_info,
     setup_es_subscription, fetch_es_baseline,
@@ -223,6 +224,14 @@ async def get_state():
         "monthly_gex": state.monthly_latest_gex,
         "monthly_expiration": get_expiration_display(state.monthly_expiration) if state.monthly_expiration else "N/A",
     }
+
+
+@app.get("/api/perf")
+async def get_perf(request: Request):
+    """IB-layer timing spans and counters (localhost only)."""
+    if not _is_localhost(request):
+        raise HTTPException(status_code=403, detail="Localhost only")
+    return perf.snapshot()
 
 
 async def reconnect_ib_on(port: int) -> dict:
