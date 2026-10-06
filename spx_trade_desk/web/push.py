@@ -11,18 +11,24 @@ Kinds (``message_kind``):
 A send longer than ``PUSH_SEND_TIMEOUT_S`` or a send error closes that client only. Loop thread only.
 """
 import asyncio
+import inspect
 import json
 import logging
 import math
 import re
 import time
 from collections import OrderedDict, deque
-from typing import Callable, Deque, Dict, Optional, Tuple
+from typing import Callable, Deque, Dict, Optional, Set, Tuple
+
+from starlette.websockets import WebSocketState
 
 from spx_trade_desk.core.config import PUSH_ORDERED_BACKLOG_MAX, PUSH_SEND_TIMEOUT_S
 from spx_trade_desk.core.perf import perf
 
 logger = logging.getLogger(__name__)
+
+# Strong references to in-flight socket closes (the loop only keeps weak ones).
+_CLOSE_TASKS: Set[asyncio.Task] = set()
 
 LOG_BACKLOG_MAX = 500
 LATEST_TYPES = frozenset({
@@ -74,6 +80,9 @@ class ClientChannel:
                  clock: Callable[[], float] = time.monotonic):
         self.ws = ws
         self.closed = False
+        self._closing = False          # set by aclose: no new messages, a failed drain send is quiet
+        self._close_task: Optional[asyncio.Task] = None
+        self._note_seq = 0             # log-dropped notes use -1, -2, ... (the browser dedupes logs by seq)
         self._on_close = on_close
         self._send_timeout = send_timeout
         self._backlog_max = backlog_max
@@ -106,7 +115,7 @@ class ClientChannel:
         self._push_critical(text)
 
     def enqueue(self, message: dict, text: Optional[str]) -> None:
-        if self.closed:
+        if self.closed or self._closing or text is None:
             return
         kind = message_kind(message.get("type", ""))
         now = self._clock()
@@ -117,8 +126,6 @@ class ClientChannel:
             self._tick_meta = {"timestamp_iso": data.get("timestamp_iso"), "ts": message.get("ts")}
             if self._tick_enq is None:
                 self._tick_enq = now
-        elif text is None:
-            return
         elif kind == "latest":
             key = _latest_key(message)
             self._latest.pop(key, None)
@@ -134,7 +141,7 @@ class ClientChannel:
         self._wake.set()
 
     def _push_critical(self, text: str, now: Optional[float] = None) -> None:
-        if self.closed:
+        if self.closed or self._closing:
             return
         self._critical.append((text, now if now is not None else self._clock()))
         if len(self._critical) > self._backlog_max:
@@ -149,7 +156,8 @@ class ClientChannel:
             return self._critical.popleft()
         if self._log_dropped:
             n, self._log_dropped = self._log_dropped, 0
-            note = stamp({"type": "log", "data": {"seq": -1, "ts": "", "level": "WARNING", "name": "push",
+            self._note_seq -= 1
+            note = stamp({"type": "log", "data": {"seq": self._note_seq, "ts": "", "level": "WARNING", "name": "push",
                                                    "msg": f"{n} log lines dropped (the browser fell behind)"}})
             return json.dumps(note), self._clock()
         if self._log:
@@ -205,24 +213,45 @@ class ClientChannel:
         if self.closed:
             return
         self.closed = True
-        logger.warning(f"Dropping a WebSocket client: {reason}")
+        if self._closing:   # a failed send while aclose drains: the normal tab-close path
+            logger.debug(f"push: drain ended early: {reason}")
+        else:
+            logger.warning(f"Dropping a WebSocket client: {reason}")
         self._wake.set()
         if self._on_close is not None:
             try:
                 self._on_close(self)
             except Exception as e:
                 logger.error(f"push on_close error: {e}")
+        if getattr(self.ws, "application_state", None) == WebSocketState.DISCONNECTED:
+            return          # Starlette raises on close() after the socket is gone
         close = getattr(self.ws, "close", None)
-        if close is not None:
-            try:
-                res = close()
-                if asyncio.iscoroutine(res):
-                    asyncio.get_running_loop().create_task(res)
-            except Exception:
-                pass
+        if close is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # no running loop
+            return
+        task = loop.create_task(self._safe_close(close))
+        self._close_task = task
+        _CLOSE_TASKS.add(task)
+        task.add_done_callback(_CLOSE_TASKS.discard)
+
+    @staticmethod
+    async def _safe_close(close: Callable) -> None:
+        try:
+            res = close()
+            if inspect.isawaitable(res):
+                await res
+        except Exception as e:
+            logger.debug(f"push: closing the socket failed: {e!r}")
 
     async def aclose(self, drain: bool = True) -> None:
-        """Stop the writer; with ``drain``, send what is still queued first (each send bounded)."""
+        """Stop the writer; with ``drain``, send what is still queued first (each send bounded).
+
+        New messages are ignored from the first line on, so producers cannot extend the drain.
+        """
+        self._closing = True
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
@@ -233,13 +262,15 @@ class ClientChannel:
                 if item is None or not await self._send(*item):
                     break
         self.closed = True
+        if self._close_task is not None:
+            await asyncio.gather(self._close_task, return_exceptions=True)
 
 
 def record_client_perf(raw: str) -> int:
     """Record a browser ``perf_report`` as ``client.<name>`` spans; return the samples kept."""
     try:
         body = json.loads(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return 0
     spans = body.get("spans") if isinstance(body, dict) else None
     if not isinstance(spans, dict):

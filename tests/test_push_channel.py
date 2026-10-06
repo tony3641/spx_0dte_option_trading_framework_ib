@@ -1,8 +1,10 @@
 """web/push.py: message kinds, coalescing, ordering, merge, log overflow, slow-client close."""
 import asyncio
+import gc
 import json
 
 import pytest
+from starlette.websockets import WebSocketState
 
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.web import push
@@ -150,6 +152,18 @@ async def test_log_overflow_drops_oldest_and_says_so():
     assert "2 log lines dropped" in logs[0]["msg"]
     assert [d["seq"] for d in logs[1:]] == [2, 3, 4]
     assert not ch.closed
+    # A second overflow episode gets its own note with a new seq (the browser dedupes logs by seq).
+    ws.gate = asyncio.Event()
+    ch.send_message({"type": "ping"})
+    await _settle()
+    for i in range(5, 10):
+        ch.send_message({"type": "log", "data": {"seq": i, "msg": f"line {i}"}})
+    ws.gate.set()
+    await _settle()
+    notes = [m["data"] for m in ws.sent if m["type"] == "log" and "log lines dropped" in m["data"]["msg"]]
+    assert len(notes) == 2 and notes[0]["seq"] != notes[1]["seq"]
+    assert all(n["seq"] < 0 for n in notes)
+    await ch.aclose(drain=False)
 
 
 @pytest.mark.asyncio
@@ -215,6 +229,96 @@ async def test_queue_wait_and_send_spans_are_recorded():
     snap = perf.snapshot()["metrics"]
     assert "push.queue_wait" in snap and "push.send" in snap
     await ch.aclose(drain=False)
+
+
+class GoneWS:
+    """A socket that is already gone: send raises OSError, close raises like Starlette does."""
+
+    def __init__(self, application_state=None):
+        self.close_calls = 0
+        if application_state is not None:
+            self.application_state = application_state
+
+    async def send_text(self, text):
+        raise OSError("connection reset")
+
+    async def close(self, code=1000):
+        self.close_calls += 1
+        raise RuntimeError('Cannot call "send" once a close message has been sent.')
+
+
+@pytest.mark.asyncio
+async def test_a_dead_socket_closes_without_error_logs_or_unretrieved_tasks(caplog):
+    loop = asyncio.get_running_loop()
+    loop_errors = []
+    loop.set_exception_handler(lambda _loop, ctx: loop_errors.append(ctx))
+    try:
+        caplog.set_level("DEBUG", logger="spx_trade_desk.web.push")
+        # Writer-side failure, then the normal disconnect path.
+        ws = GoneWS()
+        ch = push.ClientChannel(ws)
+        ch.start()
+        ch.send_message({"type": "status", "data": {}})
+        await _settle()
+        assert ch.closed and ws.close_calls == 1
+        await ch.aclose(drain=True)
+        # Tab closed while queued messages drain: quiet, no "Dropping" warning.
+        caplog.clear()
+        ws2 = GoneWS()
+        ch2 = push.ClientChannel(ws2)
+        ch2.send_message({"type": "status", "data": {}})
+        await ch2.aclose(drain=True)
+        assert ch2.closed
+        assert not [r for r in caplog.records if r.levelname in ("WARNING", "ERROR")]
+        await _settle()
+        gc.collect()
+        await _settle()
+    finally:
+        loop.set_exception_handler(None)
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+    assert "never retrieved" not in caplog.text
+    assert loop_errors == []
+
+
+@pytest.mark.asyncio
+async def test_close_is_skipped_once_starlette_reports_disconnected():
+    ws = GoneWS(application_state=WebSocketState.DISCONNECTED)
+    ch = push.ClientChannel(ws)
+    ch.start()
+    ch.send_message({"type": "status", "data": {}})
+    await _settle()
+    assert ch.closed and ws.close_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_messages_after_aclose_starts_do_not_extend_the_drain():
+    gate = asyncio.Event()
+    ws = SlowWS(gate)
+    ch = push.ClientChannel(ws)
+    ch.send_message({"type": "status", "data": {}})
+    closing = asyncio.create_task(ch.aclose(drain=True))
+    await _settle()                                          # the drain is now blocked in the first send
+    ch.send_message({"type": "order_status", "data": {"status": "Filled"}})
+    await ch.send_text(json.dumps({"type": "order_status", "data": {"status": "Cancelled"}}))
+    ch.send_message({"type": "log", "data": {"seq": 1, "msg": "late"}})
+    gate.set()
+    await closing
+    assert _types(ws) == ["status"] and ch.closed
+
+
+@pytest.mark.asyncio
+async def test_a_chain_tick_that_failed_to_encode_is_not_merged():
+    ws = SlowWS()
+    ch = push.ClientChannel(ws)
+    ch.enqueue({"type": "chain_tick", "data": {"ticks": [{"strike": 5000.0, "right": "C", "bid": 1.0}]}}, None)
+    await ch.aclose(drain=True)
+    assert ws.sent == []
+
+
+def test_record_client_perf_survives_deeply_nested_json():
+    perf.reset()
+    assert push.record_client_perf("[" * 100000 + "]" * 100000) == 0
+    assert push.record_client_perf('{"spans": ' + "[" * 100000 + "]" * 100000 + "}") == 0
 
 
 def test_record_client_perf_accepts_only_sane_samples():
