@@ -14,8 +14,9 @@ fetcher's module-global caches.
   requested keys are qualified one by one through the pacer.
 
 Safety invariants: an entry only comes from an exact-match single result or a self-describing bulk
-row; the key carries symbol, trading class and expiry; returned contracts are copies. This module
-imports nothing from ``market``, ``web`` or ``strategy``.
+row (symbol, trading class, expiry and exchange SMART); the key carries symbol, trading class and
+expiry; the order path re-checks every cached hit with the exact-match guard; returned contracts
+are copies. This module imports nothing from ``market``, ``web`` or ``strategy``.
 """
 import asyncio
 import copy
@@ -23,6 +24,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -309,6 +311,11 @@ class ContractRegistry:
                     or _norm_expiry(getattr(c, "lastTradeDateOrContractMonth", "")) != expiry
                     or str(getattr(c, "symbol", "")).upper() != symbol):
                 continue
+            if str(getattr(c, "exchange", "") or "") != "SMART":
+                # An order built from this row would route to whatever exchange it names; only a
+                # SMART row is the contract the single-qualification path would have returned.
+                perf.count("registry.reject_exchange")
+                continue
             ck = ContractKey.of(symbol, trading_class, expiry, strike, right)
             prior = out.get(ck)
             if prior is not None:
@@ -391,17 +398,28 @@ class ContractRegistry:
     # -- order path -----------------------------------------------------------------------------
 
     async def resolve_for_order(self, ib, requested: List[Contract]) -> Optional[List[QualifiedContract]]:
-        """Exact IB contracts for ``requested`` (SMART route), or None if any leg cannot be resolved.
+        """Exact IB contracts for ``requested``, or None if any leg cannot be resolved.
 
-        A hit uses the cached copy; a miss does a live single qualification (order lane, never
-        paced) and an exact match, then remembers the result. Absence from a bulk listing is never
-        trusted here. ``ORDER_USE_CONTRACT_CACHE=false`` forces a live lookup for every leg.
+        Every returned contract, cached or live, passed ``_exact_match`` against its request
+        (strike to 1e-6, right, expiry; carries a conId); the key already pins symbol and trading
+        class, and a cached bulk row was accepted only with ``exchange == "SMART"``. The cache key
+        rounds the strike to 0.1, so a cached hit that is not an exact match (a request for
+        5200.04 meeting a cached 5200.0) is refused with a warning, discarded and looked up live
+        instead; if the live result is no exact match either the whole call returns None. A miss
+        does a live single qualification (order lane, never paced) and remembers an on-grid result.
+        Absence from a bulk listing is never trusted here. ``ORDER_USE_CONTRACT_CACHE=false`` forces
+        a live lookup for every leg.
         """
         use_cache = bool(config.ORDER_USE_CONTRACT_CACHE)
         out: List[Optional[QualifiedContract]] = [None] * len(requested)
         misses = []
         for i, c in enumerate(requested):
             hit = self.get(ContractKey.from_contract(c)) if use_cache else None
+            if hit is not None and _exact_match([SimpleNamespace(contract=hit.contract)], c) is None:
+                logger.warning("Order path: refused a cached contract for strike %s %s: it lists "
+                               "strike %s; looking it up live", getattr(c, "strike", None),
+                               getattr(c, "right", ""), getattr(hit.contract, "strike", None))
+                hit = None
             if hit is not None:
                 perf.count("registry.hit")
                 out[i] = hit
@@ -414,5 +432,10 @@ class ContractRegistry:
                 match = _exact_match(details, c)
                 if match is None:
                     return None
-                out[i] = self.get(self._put(match, details, "single", time.monotonic()))
+                ts = time.monotonic()
+                if ContractKey.from_contract(match).strike == float(match.strike):
+                    out[i] = self.get(self._put(match, details, "single", ts))
+                else:       # off the 0.1 grid: the key would collide with the on-grid neighbour
+                    out[i] = QualifiedContract(copy.copy(match), _min_tick_of(details, match),
+                                               "single", ts)
         return out

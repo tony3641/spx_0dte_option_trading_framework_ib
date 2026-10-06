@@ -12,10 +12,11 @@ from spx_trade_desk.ib.pacing import RequestPacer
 EXP = "20261005"
 
 
-def det(strike, right, con_id, expiry=EXP, cls="SPXW", symbol="SPX", min_tick=0.05):
+def det(strike, right, con_id, expiry=EXP, cls="SPXW", symbol="SPX", min_tick=0.05,
+        exchange="SMART"):
     c = SimpleNamespace(conId=con_id, symbol=symbol, secType="OPT", tradingClass=cls,
                         lastTradeDateOrContractMonth=expiry, strike=float(strike), right=right,
-                        exchange="SMART", currency="USD", multiplier="100")
+                        exchange=exchange, currency="USD", multiplier="100")
     return SimpleNamespace(minTick=min_tick, contract=c)
 
 
@@ -365,3 +366,79 @@ async def test_kill_switch_forces_a_live_lookup_every_time(monkeypatch):
     await reg.resolve_for_order(ib, [_req(7700)])
     await reg.resolve_for_order(ib, [_req(7700)])
     assert ib.single_calls == [(7700.0, "P")] * 2
+
+
+# -- order path: exact-match guard lives in the registry ----------------------------------------
+
+class OnGridOnly(ListIb):
+    """IB lists only the on-grid strike: a request for the off-grid neighbour gets the on-grid row."""
+
+    async def req_contract_details(self, contract, timeout=30.0):
+        self.single_calls.append((contract.strike, contract.right))
+        return [det(round(contract.strike, 1), contract.right, 77, contract.lastTradeDateOrContractMonth,
+                    contract.tradingClass, contract.symbol)]
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_order_discards_a_cached_neighbour_strike_and_goes_live(caplog):
+    ib = OnGridOnly([det(5200.0, "P", 1)])
+    reg = _reg()
+    await reg.ensure_chain(ib, "SPX", EXP, "SPXW", now=0.0)
+    with caplog.at_level(logging.WARNING):
+        out = await reg.resolve_for_order(ib, [_req(5200.04)])     # the 0.1-rounded key hits 5200.0
+    assert out is None                                             # the live row is no exact match either
+    assert ib.single_calls == [(5200.04, "P")]                     # the cached hit did not short-circuit
+    assert reg.get(_key(5200.0, "P")).contract.conId == 1          # the good entry survives
+    refusals = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(refusals) == 1
+    msg = refusals[0].getMessage()
+    assert "5200.04" in msg and "5200.0" in msg
+
+
+@pytest.mark.asyncio
+async def test_a_live_exact_off_grid_result_is_returned_but_not_cached_over_the_neighbour():
+    ib = ListIb([det(5200.0, "P", 1)])                             # live lookups echo the requested strike
+    reg = _reg()
+    await reg.ensure_chain(ib, "SPX", EXP, "SPXW", now=0.0)
+    out = await reg.resolve_for_order(ib, [_req(5200.04)])
+    assert out is not None and out[0].contract.strike == pytest.approx(5200.04)
+    assert out[0].contract.conId != 1
+    assert reg.get(_key(5200.0, "P")).contract.conId == 1          # the neighbour was not overwritten
+
+
+@pytest.mark.asyncio
+async def test_a_cached_exact_hit_is_returned_without_a_live_lookup_or_warning(caplog):
+    ib = ListIb([det(5200.0, "P", 1), det(5205.0, "C", 2)])
+    reg = _reg()
+    await reg.ensure_chain(ib, "SPX", EXP, "SPXW", now=0.0)
+    with caplog.at_level(logging.WARNING):
+        out = await reg.resolve_for_order(ib, [_req(5200.0), _req(5205.0, "C")])
+    assert [q.contract.conId for q in out] == [1, 2]
+    assert ib.single_calls == []
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+# -- bulk rows must route through SMART ---------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_bulk_row_not_on_smart_is_rejected_and_counted_and_resolves_through_the_fallback():
+    from spx_trade_desk.core.perf import perf
+    before = perf.counter("registry.reject_exchange")
+    ib = ListIb([det(7700, "P", 1, exchange="CBOE"), det(7705, "P", 2, exchange=""), det(7710, "P", 3)])
+    reg = _reg(min_bulk=1)
+    assert await reg.ensure_chain(ib, "SPX", EXP, "SPXW", now=0.0) == 1
+    assert perf.counter("registry.reject_exchange") - before == 2
+    assert reg.get(_key(7710, "P")).source == "bulk"               # a SMART row is accepted
+    assert reg.get(_key(7700, "P")) is None and reg.get(_key(7705, "P")) is None
+    out = await reg.resolve_for_order(ib, [_req(7700)])            # order path: live lookup, never the row
+    assert out[0].source == "single" and ib.single_calls == [(7700.0, "P")]
+
+
+@pytest.mark.asyncio
+async def test_a_listing_of_non_smart_rows_falls_back_to_single_qualification():
+    ib = ListIb([det(7700, "P", 1, exchange="CBOE"), det(7705, "P", 2, exchange="")])
+    reg = _reg(min_bulk=2)                                         # fewer than two usable rows: fallback
+    got = await reg.qualify_keys(ib, EXP, "SPXW", [(7700, "P"), (7705, "P")], now=0.0)
+    assert set(got) == {(7700.0, "P"), (7705.0, "P")}
+    assert sorted(ib.single_calls) == [(7700.0, "P"), (7705.0, "P")]
+    assert reg.get(_key(7700, "P")).source == "single"

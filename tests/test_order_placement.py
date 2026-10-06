@@ -1841,23 +1841,41 @@ async def test_a_refused_single_leg_caches_nothing(mock_ib, app_state, sample_le
 
 @pytest.mark.asyncio
 async def test_an_off_grid_strike_is_refused_even_when_its_rounded_key_is_cached(mock_ib, app_state, sample_legs_single):
-    """The registry key rounds the strike to 0.1: a cache hit must not turn 5200.04 into the 5200.0 order."""
+    """The registry key rounds the strike to 0.1: a cache hit must not turn 5200.04 into the 5200.0 order.
+
+    The cached neighbour is discarded and the strike is looked up live; IB does not list 5200.04.
+    """
     await handle_place_order(mock_ib, app_state, sample_legs_single)               # caches 5200.0 C
+    mock_ib.unlisted_strikes.add(5200.04)
     off_grid = copy.deepcopy(sample_legs_single)
     off_grid["legs"][0]["strike"] = 5200.04
     out = await handle_place_order(mock_ib, app_state, off_grid)
     assert out["data"]["status"] == "Error" and "Failed to qualify" in out["data"]["message"]
+    assert mock_ib.count_calls("req_contract_details") == 2                       # the cached hit did not answer
     assert len(mock_ib.get_placed_orders()) == 1                                  # only the first order
 
 
 @pytest.mark.asyncio
 async def test_an_off_grid_combo_leg_is_refused_even_when_its_rounded_key_is_cached(mock_ib, app_state, sample_legs_combo):
     await handle_place_order(mock_ib, app_state, sample_legs_combo)               # caches both legs
+    mock_ib.unlisted_strikes.add(5210.04)
     off_grid = copy.deepcopy(sample_legs_combo)
     off_grid["legs"][1]["strike"] = 5210.04
     out = await handle_place_order(mock_ib, app_state, off_grid)
     assert out["data"]["status"] == "Error" and "Qualified 0/2 legs" in out["data"]["message"]
     assert len(mock_ib.get_placed_orders()) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_off_grid_strike_that_exists_live_orders_that_exact_contract_not_the_cached_neighbour(mock_ib, app_state, sample_legs_single):
+    await handle_place_order(mock_ib, app_state, sample_legs_single)               # caches 5200.0 C
+    cached_con_id = mock_ib.get_last_trade().contract.conId
+    off_grid = copy.deepcopy(sample_legs_single)
+    off_grid["legs"][0]["strike"] = 5200.04                                       # the mock lists any strike
+    out = await handle_place_order(mock_ib, app_state, off_grid)
+    assert out["data"]["status"] != "Error"
+    placed = mock_ib.get_last_trade().contract
+    assert placed.strike == pytest.approx(5200.04) and placed.conId != cached_con_id
 
 
 @pytest.mark.asyncio

@@ -42,9 +42,9 @@ def _registry_for(state) -> ContractRegistry:
 async def _resolve_legs(ib, state, requested):
     """Exact IB contracts for ``requested`` (SMART route) from the registry, or ``None``.
 
-    The registry key rounds the strike to 0.1, so every result, cached or live, is checked once more
-    against the request with the exact-match guard: a bare conId would otherwise ship the neighbouring
-    strike for an off-grid request.
+    The registry key rounds the strike to 0.1 and ``resolve_for_order`` already exact-matches every
+    candidate; every result is checked once more here (defence in depth): a bare conId would otherwise
+    ship the neighbouring strike for an off-grid request.
     """
     resolved = await _registry_for(state).resolve_for_order(ib, requested)
     if resolved is None:
