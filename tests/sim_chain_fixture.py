@@ -27,9 +27,10 @@ def _blend(tau: float) -> float:
 
 
 def r_true(z, tau):
+    """Linear put wing: a convex put-side quadratic makes far-OTM put prices non-monotone in strike."""
     z = np.asarray(z, dtype=float)
-    early = np.where(z <= 0, 1 - 0.12 * z + 0.03 * z * z, 1 - 0.06 * z + 0.02 * z * z)
-    late = np.where(z <= 0, 1 - 0.06 * z + 0.015 * z * z, 1 - 0.03 * z + 0.01 * z * z)
+    early = np.where(z <= 0, 1 - 0.14 * z, 1 - 0.06 * z + 0.02 * z * z)
+    late = np.where(z <= 0, 1 - 0.07 * z, 1 - 0.03 * z + 0.01 * z * z)
     return early + _blend(float(tau)) * (late - early)
 
 

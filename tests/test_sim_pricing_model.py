@@ -58,11 +58,20 @@ def test_lookup_matches_truth_on_grid_nodes():
 
 
 def test_ratio_at_extrapolates_in_total_variance_with_the_lee_cap():
-    row = r_true(Z_GRID, 345.0)
+    row = np.where(Z_GRID < 0, 1.0 - 0.5 * Z_GRID, 1.0)      # steep put wing: the edge slope clamps at -Q_MAX
     q0, slope = row[0] ** 2, max((row[1] ** 2 - row[0] ** 2) / 0.25, -2.0)
     assert ratio_at(row, np.array([-50.0]), 1e-3)[0] == pytest.approx(math.sqrt(q0 + slope * (-44.0)))
     assert ratio_at(row, np.array([-50.0]), 2.0)[0] == pytest.approx(math.sqrt(50.0))   # 2|z|/sw
-    assert ratio_at(row, np.array([0.5]), 1e6)[0] == pytest.approx(float(r_true(0.5, 345.0)), rel=1e-3)
+    assert ratio_at(row, np.array([0.5]), 1e6)[0] == pytest.approx(1.0, rel=1e-3)
+
+
+def test_ratio_at_is_continuous_across_the_grid_edges():
+    row = r_true(Z_GRID, 345.0)
+    for edge in (Z_GRID[0], Z_GRID[-1]):
+        inside, outside = (edge + d for d in (-1e-6, 1e-6)) if edge > 0 else (edge + 1e-6, edge - 1e-6)
+        a, b = ratio_at(row, np.array([inside, outside]), 1e-3)
+        assert abs(a - b) < 1e-4
+        assert a == pytest.approx(row[0 if edge < 0 else -1], abs=1e-4)
 
 
 def test_atm_level_anchor_order():
@@ -120,15 +129,7 @@ def test_deep_otm_at_the_open_is_finite_and_monotone():
         iv = pm.iv_sim(np.log(K / S), 0, sigma)
         assert np.isfinite(iv).all() and (iv > 0).all() and (iv <= 5.0).all()
         put = bsm_put(S, K, float(t_sim(pm.tau_min[0])), pm.rate, iv)
-        # The invented smile is itself arbitrageable for z in about [-6, -4.8] (its quadratic
-        # put wing is steeper than the digital price allows), and the lookup reproduces it
-        # faithfully. Monotonicity is asserted where the pricer controls the shape: the
-        # extrapolated wing (z < -6.5) and the near-money strikes (z > -4.5).
-        sw = pm.atm_base[0] * float(pm.link(0, sigma)) * math.sqrt(pm.t_cal[0])
-        z = np.log(K / S) / sw
-        ok = (z < -6.5) | (z > -4.5)
-        assert ok.any() and (z < -6.5).any() and (z > -4.5).any()
-        assert np.all(np.diff(put)[ok[:-1] & ok[1:]] >= -1e-9)
+        assert np.all(np.diff(put) >= -1e-9)
 
 
 def test_final_bar_uses_floored_clock():
