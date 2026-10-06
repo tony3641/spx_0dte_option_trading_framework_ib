@@ -23,6 +23,8 @@ from spx_trade_desk.sim.pricing_tables import (G_TAU, N_TAU, Q_MAX, RATIO_FLOOR,
                                                Z_GRID, Z_STEP, mid_bucket, tau_bucket)
 
 L_MIN, L_MAX = 0.5, 3.0
+SKEW_TILT_MAX = 1.25         # skew_beta never steepens the smile by more than this factor: beyond
+                             # it the wing puts stop being ordered in strike (arbitrageable)
 LEE_MIN_ABS_Z = 1.0          # the Lee cap only applies in the wings, never near the money
 SIGMA_MIN, SIGMA_MAX = 1e-4, 5.0
 _CENTERS_ASC = np.asarray(TAU_CENTERS[::-1])
@@ -37,12 +39,13 @@ def tau_row_weights(tau) -> Tuple[np.ndarray, np.ndarray]:
     return lo, x - lo
 
 
-def ratio_at(row, z, sw):
+def ratio_at(row, z, sw, tilt=None):
     """IV / ATM at z from one tau-interpolated f row.
 
     Inside the grid: linear in z. Outside: linear in r^2 with the edge slope (left clamped
-    to [-Q_MAX, 0], right to [-Q_MAX, Q_MAX]). Where |z| >= LEE_MIN_ABS_Z, r^2 <= 2|z| / sw
-    (Lee: total variance <= 2|log-moneyness|; sw = ATM * sqrt(T_cal)). Floored at RATIO_FLOOR.
+    to [-Q_MAX, 0], right to [-Q_MAX, Q_MAX]). ``tilt`` (None: off) scales (r - 1) before the
+    cap. Where |z| >= LEE_MIN_ABS_Z, r^2 <= 2|z| / sw (Lee: total variance <= 2|log-moneyness|;
+    sw = ATM * sqrt(T_cal)). Floored at RATIO_FLOOR.
     """
     z = np.asarray(z, dtype=float)
     r = np.interp(z, Z_GRID, row)
@@ -52,6 +55,9 @@ def ratio_at(row, z, sw):
     right = min(max((qn - row[-2] ** 2) / Z_STEP, -Q_MAX), Q_MAX)
     q = np.where(z < Z_GRID[0], q0 + left * (z - Z_GRID[0]), q)
     q = np.where(z > Z_GRID[-1], qn + right * (z - Z_GRID[-1]), q)
+    if tilt is not None:
+        r = np.maximum(1.0 + (np.sqrt(np.maximum(q, RATIO_FLOOR ** 2)) - 1.0) * tilt, RATIO_FLOOR)
+        q = r * r
     az = np.abs(z)
     q = np.where(az >= LEE_MIN_ABS_Z, np.minimum(q, 2.0 * az / sw), q)
     return np.sqrt(np.maximum(q, RATIO_FLOOR ** 2))
@@ -122,9 +128,9 @@ class PricingModel:
         L = self.link(t, sigma)
         atm = self.atm_base[t] * L
         sw = atm * math.sqrt(self.t_cal[t])
-        ratio = ratio_at(self.f_rows[t], m / sw, sw)
-        if self.skew_beta:
-            ratio = np.maximum(1.0 + (ratio - 1.0) * (1.0 + self.skew_beta * (L - 1.0)), RATIO_FLOOR)
+        tilt = (np.clip(1.0 + self.skew_beta * (L - 1.0), 0.0, SKEW_TILT_MAX)
+                if self.skew_beta else None)
+        ratio = ratio_at(self.f_rows[t], m / sw, sw, tilt)
         return np.clip(atm * ratio * CAL_TO_SIM, SIGMA_MIN, SIGMA_MAX)
 
     def half_spread(self, mid, t: int):

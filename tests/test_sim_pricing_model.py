@@ -321,3 +321,29 @@ def test_pricing_summary_survives_a_malformed_library_block(tmp_path, monkeypatc
     s = library.pricing_summary("auto")
     assert s["tier"] == "cold"
     assert any(x.startswith("pricing: ") and "unusable" in x for x in s["warnings"])
+
+
+# Price-ordering tolerance for a strike step: half of the $0.10 SPX option tick. The tracked Cold
+# default alone already sits at about -0.005 near the wing without any tilt (skew_beta = 0).
+NO_ARB_TOL = 0.05
+
+
+@pytest.mark.parametrize("skew_beta", [0.0, 0.5, 1.0])
+def test_skew_tilt_keeps_put_prices_ordered_across_the_level_link(skew_beta, monkeypatch):
+    """Tracked Cold default, 5m bars, strikes +-15%: for every level link L in [1, L_MAX] a put
+    never falls with strike and never rises by more than the strike step (no vertical-spread
+    arbitrage), at the open and into the close."""
+    from spx_trade_desk.sim.pricing_tables import load_cold
+    pm = build_pricing_model(_model(pricing=load_cold(), ushape=np.ones(78)),
+                             SimRunConfig(strategy_name="T", bar_size="5m", skew_beta=skew_beta))
+    S, step = 6000.0, 5.0
+    K = np.arange(0.85 * S, 1.15 * S + 1e-9, step)
+    worst_down = worst_up = 0.0
+    for L in np.linspace(1.0, L_MAX, 21):
+        monkeypatch.setattr(type(pm), "link", lambda self, t, s, L=L: np.full(np.shape(s), L))
+        for t in (0, 5, 20, 40, 60, 70, 75, 77):
+            iv = pm.iv_sim(np.log(K / S), t, np.asarray(1e-3))
+            tau = float(t_sim(max(pm.tau_min[t], 2.5)))
+            d = np.diff(bsm_put(S, K, tau, pm.rate, iv))
+            worst_down, worst_up = min(worst_down, d.min()), max(worst_up, (d - step).max())
+    assert worst_down >= -NO_ARB_TOL and worst_up <= NO_ARB_TOL, (worst_down, worst_up)
