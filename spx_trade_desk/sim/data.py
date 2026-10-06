@@ -10,7 +10,7 @@ import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -85,6 +85,33 @@ def load_bars_yfinance(bar_seconds: int, lookback_days: int) -> BarSeries:
         vix_closes=vix,
         warnings=["yfinance intraday history is shallow; prefer a CSV for stable calibration"],
     )
+
+
+def load_vix1d_daily(period: str = "2y") -> Dict[str, float]:
+    """VIX1D daily closes {YYYYMMDD: close} from yfinance; {} when unavailable.
+
+    Optional like the VIX series: the pricing anchor falls back without it.
+    """
+    try:
+        import yfinance as yf   # deferred: keeps startup light when unused
+        df = yf.download("^VIX1D", interval="1d", period=period, progress=False, auto_adjust=False)
+    except Exception as e:
+        logger.warning(f"^VIX1D fetch failed: {e}")
+        return {}
+    if df is None or df.empty:
+        return {}
+    closes = df["Close"].to_numpy().ravel()
+    return {ts.strftime("%Y%m%d"): float(c) for ts, c in zip(df.index, closes) if np.isfinite(c)}
+
+
+def run_vix1d_prev(daily: Dict[str, float], now: Optional[datetime] = None) -> Optional[float]:
+    """VIX1D prior close for a sim run: the last close before today, or today's close once
+    the session is over (the run then models the next session)."""
+    from spx_trade_desk.market.hours import ET
+    now = now.astimezone(ET) if now is not None else datetime.now(ET)
+    today = now.strftime("%Y%m%d")
+    keys = [k for k in daily if k < today or (k == today and now.hour >= 16)]
+    return float(daily[max(keys)]) if keys else None
 
 
 async def _load_bars_ib(ib, bar_seconds: int, lookback_days: int) -> BarSeries:

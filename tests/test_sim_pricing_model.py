@@ -174,3 +174,119 @@ def test_pricing_model_pickles_bit_identically():
     back = pickle.loads(pickle.dumps(pm))
     m = np.linspace(-0.02, 0.01, 7)
     assert np.array_equal(back.iv_sim(m, 100, 2e-3), pm.iv_sim(m, 100, 2e-3))
+
+
+# ---- tier selection (spec section 6.2) ---------------------------------------------
+import json
+from datetime import date, datetime
+
+from spx_trade_desk.market.hours import ET
+from spx_trade_desk.sim.pricing_tables import (MIN_BUCKET_SWEEPS, PricingTables, read_model_file,
+                                               select_tables)
+
+TODAY = date(2030, 3, 5)
+
+
+def _src(scale, n_days=20, sweeps=100):
+    t = truth_tables(n_days=n_days, sweeps=sweeps)
+    t.f = t.f * scale
+    return t
+
+
+COLD = _src(0.9, n_days=1)
+
+
+def _model_dict(days=12, regime_days=6, last="20300304"):
+    return {"v": 1, "days": days, "last_capture": last,
+            "pooled": _src(1.0, n_days=days).to_dict(),
+            "regimes": {"12-18": _src(1.1, n_days=regime_days).to_dict()},
+            "regime_days": {"12-18": regime_days},
+            "scores": {"library": {"passed": 6, "scored": 7}}}
+
+
+def test_auto_picks_the_regime_tables():
+    t, info, w = select_tables(_model_dict(), COLD, "auto", 13.0, TODAY)
+    assert info["tier"] == "library" and info["regime"] == "12-18" and info["fallback_buckets"] == []
+    assert np.allclose(t.f, _src(1.1).f) and info["days"] == 12 and not info["stale"]
+    assert any(x.startswith("pricing: tier library") and "6/7" in x for x in w)
+
+
+@pytest.mark.parametrize("vix1d, kw", [(None, {}), (13.0, {"regime_days": 4}),
+                                       (13.0, {"days": 9}), (30.0, {})])
+def test_auto_falls_back_to_thin(vix1d, kw):
+    t, info, _ = select_tables(_model_dict(**kw), COLD, "auto", vix1d, TODAY)
+    assert info["tier"] == "thin" and np.allclose(t.f, _src(1.0).f)
+
+
+def test_no_model_is_cold():
+    t, info, w = select_tables(None, COLD, "auto", 13.0, TODAY)
+    assert info["tier"] == "cold" and info["days"] == 0 and np.allclose(t.f, COLD.f)
+    assert any("last capture none" in x for x in w)
+
+
+def test_per_bucket_fallback_goes_one_level_at_a_time():
+    m = _model_dict()
+    reg = PricingTables.from_dict(m["regimes"]["12-18"])
+    reg.f_sweeps[6] = MIN_BUCKET_SWEEPS - 1
+    m["regimes"]["12-18"] = reg.to_dict()
+    t, info, _ = select_tables(m, COLD, "auto", 13.0, TODAY)
+    assert info["fallback_buckets"] == ["<15->thin"]
+    assert np.allclose(t.f[6], _src(1.0).f[6]) and np.allclose(t.f[5], _src(1.1).f[5])
+    pooled = PricingTables.from_dict(m["pooled"])
+    pooled.f_sweeps[6] = 0
+    m["pooled"] = pooled.to_dict()
+    t, info, _ = select_tables(m, COLD, "auto", 13.0, TODAY)
+    assert info["fallback_buckets"] == ["<15->cold"] and np.allclose(t.f[6], COLD.f[6])
+
+
+def test_level_comes_from_the_first_source_with_a_curve():
+    m = _model_dict()
+    reg = PricingTables.from_dict(m["regimes"]["12-18"])
+    reg.g[:] = np.nan
+    reg.atm_vix1d_ratio = 2.0
+    m["regimes"]["12-18"] = reg.to_dict()
+    t, info, _ = select_tables(m, COLD, "auto", 13.0, TODAY)
+    assert info["tier"] == "library" and np.isfinite(t.g).all()
+    assert t.atm_vix1d_ratio == pytest.approx(_src(1.0).atm_vix1d_ratio)
+
+
+def test_pinned_tier():
+    _, info, _ = select_tables(_model_dict(), COLD, "cold", 13.0, TODAY)
+    assert info["tier"] == "cold" and info["requested"] == "cold"
+    _, info, w = select_tables(_model_dict(), COLD, "library", None, TODAY)
+    assert info["tier"] == "thin" and any("library tier unavailable" in x for x in w)
+    with pytest.raises(ValueError, match="pricing_tier"):
+        select_tables(None, COLD, "regime", 13.0, TODAY)
+
+
+def test_stale_after_ten_trading_days():
+    _, info, _ = select_tables(_model_dict(), COLD, "auto", 13.0, date(2030, 3, 18))
+    assert info["stale"] is False
+    _, info, w = select_tables(_model_dict(), COLD, "auto", 13.0, date(2030, 3, 19))
+    assert info["stale"] is True and any("stale" in x for x in w)
+
+
+def test_model_file_errors_fall_back_to_cold(tmp_path):
+    assert read_model_file(tmp_path / "missing.json") == (None, None)
+    bad = tmp_path / "pricing_model.json"
+    bad.write_text("{not json")
+    model, err = read_model_file(bad)
+    assert model is None and err.startswith("pricing: cannot read")
+    _, info, w = select_tables({"v": 1, "pooled": {"v": 99}}, COLD, "auto", 13.0, TODAY)
+    assert info["tier"] == "cold" and any("unusable" in x for x in w)
+
+
+def test_resolve_pricing_reads_the_model_file(tmp_path, monkeypatch):
+    from spx_trade_desk.sim import data as sim_data
+    from spx_trade_desk.sim import library
+    path = tmp_path / "pricing_model.json"
+    path.write_text(json.dumps(_model_dict()))
+    monkeypatch.setattr(library, "MODEL_PATH", path)
+    monkeypatch.setattr(sim_data, "load_vix1d_daily", lambda period="2y": {"20300304": 13.0})
+    monkeypatch.setattr(library, "load_cold", lambda: COLD)
+    now = datetime(2030, 3, 5, 9, 0, tzinfo=ET)
+    _, info, vix1d_prev, _ = library.resolve_pricing("auto", now=now)
+    assert vix1d_prev == 13.0 and info["tier"] == "library"
+    path.write_text("{oops")
+    _, info, _, w = library.resolve_pricing("auto", now=now)
+    assert info["tier"] == "cold" and w[0].startswith("pricing: cannot read")

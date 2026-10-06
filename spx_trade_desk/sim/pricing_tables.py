@@ -8,9 +8,12 @@
 All IV is in calendar units. pandas is imported inside the builders only, so a
 spawned sim worker that unpickles the per-run pricer never loads it.
 """
+import json
 import math
 from dataclasses import dataclass, replace
-from typing import Dict, Optional, Sequence, Tuple
+from datetime import date
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -250,3 +253,113 @@ def fill_empty_rows(t: PricingTables) -> PricingTables:
                     arr[b] = arr[min(ok, key=lambda o: (abs(o - b), o))]
         out[name] = arr
     return replace(t, **out)
+
+
+def regime_of(vix1d_prev: Optional[float]) -> Optional[str]:
+    """VIX1D prior-close regime: <12, 12-18, 18-25, >=25; None when unknown."""
+    if vix1d_prev is None or not (vix1d_prev > 0):
+        return None
+    if vix1d_prev < 12.0:
+        return "lt12"
+    if vix1d_prev < 18.0:
+        return "12-18"
+    if vix1d_prev < 25.0:
+        return "18-25"
+    return "gt25"
+
+
+def load_cold(path=None) -> PricingTables:
+    """The tracked Cold default; it must be complete (it is every fallback's last level)."""
+    path = Path(path) if path else COLD_PATH
+    t = PricingTables.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    if not (all(t.row_usable(b) for b in range(N_TAU)) and t.level_usable()):
+        raise ValueError(f"{path.name} is incomplete; regenerate it with "
+                         f"'python -m spx_trade_desk.sim.library build --write-default'")
+    return t
+
+
+def read_model_file(path) -> Tuple[Optional[dict], Optional[str]]:
+    """(model, None); (None, None) when the file is absent; (None, warning) when unreadable."""
+    path = Path(path)
+    if not path.exists():
+        return None, None
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            raise ValueError("not a JSON object")
+        return d, None
+    except (OSError, ValueError) as e:
+        return None, f"pricing: cannot read {path.name} ({e}); using the Cold default"
+
+
+def _busdays(day: str, today: date) -> int:
+    return int(np.busday_count(f"{day[:4]}-{day[4:6]}-{day[6:]}", today.isoformat()))
+
+
+def select_tables(model: Optional[dict], cold: PricingTables, tier: str = "auto",
+                  vix1d_prev: Optional[float] = None, today: Optional[date] = None):
+    """Tables for one run (spec section 6.2) -> (tables, info, warnings).
+
+    Levels: library (the run's VIX1D regime; >= REGIME_MIN_DAYS days in it and
+    >= LIBRARY_MIN_DAYS in the library) -> thin (pooled, >= 1 day) -> cold. A tau bucket
+    with < MIN_BUCKET_SWEEPS sweeps (or no usable row) falls back one level at a time;
+    g and the VIX1D ratio come from the first level that has them.
+    """
+    if tier not in TIERS:
+        raise ValueError(f"pricing_tier must be one of {TIERS}")
+    warnings: List[str] = []
+    regime = regime_of(vix1d_prev)
+    pooled = reg = None
+    if model is not None:
+        try:
+            pooled = PricingTables.from_dict(model["pooled"])
+            if regime is not None and regime in (model.get("regimes") or {}):
+                reg = PricingTables.from_dict(model["regimes"][regime])
+        except (KeyError, TypeError, ValueError) as e:
+            warnings.append(f"pricing: model file unusable ({e}); using the Cold default")
+            model = pooled = reg = None
+    days = int(model.get("days", 0)) if model else 0
+    lib_ok = (reg is not None and days >= LIBRARY_MIN_DAYS
+              and int((model.get("regime_days") or {}).get(regime, 0)) >= REGIME_MIN_DAYS)
+    levels = [("library", reg if lib_ok else None),
+              ("thin", pooled if pooled is not None and pooled.n_days >= 1 else None),
+              ("cold", cold)]
+    chain = [(n, t) for n, t in levels[{"auto": 0, "library": 0, "thin": 1, "cold": 2}[tier]:]
+             if t is not None]
+    resolved = chain[0][0]
+    if tier in ("library", "thin") and resolved != tier:
+        why = " (no VIX1D prior close for the run)" if tier == "library" and regime is None else ""
+        warnings.append(f"pricing: {tier} tier unavailable{why}; using {resolved}")
+    f = np.empty((N_TAU, N_Z))
+    hs = np.empty((N_TAU, N_MID))
+    sweeps = np.zeros(N_TAU, dtype=int)
+    used: List[str] = []
+    for b in range(N_TAU):
+        for name, t in chain:
+            if name == "cold" or (t.f_sweeps[b] >= MIN_BUCKET_SWEEPS and t.row_usable(b)):
+                f[b], hs[b], sweeps[b] = t.f[b], t.hs[b], t.f_sweeps[b]
+                used.append(name)
+                break
+    level_name, level = next((n, t) for n, t in chain if t.level_usable())
+    fallback = [f"{TAU_LABELS[b]}->{used[b]}" for b in range(N_TAU) if used[b] != resolved]
+    provisional = any(t.provisional for n, t in chain if n in used or n == level_name)
+    tables = PricingTables(f=f, f_sweeps=sweeps, g=level.g.copy(), hs=hs,
+                           atm_vix1d_ratio=level.atm_vix1d_ratio, n_days=chain[0][1].n_days,
+                           provisional=provisional)
+    last = model.get("last_capture") if model else None
+    stale = bool(last and resolved != "cold" and today is not None
+                 and _busdays(last, today) > STALE_TRADING_DAYS)
+    scores = ((model or {}).get("scores") or {}).get(resolved)
+    score_txt = (f"harness {scores.get('passed')}/{scores.get('scored')} buckets passed"
+                 if scores else "no harness score")
+    warnings.append(f"pricing: tier {resolved}, {len(fallback)} of {N_TAU} tau buckets fell back, "
+                    f"{days} library days, last capture {last or 'none'}, {score_txt}")
+    if stale:
+        warnings.append(f"pricing: chain library is stale (no capture in over "
+                        f"{STALE_TRADING_DAYS} trading days)")
+    if provisional:
+        warnings.append("pricing: the Cold default is provisional (built from too few captured days)")
+    info = {"tier": resolved, "requested": tier, "regime": regime, "fallback_buckets": fallback,
+            "days": days, "last_capture": last, "stale": stale, "provisional": provisional,
+            "scores": scores}
+    return tables, info, warnings

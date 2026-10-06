@@ -584,3 +584,13 @@ def log_capture():
 def pytest_configure(config):
     """Register markers used by the ported trade-log suite."""
     config.addinivalue_line("markers", "slow: long-running integration test")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_sim_pricing_library(tmp_path_factory, monkeypatch):
+    """Sim tests never read the developer's local chain library or call yfinance for VIX1D."""
+    from spx_trade_desk.sim import data as sim_data
+    from spx_trade_desk.sim import library
+    monkeypatch.setattr(library, "MODEL_PATH",
+                        tmp_path_factory.getbasetemp() / "no_chain_library" / "pricing_model.json")
+    monkeypatch.setattr(sim_data, "load_vix1d_daily", lambda period="2y": {})

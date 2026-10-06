@@ -7,8 +7,10 @@ IV stays in IB calendar units; minutes to the close come from the clock module.
 import json
 import logging
 import math
+import os
+import sys
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Sequence
@@ -16,8 +18,14 @@ from typing import Dict, Iterator, List, Optional, Sequence
 import numpy as np
 
 from spx_trade_desk.core.config import CHAIN_QUOTE_MAX_AGE_S
+from spx_trade_desk.market.hours import ET
 from spx_trade_desk.resources import CHAIN_LIBRARY_DIR
+from spx_trade_desk.sim import data as sim_data
 from spx_trade_desk.sim.clock import RTH_MINUTES, minutes_to_close, session_close_time, t_cal
+from spx_trade_desk.sim.pricing_tables import (COLD_PATH, LIBRARY_MIN_DAYS, N_TAU, TAU_LABELS,
+                                               PricingTables, build_tables, fill_empty_rows,
+                                               load_cold, read_model_file, regime_of,
+                                               select_tables)
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +33,7 @@ MODEL_NAME = "pricing_model.json"
 MODEL_PATH = CHAIN_LIBRARY_DIR / MODEL_NAME
 CACHE_DIRNAME = ".cache"
 EXTRACT_VERSION = 1
+MODEL_VERSION = 1
 
 # Capture hygiene (the thresholds the old smile capture used): below a 0.10 bid the quote
 # is tick-pinned; outside this |delta| band the IV carries no vega information.
@@ -229,3 +238,146 @@ def load_days(root, exclude: Sequence[str] = ()) -> List[DayData]:
         if d is not None:
             out.append(d)
     return out
+
+
+def _iso(day: str) -> str:
+    return f"{day[:4]}-{day[4:6]}-{day[6:]}"
+
+
+def prior_closes(days: Sequence[DayData], daily: Dict[str, float],
+                 overrides: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+    """VIX1D prior close per library day: an override, else the latest yfinance close
+    before the day, else the previous library day's closing VIX1D (its last record within
+    15 minutes of the close, and that day the previous business day)."""
+    out: Dict[str, float] = {}
+    keys = sorted(daily)
+    lib = sorted(days, key=lambda d: d.day)
+    for i, d in enumerate(lib):
+        if overrides and d.day in overrides:
+            out[d.day] = float(overrides[d.day])
+            continue
+        earlier = [k for k in keys if k < d.day]
+        if earlier:
+            out[d.day] = float(daily[earlier[-1]])
+            continue
+        if i > 0:
+            p = lib[i - 1]
+            j = int(np.argmin(p.rec_tau))
+            if (p.rec_tau[j] <= 15.0 and math.isfinite(p.rec_vix1d[j])
+                    and int(np.busday_count(_iso(p.day), _iso(d.day))) == 1):
+                out[d.day] = float(p.rec_vix1d[j])
+    return out
+
+
+def build_model_dict(days: Sequence[DayData], prev: Dict[str, float],
+                     scores: Optional[dict] = None) -> dict:
+    days = sorted(days, key=lambda d: d.day)
+    groups: Dict[str, List[DayData]] = {}
+    for d in days:
+        r = regime_of(prev.get(d.day))
+        if r is not None:
+            groups.setdefault(r, []).append(d)
+    return {"v": MODEL_VERSION, "built": datetime.now(ET).isoformat(timespec="seconds"),
+            "days": len(days), "first_day": days[0].day if days else None,
+            "last_capture": days[-1].day if days else None,
+            "pooled": build_tables(days, prev).to_dict(),
+            "regimes": {r: build_tables(ds, prev).to_dict() for r, ds in sorted(groups.items())},
+            "regime_days": {r: len(ds) for r, ds in sorted(groups.items())},
+            "scores": dict(scores or {})}
+
+
+def write_model(model: dict, path) -> None:
+    """Atomic write: a sim run never reads a half-written model."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(model, separators=(",", ":")), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def model_summary(model: dict) -> dict:
+    pooled = model.get("pooled") or {}
+    return {"days": model.get("days", 0), "first_day": model.get("first_day"),
+            "last_capture": model.get("last_capture"),
+            "regime_days": model.get("regime_days", {}),
+            "sweeps": dict(zip(TAU_LABELS, pooled.get("f_sweeps", [0] * N_TAU))),
+            "scores": model.get("scores", {})}
+
+
+def build_and_write(root=None, overrides: Optional[Dict[str, float]] = None,
+                    model_path=None) -> dict:
+    """Rebuild the pricing model from every library day; keeps the stored harness scores."""
+    root = Path(root) if root else CHAIN_LIBRARY_DIR
+    if model_path is None:
+        model_path = MODEL_PATH if root == CHAIN_LIBRARY_DIR else root / MODEL_NAME
+    days = load_days(root)
+    old, _ = read_model_file(model_path)
+    prev = prior_closes(days, sim_data.load_vix1d_daily(), overrides)
+    model = build_model_dict(days, prev, (old or {}).get("scores"))
+    write_model(model, model_path)
+    logger.info(f"pricing model rebuilt from {len(days)} library days -> {model_path}")
+    return model_summary(model)
+
+
+def write_cold_default(root=None, overrides: Optional[Dict[str, float]] = None,
+                       path=None) -> PricingTables:
+    """Regenerate the tracked Cold default from the library (aggregate tables only)."""
+    days = load_days(Path(root) if root else CHAIN_LIBRARY_DIR)
+    if not days:
+        raise ValueError("no library days to build the Cold default from")
+    prev = prior_closes(days, sim_data.load_vix1d_daily(), overrides)
+    t = fill_empty_rows(build_tables(days, prev, allow_partial_g=True))
+    if not (all(t.row_usable(b) for b in range(N_TAU)) and t.level_usable()):
+        raise ValueError("Cold default incomplete: it needs a usable shape and spread row, an ATM "
+                         "curve and a VIX1D prior close for a library day (pass --vix1d-prev)")
+    t = replace(t, provisional=bool(t.provisional or len(days) < LIBRARY_MIN_DAYS))
+    out = Path(path) if path else COLD_PATH
+    out.write_text(json.dumps(t.to_dict(), indent=1) + "\n", encoding="utf-8")
+    return t
+
+
+def resolve_pricing(tier: str = "auto", now: Optional[datetime] = None):
+    """Tables for one sim run -> (tables, info, vix1d_prev, warnings). Never builds."""
+    now = now or datetime.now(ET)
+    vix1d_prev = sim_data.run_vix1d_prev(sim_data.load_vix1d_daily(), now)
+    model, err = read_model_file(MODEL_PATH)
+    tables, info, warnings = select_tables(model, load_cold(), tier, vix1d_prev,
+                                           now.astimezone(ET).date())
+    if err:
+        warnings.insert(0, err)
+    return tables, info, vix1d_prev, warnings
+
+
+def _parse_overrides(items) -> Dict[str, float]:
+    out = {}
+    for it in items or []:
+        day, _, val = it.partition("=")
+        if len(day) != 8 or not day.isdigit() or not val:
+            raise SystemExit(f"bad --vix1d-prev {it!r}; use YYYYMMDD=VALUE")
+        out[day] = float(val)
+    return out
+
+
+def main(argv=None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(prog="python -m spx_trade_desk.sim.library",
+                                 description="Build the sim pricing model from the chain library.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    b = sub.add_parser("build", help="rebuild pricing_model.json from the library")
+    b.add_argument("--root", default=None, help="library directory (default: data/chain_library)")
+    b.add_argument("--write-default", action="store_true",
+                   help="also regenerate the tracked Cold default config/sim_pricing_default.json")
+    b.add_argument("--vix1d-prev", action="append", default=[], metavar="YYYYMMDD=VALUE",
+                   help="VIX1D prior close for a library day (overrides yfinance)")
+    args = ap.parse_args(argv)
+    overrides = _parse_overrides(args.vix1d_prev)
+    print(json.dumps(build_and_write(args.root, overrides), indent=2))
+    if args.write_default:
+        t = write_cold_default(args.root, overrides)
+        print(f"Cold default written to {COLD_PATH} (days={t.n_days}, provisional={t.provisional})")
+    return 0
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+    sys.exit(main())

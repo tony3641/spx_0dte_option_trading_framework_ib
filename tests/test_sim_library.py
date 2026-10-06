@@ -137,3 +137,98 @@ def test_load_days_lists_day_files_only(tmp_path):
     (tmp_path / "notes.jsonl.gz").write_bytes(b"")
     assert [d.day for d in library.load_days(tmp_path)] == ["20300304", "20300305"]
     assert [d.day for d in library.load_days(tmp_path, exclude=("20300304",))] == ["20300305"]
+
+
+# ---- builder, Cold default, VIX1D (spec sections 5.2, 5.4, 6.1) ------------------------
+import json
+import sys
+from datetime import datetime
+
+import pandas as pd
+
+from spx_trade_desk.market.hours import ET
+from spx_trade_desk.sim.data import load_vix1d_daily as real_load_vix1d_daily
+from spx_trade_desk.sim.data import run_vix1d_prev
+from spx_trade_desk.sim.pricing_tables import COLD_PATH, N_TAU, PricingTables, load_cold
+
+TABLE_KEYS = {"v", "z_grid", "tau_edges", "mid_edges", "g_tau", "f", "f_sweeps", "g", "hs",
+              "atm_vix1d_ratio", "n_days", "provisional"}
+
+
+def test_prior_closes_order(tmp_path):
+    days = [extract_day(write_day(tmp_path, "20300304", seed=1)),             # last record tau 4
+            extract_day(write_day(tmp_path, "20300305", seed=2, step_min=30)),  # last record tau 29
+            extract_day(write_day(tmp_path, "20300307", seed=3, step_min=30))]
+    prev = library.prior_closes(days, {}, {"20300307": 14.0})
+    assert prev == {"20300305": 13.0, "20300307": 14.0}       # 0305 from 0304's closing VIX1D
+    prev = library.prior_closes(days, {"20300301": 11.0}, None)
+    assert prev == {"20300304": 11.0, "20300305": 11.0, "20300307": 11.0}
+
+
+def test_build_and_write_keeps_scores(tmp_path):
+    for i, d in enumerate(("20300304", "20300305")):
+        write_day(tmp_path, d, seed=i, step_min=15)
+    path = tmp_path / "pricing_model.json"
+    path.write_text(json.dumps({"scores": {"thin": {"passed": 1, "scored": 2}}}))
+    s = library.build_and_write(tmp_path, overrides={"20300304": 13.0, "20300305": 13.0})
+    m = json.loads(path.read_text())
+    assert s["days"] == m["days"] == 2 and m["last_capture"] == "20300305"
+    assert m["scores"] == {"thin": {"passed": 1, "scored": 2}}
+    assert m["regime_days"] == {"12-18": 2} and set(m["regimes"]) == {"12-18"}
+    assert PricingTables.from_dict(m["pooled"]).n_days == 2
+    assert s["sweeps"]["<15"] == m["pooled"]["f_sweeps"][6]
+
+
+def test_write_cold_default_from_a_partial_day(tmp_path):
+    write_day(tmp_path, "20300304", seed=1, start="13:25")
+    out = tmp_path / "cold.json"
+    library.write_cold_default(tmp_path, {"20300304": 13.0}, path=out)
+    back = load_cold(out)
+    assert back.provisional and all(back.row_usable(b) for b in range(N_TAU))
+    assert np.array_equal(back.f[0], back.f[2])     # earlier buckets copy the first captured one
+    assert set(json.loads(out.read_text())) == TABLE_KEYS
+
+
+def test_write_cold_default_needs_a_vix1d_prior_close(tmp_path):
+    write_day(tmp_path, "20300304", seed=1, start="13:25")
+    with pytest.raises(ValueError, match="VIX1D"):
+        library.write_cold_default(tmp_path, {}, path=tmp_path / "cold.json")
+
+
+def test_committed_cold_default_is_complete():
+    t = load_cold()
+    assert all(t.row_usable(b) for b in range(N_TAU)) and t.level_usable()
+    assert set(json.loads(COLD_PATH.read_text())) == TABLE_KEYS     # aggregates only: no dates
+
+
+def test_cli_build(tmp_path, capsys):
+    write_day(tmp_path, "20300304", seed=1, step_min=60)
+    assert library.main(["build", "--root", str(tmp_path), "--vix1d-prev", "20300304=13"]) == 0
+    assert (tmp_path / "pricing_model.json").exists()
+    assert '"days": 1' in capsys.readouterr().out
+
+
+class _FakeYF:
+    def __init__(self, df=None, exc=None):
+        self.df, self.exc = df, exc
+
+    def download(self, *a, **k):
+        if self.exc:
+            raise self.exc
+        return self.df
+
+
+def test_load_vix1d_daily_parses_and_fails_soft(monkeypatch):
+    df = pd.DataFrame({"Close": [11.0, float("nan"), 12.5]},
+                      index=pd.to_datetime(["2030-03-01", "2030-03-04", "2030-03-05"]))
+    monkeypatch.setitem(sys.modules, "yfinance", _FakeYF(df))
+    assert real_load_vix1d_daily() == {"20300301": 11.0, "20300305": 12.5}
+    monkeypatch.setitem(sys.modules, "yfinance", _FakeYF(exc=RuntimeError("offline")))
+    assert real_load_vix1d_daily() == {}
+
+
+def test_run_vix1d_prev():
+    daily = {"20300301": 11.0, "20300304": 12.0}
+    assert run_vix1d_prev(daily, datetime(2030, 3, 4, 10, 0, tzinfo=ET)) == 11.0
+    assert run_vix1d_prev(daily, datetime(2030, 3, 4, 16, 30, tzinfo=ET)) == 12.0
+    assert run_vix1d_prev({}, datetime(2030, 3, 4, 10, 0, tzinfo=ET)) is None
