@@ -17,6 +17,7 @@ from spx_trade_desk.ib.line_budget import LineBudgetExceeded
 from spx_trade_desk.core.config import (
     CHAIN_QUOTE_MAX_AGE_S, CHAIN_STREAM_UPDATE_INTERVAL, MONTHLY_CACHE_TTL,
 )
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import now_et, is_cboe_options_open
 from spx_trade_desk.market.chain_fetcher import fetch_option_chain
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict, GEXResult, OptionData
@@ -275,6 +276,24 @@ def _collect_stream_quotes(tickers: dict, oi_fallback: dict, seen: Optional[dict
     return ticks, live_options, book_options
 
 
+STREAM_SUBSCRIBE_CHUNK = 30      # subscriptions per pass: quote pushes keep flowing during a long fill
+
+
+async def _subscribe_new_keys(ib, state, qualified: Dict, new_keys: List) -> int:
+    """Subscribe up to STREAM_SUBSCRIBE_CHUNK qualified keys (nearest first) through the paced path."""
+    subscribed = 0
+    for key in [k for k in new_keys if k in qualified][:STREAM_SUBSCRIBE_CHUNK]:
+        try:
+            stream = await ib.subscribe_tick_paced(qualified[key], "101", share="stream")
+        except LineBudgetExceeded as e:
+            logger.warning(f"Chain stream: {e}")
+            break
+        state.chain_stream_tickers[key] = stream
+        state.chain_stream_contracts[key] = qualified[key]
+        subscribed += 1
+    return subscribed
+
+
 async def chain_stream_loop(ib, state, broadcast_fn):
     """Maintain persistent market-data subscriptions for the strikes nearest the focus.
 
@@ -338,21 +357,9 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             new_keys = sorted(desired_keys - current_keys,
                               key=lambda k: (abs(k[0] - focus_center), k))
             if new_keys:
-                qualified = await state.qual_cache.qualify(
+                qualified = await state.contracts.qualify_keys(
                     ib, state.expiration, state.trading_class, new_keys, time.monotonic())
-                subscribed = 0
-                for key in new_keys:
-                    qc = qualified.get(key)
-                    if qc is None:
-                        continue
-                    try:
-                        stream = ib.subscribe_tick(qc, "101", share="stream")
-                    except LineBudgetExceeded as e:
-                        logger.warning(f"Chain stream: {e}")
-                        break
-                    state.chain_stream_tickers[key] = stream
-                    state.chain_stream_contracts[key] = qc
-                    subscribed += 1
+                subscribed = await _subscribe_new_keys(ib, state, qualified, new_keys)
                 if subscribed:
                     logger.info(f"Chain stream subscribed {subscribed}/{len(new_keys)}; "
                                 f"active_subs={len(state.chain_stream_tickers)}")
@@ -360,9 +367,10 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             if len(state.chain_stream_tickers) != last_sub_count:
                 last_sub_count = len(state.chain_stream_tickers)
                 logger.info(f"Chain stream active subscriptions: {last_sub_count} "
-                            f"(unknown_blacklist={len(state.qual_cache.unknown)})")
+                            f"(unknown_blacklist={state.contracts.unknown_count()})")
 
             await asyncio.sleep(CHAIN_STREAM_UPDATE_INTERVAL)
+            t_cycle = time.perf_counter()
 
             oi_fallback = {(o.strike, o.right): o.open_interest for o in state.chain_data}
             for k in [k for k in seen_ticks if k not in state.chain_stream_tickers]:
@@ -397,6 +405,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
                     logger.info(chain_stream_status_line(
                         len(ticks), with_quotes, len(state.chain_stream_tickers)))
                 await broadcast_fn({"type": "chain_quotes", "data": live_quotes})
+            perf.record("chain.stream_cycle", (time.perf_counter() - t_cycle) * 1000.0)
 
         except asyncio.CancelledError:
             _cancel_stream_subs(ib, state)
@@ -444,6 +453,7 @@ async def monthly_gex_fetch(ib, state, broadcast_fn):
             std_dev_range=8.0,
             annual_vol=state.annual_vol,
             trading_class='SPX',
+            registry=state.contracts,
         )
 
         if not options:

@@ -18,7 +18,6 @@ from spx_trade_desk.core import config
 from spx_trade_desk.core.config import VIEWPORT_CENTER_MIN_INTERVAL
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import now_et, market_status, get_expiration_display, is_within_rth
-from spx_trade_desk.market.chain_fetcher import clear_qualification_cache
 from spx_trade_desk.market.chain_manager import monthly_gex_fetch
 from spx_trade_desk.ib.account import refresh_account_state, build_account_payload
 from spx_trade_desk.ib.orders import handle_place_order, handle_cancel_order
@@ -256,7 +255,7 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
 
                 if msg == "refresh_chain":
                     logger.info("Client requested chain refresh")
-                    clear_qualification_cache("option-tab manual refresh")
+                    state.contracts.relist()
                     if state.force_chain_fetch_event is not None:
                         state.force_chain_fetch_event.set()
 

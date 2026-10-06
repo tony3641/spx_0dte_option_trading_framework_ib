@@ -258,7 +258,7 @@ async def reconnect_ib_on(port: int) -> dict:
         pass
     state.chain_stream_tickers.clear()
     state.chain_stream_contracts.clear()
-    state.qual_cache.clear()
+    state.contracts.clear()
     state.quote_book.reset("")
     state.chain_quotes_cache = None     # the engine must not score against the old session's quotes
 

@@ -45,7 +45,8 @@ def heartbeat_fresh(path: Path, now_epoch: float, max_age: float = HEARTBEAT_STA
 async def _sweep(ib, state):
     return await fetch_option_chain(ib, state.spx_contract, state.expiration, state.strikes,
                                     state.spx_price, std_dev_range=8.0,
-                                    annual_vol=state.annual_vol, trading_class="SPXW")
+                                    annual_vol=state.annual_vol, trading_class="SPXW",
+                                    registry=getattr(state, "contracts", None))
 
 
 async def capture_session(ib, state, recorder: ChainRecorder, dashboard_heartbeat: Path, *,

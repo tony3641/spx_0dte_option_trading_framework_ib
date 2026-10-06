@@ -10,8 +10,8 @@ from collections import deque
 from typing import Dict, List, Optional, Set
 
 from spx_trade_desk.core import config
+from spx_trade_desk.ib.contracts import ContractRegistry
 from spx_trade_desk.market.gex import GEXResult, OptionData
-from spx_trade_desk.market.qualification import QualificationCache
 from spx_trade_desk.market.quote_book import QuoteBook
 from spx_trade_desk.strategy.models import RuntimeState
 
@@ -68,7 +68,7 @@ class AppState:
         self.chain_stream_tickers: dict = {}
         self.chain_stream_contracts: dict = {}
         self.quote_book = QuoteBook()              # merged stream + poll quotes (chain service)
-        self.qual_cache = QualificationCache()     # shared by the stream and the wing poller
+        self.contracts = ContractRegistry()        # one qualified-contract registry: stream, poller, fetcher, order path
         self.force_chain_fetch_event: Optional[asyncio.Event] = None
         self.active_tab: str = "dashboard"
         self.viewport_center_strike: float = 0.0

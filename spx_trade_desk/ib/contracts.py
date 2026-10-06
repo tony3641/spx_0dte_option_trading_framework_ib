@@ -1,7 +1,7 @@
 """Shared option-contract registry.
 
 One place where qualified option contracts live, for the chain stream, the wing poller, the
-chain fetcher and the order path. It replaces the stream/poller ``QualificationCache`` and the
+chain fetcher and the order path. It replaces the old stream/poller qualification cache and the
 fetcher's module-global caches.
 
 * Bulk fill: one partial ``reqContractDetails`` (no strike, no right) lists every contract of an

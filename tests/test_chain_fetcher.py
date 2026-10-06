@@ -9,9 +9,9 @@ and the BSM-gamma fallback in ``compute_gex``.
 
 import pytest
 
+from spx_trade_desk.ib.contracts import ContractRegistry
 from spx_trade_desk.market.chain_fetcher import (
     _stream_to_option_data,
-    clear_qualification_cache,
     fetch_option_chain,
     get_chain_params,
     get_monthly_chain_params,
@@ -70,13 +70,6 @@ def _spx_option(strike, right):
         exchange='SMART',
         tradingClass='SPXW',
     )
-
-
-@pytest.fixture(autouse=True)
-def _clear_qualification_caches():
-    clear_qualification_cache(reason="test setup", monthly=False)
-    clear_qualification_cache(reason="test setup", monthly=True)
-    yield
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +148,6 @@ def _underlying():
     return MockContract(symbol='SPX', secType='IND', conId=12345)
 
 
-def _qualify_calls(mock):
-    return sum(1 for c in mock.call_log if c["method"] == "req_contract_details")
-
-
 @pytest.mark.asyncio
 async def test_fetch_option_chain_filters_strikes_to_multiple_of_five_within_range():
     mock = MockIBClient()
@@ -175,63 +164,48 @@ async def test_fetch_option_chain_filters_strikes_to_multiple_of_five_within_ran
 
 
 @pytest.mark.asyncio
-async def test_fetch_option_chain_cache_hit_then_requalify_on_spot_move():
+async def test_fetch_option_chain_lists_the_expiry_once_and_never_requalifies_on_a_spot_move():
     mock = MockIBClient()
+    registry = ContractRegistry()
     strikes = [5000.0, 5200.0, 5400.0]
     expiration = '20260410'
 
     data1 = await fetch_option_chain(mock, _underlying(), expiration, strikes,
-                                     spot_price=5200.0, std_dev_range=8.0)
-    assert len(data1) == 6  # 3 strikes × (C, P)
-    first_count = _qualify_calls(mock)
-    assert first_count == 6
+                                     spot_price=5200.0, std_dev_range=8.0, registry=registry)
+    assert len(data1) == 6                                    # 3 strikes x (C, P)
+    assert mock.count_calls("req_chain_contract_details") == 1
+    assert mock.count_calls("req_contract_details") == 0      # one bulk message, no per-contract lookups
 
-    # Same expiration + spot → cache hit, no re-qualification
     data2 = await fetch_option_chain(mock, _underlying(), expiration, strikes,
-                                     spot_price=5200.0, std_dev_range=8.0)
-    assert len(data2) == 6
-    assert _qualify_calls(mock) == first_count
-
-    # Spot moved > QUAL_CACHE_REQUALIFY_MOVE (20.0) → re-qualify
+                                     spot_price=5200.0, std_dev_range=8.0, registry=registry)
     data3 = await fetch_option_chain(mock, _underlying(), expiration, strikes,
-                                     spot_price=5250.0, std_dev_range=8.0)
-    assert len(data3) == 6
-    assert _qualify_calls(mock) > first_count
+                                     spot_price=5250.0, std_dev_range=8.0, registry=registry)
+    assert len(data2) == len(data3) == 6                      # a spot move does not invalidate the listing
+    assert mock.count_calls("req_chain_contract_details") == 1
 
 
 @pytest.mark.asyncio
-async def test_fetch_option_chain_unknown_blacklist_and_retry():
+async def test_fetch_option_chain_unknown_strike_stays_out_until_a_manual_retry():
     mock = MockIBClient()
-    original = mock.req_contract_details
-    fail_strike_5500 = {"enabled": True}
-
-    async def flaky_req(contract):
-        if fail_strike_5500["enabled"] and abs(float(contract.strike) - 5500.0) < 1e-9:
-            return []
-        return await original(contract)
-
-    mock.req_contract_details = flaky_req
+    mock.unlisted_strikes.add(5500.0)
+    registry = ContractRegistry(cooldown=120.0)
     strikes = [5200.0, 5500.0]
     expiration = '20260410'
 
-    # First fetch: 5500 fails qualification → blacklisted (both strikes are
-    # within the ±8σ range around spot 5200, so only qualification drops 5500).
     data1 = await fetch_option_chain(mock, _underlying(), expiration, strikes,
-                                     spot_price=5200.0, std_dev_range=8.0)
+                                     spot_price=5200.0, std_dev_range=8.0, registry=registry)
     assert {o.strike for o in data1} == {5200.0}
-    assert {o.right for o in data1} == {'C', 'P'}
-
-    # Normal follow-up (same expiry/spot) → cache hit, 5500 still absent
     data2 = await fetch_option_chain(mock, _underlying(), expiration, strikes,
-                                     spot_price=5200.0, std_dev_range=8.0)
-    assert {o.strike for o in data2} == {5200.0}
+                                     spot_price=5200.0, std_dev_range=8.0, registry=registry)
+    assert {o.strike for o in data2} == {5200.0}               # inside the cooldown: still absent
+    assert mock.count_calls("req_chain_contract_details") == 1
 
-    # Manual retry with the underlying now qualifying → 5500 recovered
-    fail_strike_5500["enabled"] = False
+    mock.unlisted_strikes.clear()
     data3 = await fetch_option_chain(mock, _underlying(), expiration, strikes,
-                                     spot_price=5200.0, std_dev_range=8.0,
+                                     spot_price=5200.0, std_dev_range=8.0, registry=registry,
                                      force_requalify=True, allow_unknown_retry=True)
     assert {o.strike for o in data3} == {5200.0, 5500.0}
+    assert mock.count_calls("req_chain_contract_details") == 2
 
 
 # ---------------------------------------------------------------------------

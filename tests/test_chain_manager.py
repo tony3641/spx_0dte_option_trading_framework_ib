@@ -1,6 +1,9 @@
 """Tests for chain_manager stream-recovery helpers (pure functions)."""
 
+import pytest
+
 from spx_trade_desk.market.chain_manager import chain_stream_status_line, unknown_retry_due
+from tests.conftest import MockContract, MockIBClient
 
 NOW = 1000.0
 COOLDOWN = 120.0
@@ -126,3 +129,31 @@ class TestCollectStreamQuotesFreshness:
         _collect_stream_quotes({key: self._ticked(1, 1.0, 100.0)}, {}, seen)
         _, _, book = _collect_stream_quotes({key: self._ticked(9, 1.1, 150.0)}, {}, seen)
         assert [o.bid for o in book] == [1.1]
+
+
+from spx_trade_desk.market.chain_manager import STREAM_SUBSCRIBE_CHUNK, _subscribe_new_keys
+
+
+def _qualified(keys):
+    return {k: MockContract(conId=i + 1, symbol="SPX", secType="OPT", strike=k[0], right=k[1])
+            for i, k in enumerate(keys)}
+
+
+@pytest.mark.asyncio
+async def test_subscribe_new_keys_takes_one_chunk_nearest_first(app_state):
+    ib = MockIBClient()
+    keys = [(7700.0 + 5 * i, "C") for i in range(45)]
+    n = await _subscribe_new_keys(ib, app_state, _qualified(keys), keys)
+    assert n == STREAM_SUBSCRIBE_CHUNK == 30
+    assert list(app_state.chain_stream_tickers) == keys[:30]
+    assert ib.line_budget.used("stream") == 30
+
+
+@pytest.mark.asyncio
+async def test_subscribe_new_keys_skips_unqualified_keys_and_stops_when_the_budget_is_full(app_state):
+    ib = MockIBClient(line_shares={"fixed": 4, "order": 4, "poll": 12, "stream": 4})
+    keys = [(7700.0 + 5 * i, "P") for i in range(10)]
+    qualified = _qualified(keys[1:])                       # the nearest key could not be qualified
+    n = await _subscribe_new_keys(ib, app_state, qualified, keys)
+    assert n == 4 and (7700.0, "P") not in app_state.chain_stream_tickers
+    assert ib.line_budget.used("stream") == 4

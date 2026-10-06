@@ -148,8 +148,8 @@ VIEWPORT_CENTER_MIN_INTERVAL = _get_setting("VIEWPORT_CENTER_MIN_INTERVAL", 0.2,
 # Chain fetch internals
 # ---------------------------------------------------------------------------
 BATCH_SIZE = _get_setting("BATCH_SIZE", 200, int)
+# QUALIFY_BATCH_SIZE only sizes the single-qualification fallback (the registry lists an expiry in one request).
 QUALIFY_BATCH_SIZE = _get_setting("QUALIFY_BATCH_SIZE", 150, int)
-QUAL_CACHE_REQUALIFY_MOVE = _get_setting("QUAL_CACHE_REQUALIFY_MOVE", 20.0, float)
 DEFAULT_ANNUAL_VOL = _get_setting("DEFAULT_ANNUAL_VOL", 0.20, float)
 TRADING_DAYS_PER_YEAR = _get_setting("TRADING_DAYS_PER_YEAR", 252, int)
 
