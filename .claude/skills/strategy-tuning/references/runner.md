@@ -67,7 +67,7 @@ dd_mean, dd_p95, dd_worst, knobs` (knobs as a JSON string).
 `results.json` — `meta` (slug, strategy, frozen blocks, seeds, `spot0`,
 `crn_ok`, knob whitelist, generated_at, total elapsed) + per-variant full cell
 payloads (`stats`, `breakdown`, `hist`, `dd`, `ruin_prob`, `dd_hist`, `fan`)
-and the run meta (GARCH/smile fits, dials). Read the CSV for decisions; dig
+and the run meta (GARCH fit, pricing tier and anchor, dials). Read the CSV for decisions; dig
 into the JSON when a number surprises you.
 
 stdout prints one line per run (mean / win / cvar5 / ruin / never + seconds) —
@@ -83,9 +83,10 @@ it: something varied the market (different n_paths, stress dial, dataset) —
 the round's paired deltas are invalid; re-run as a clean round.
 
 Related reproducibility notes:
-- Calibration is cached in-process per (source, path, bar_size, lookback) —
-  one invocation is self-consistent; edit `config/sim_smile*.json` between
-  invocations, never mid-experiment.
+- Calibration is cached in-process per (source, path, bar_size, lookback, pricing tier, pricing-model file, session date) —
+  one invocation is self-consistent; rebuild the pricing library between
+  invocations, never mid-experiment, and pin `stress.pricing_tier` when a round
+  must not move with the library.
 - `tests/fixtures/SPX_1min_10d.csv` is the committed 1-minute fixture (the
   last 10 trading days, 390 RTH bars/day) used by the sim tests and for real
   calibration; `SPX_1min_default.csv` is the longer 30-day source it is cut from

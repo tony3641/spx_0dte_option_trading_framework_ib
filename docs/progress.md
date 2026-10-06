@@ -4,6 +4,36 @@ All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboa
 
 ---
 
+## Session: October 5, 2026 - Sim option pricing z-model (SP2)
+
+The simulator's SVI smile is replaced by a z-model fitted from the recorded 0DTE chain
+library (SP1).
+
+- **One clock** (`sim/clock.py`): stored IVs are calendar-time, the sim path is
+  trading-time. `sigma_sim = IV_cal x 0.43242` and the rate is scaled the same way, so
+  sim-clock BSM reproduces the calendar price. This also fixes the ATM IV % fan cap,
+  which read a calendar IV as trading-time (the dial now takes the IB/VIX-style number).
+  The cap is `atm_iv x sqrt(390/525600)` per RTH day instead of `atm_iv/sqrt(252)`, so
+  saved configs or tuning specs that set `atm_iv` in the old trading-time units now get a
+  fan about 0.43x as wide; re-enter the IB/VIX-style IV.
+- **Pricing tables** (`pricing_tables.py`, `pricing_model.py`): `IV = ATM(t) x f(z, tau)`.
+  - Seven time-to-close buckets, total-variance extrapolation with a Lee cap.
+  - Intraday ATM curve `g`; the GJR level link `L` is always on (the old `atm_budget`).
+  - Tiers: library / thin / cold with per-bucket fallback.
+  - `vol_beta`, `skew_t_gamma` and `atm_budget` are removed; old configs load with a warning.
+- **Library builder** (`library.py`): rebuilt by the capture after each session, by the
+  Sim tab button, or by `python -m spx_trade_desk.sim.library build`. The tracked Cold
+  default `config/sim_pricing_default.json` holds aggregate tables only.
+- **Validation harness** (`validate.py`) on the first captured day (in-sample, Cold tier):
+  - legacy SVI pricer: 0/4 scored time buckets within the bar;
+  - z-model: 4/4.
+  - Out-of-sample check: pending (needs a second captured day).
+- Regression baselines re-pinned (`sim_baseline_z*.npz`); the legacy/A/AB/ABC chain is
+  retired. Tuning results from before this change must be re-run.
+- Known failure resolved: sim_regression baseline drift (re-pinned).
+
+---
+
 ## Session: October 5, 2026 - Chain service: line budget, no stream pause, chain library
 
 - **Why:** the sim's option prices were tested against a live SPXW 0DTE chain (one afternoon, local analysis). They were not usable as wired: calendar- vs trading-clock IV units, SVI guards that cannot fit a 0DTE smile, and one frozen smile per day. The planned fix (SP2) needs a daily chain library, so this session builds the capture first (SP1).

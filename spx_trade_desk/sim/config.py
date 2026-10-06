@@ -52,7 +52,7 @@ class SimRunConfig:
     gamma_mult: float = 1.0             # stress: GJR leverage-term multiplier
     flat_iv: bool = False               # sanity mode: every strike at the ATM level (no smile)
     pricing_tier: str = "auto"          # option pricing tables: auto | cold | thin | library
-    atm_iv: Optional[float] = None      # annual ATM IV (decimal) to anchor the SPX fan; None = historical GARCH level
+    atm_iv: Optional[float] = None      # calendar-unit annual ATM IV (decimal, the IB / VIX-style number) to anchor the SPX fan; None = historical GARCH level
     vol_cap_mult: float = 2.0           # per-bar sigma cap as a multiple of the IV-implied per-bar vol
     stop_extra: float = 0.10            # market-order stop: trigger + this
     tick_size: float = 0.05
@@ -108,7 +108,7 @@ class SimRunConfig:
         if self.vol_cap_mult <= 0:
             raise ValueError("vol_cap_mult must be > 0")
         if self.atm_iv is not None and not (0 < self.atm_iv < 5.0):
-            raise ValueError("atm_iv must be in (0, 5.0) when set (annual decimal)")
+            raise ValueError("atm_iv must be in (0, 5.0) when set (calendar-unit annual IV, decimal)")
         if self.stop_extra < 0 or self.tick_size <= 0:
             raise ValueError("stop_extra must be >= 0 and tick_size > 0")
         for v in (self.sl_multipliers or []):
