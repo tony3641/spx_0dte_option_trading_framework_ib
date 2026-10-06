@@ -38,24 +38,33 @@ async def _all(*awaitables):
     tasks = [asyncio.ensure_future(a) for a in awaitables]
     try:
         return await asyncio.gather(*tasks)
-    except BaseException:
+    except BaseException as first:
         for t in tasks:
             t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for result in await asyncio.gather(*tasks, return_exceptions=True):
+            # Siblings that failed at the same moment: only the first failure is raised, so log the rest.
+            if isinstance(result, Exception) and result is not first:
+                logger.warning("Another boot step failed too: %r", result)
         raise
 
 
-async def _spx_branch(ib, state, first_boot: bool) -> None:
+async def _spx_branch(ib, state, first_boot: bool, prefetch: list) -> None:
     await setup_spx_subscription(ib, state)         # qualifies SPX: the next steps need its conId
     steps = [setup_chain_info(ib, state), setup_monthly_chain_info(ib, state)]
     if first_boot:
         steps.append(fetch_historical_bars(ib, state))
     await _all(*steps)
+    if state.expiration:
+        # The expiration is known now: list its contracts while the rest of the boot runs. Not awaited;
+        # the boot owns the task until it succeeds (``boot_session`` cancels it on a failed boot).
+        task = asyncio.create_task(_prefetch_chain(ib, state))
+        prefetch.append(task)
+        state.background_tasks.append(task)
 
 
-async def _es_branch(ib, state, first_boot: bool) -> None:
+async def _es_branch(ib, state, fetch_baseline: bool) -> None:
     await setup_es_subscription(ib, state)
-    if first_boot and not is_within_rth():
+    if fetch_baseline:
         await fetch_es_baseline(ib, state)
 
 
@@ -74,33 +83,45 @@ async def _prefetch_chain(ib, state) -> None:
         logger.warning("Chain prefetch failed (the chain loop will list it): %s", e)
 
 
+async def _cancel_prefetch(state, prefetch: list) -> None:
+    """A failed or cancelled boot leaves no listing task behind."""
+    for task in prefetch:
+        task.cancel()
+    await asyncio.gather(*prefetch, return_exceptions=True)
+    state.background_tasks[:] = [t for t in state.background_tasks if t not in prefetch]
+
+
 async def boot_session(ib, state, *, first_boot: bool, port: Optional[int] = None,
                        client_id: Optional[int] = None, error_handler=None) -> None:
     """Connect and set up one IB session. An exception in a step that raises today aborts the boot."""
-    with perf.timer("startup.total"):
-        await connect_ib(ib, state, port=port, client_id=client_id)
-        if error_handler is not None:
-            ib.error_handler = error_handler
-        branches = [
-            _spx_branch(ib, state, first_boot),
-            _es_branch(ib, state, first_boot),
-            setup_account_subscription(ib, state),
-            setup_vix_subscription(ib, state),
-            setup_vix1d_subscription(ib, state),
-        ]
-        if first_boot:
-            branches.append(_risk_free_rate(state))
-        await _all(*branches)
-        state.strategies = load_strategies()
+    prefetch: list = []
+    try:
+        with perf.timer("startup.total"):
+            await connect_ib(ib, state, port=port, client_id=client_id)
+            if error_handler is not None:
+                ib.error_handler = error_handler
+            historical = first_boot and not is_within_rth()      # once per boot: baseline and log agree
+            branches = [
+                _spx_branch(ib, state, first_boot, prefetch),
+                _es_branch(ib, state, historical),
+                setup_account_subscription(ib, state),
+                setup_vix_subscription(ib, state),
+                setup_vix1d_subscription(ib, state),
+            ]
+            if first_boot:
+                branches.append(_risk_free_rate(state))
+            await _all(*branches)
+            state.strategies = load_strategies()
 
-    if first_boot and not is_within_rth():
-        logger.info(
-            f"Historical mode: showing {state.historical_date}, "
-            f"ref price={state.spx_price:.2f}, "
-            f"ES baseline={state.es_at_spx_close:.2f}"
-        )
-    if state.expiration:
-        state.background_tasks.append(asyncio.create_task(_prefetch_chain(ib, state)))
+        if historical:
+            logger.info(
+                f"Historical mode: showing {state.historical_date}, "
+                f"ref price={state.spx_price:.2f}, "
+                f"ES baseline={state.es_at_spx_close:.2f}"
+            )
+    except BaseException:
+        await _cancel_prefetch(state, prefetch)
+        raise
 
 
 def start_background_loops(ib, state, broadcast_fn, *, recorder) -> None:

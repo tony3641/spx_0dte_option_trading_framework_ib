@@ -3,6 +3,7 @@ and the server wiring that uses them."""
 import asyncio
 import logging
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -212,6 +213,124 @@ async def test_no_prefetch_without_an_expiration(rec, app_state):
     assert app_state.background_tasks == []
 
 
+@pytest.mark.asyncio
+async def test_the_chain_prefetch_starts_right_after_chain_info_not_after_the_whole_boot(monkeypatch, app_state):
+    r = Rec(monkeypatch, rth=False)
+    app_state.expiration = "20261006"
+    listing_started = asyncio.Event()
+    at_listing = []
+
+    async def listing(ib, symbol, expiry, trading_class, now, force=False):
+        at_listing.append(list(r.events))
+        listing_started.set()
+        return 3
+
+    async def wait_for_the_listing():
+        await listing_started.wait()
+
+    later_steps = ("es_baseline", "account", "vix", "vix1d")
+    for step in later_steps:
+        r.hooks[step] = wait_for_the_listing         # they only finish once the listing has started
+    monkeypatch.setattr(app_state.contracts, "ensure_chain", listing)
+    # a prefetch started after the whole boot would leave the boot waiting for it: timeout
+    await asyncio.wait_for(session.boot_session(MockIBClient(), app_state, first_boot=True), timeout=2)
+    (events,) = at_listing
+    for step in ("chain_info", "monthly_info", "hist_bars"):
+        assert f"end:{step}" in events                # it follows the group it depends on
+    assert not any(f"end:{step}" in events for step in later_steps)
+
+
+@pytest.fixture
+def hanging_listing(app_state, monkeypatch):
+    """A chain prefetch that has started and never finishes; records its own cancellation."""
+    app_state.expiration = "20261006"
+    listing = SimpleNamespace(started=asyncio.Event(), cancelled=[])
+
+    async def listing_hangs(ib, symbol, expiry, trading_class, now, force=False):
+        listing.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            listing.cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(app_state.contracts, "ensure_chain", listing_hangs)
+    return listing
+
+
+@pytest.mark.asyncio
+async def test_a_step_failing_after_the_prefetch_started_cancels_it_and_leaves_no_orphan(
+        rec, app_state, hanging_listing):
+    async def account_fails_once_the_listing_runs():
+        await hanging_listing.started.wait()
+        raise RuntimeError("account refused")
+
+    rec.hooks["account"] = account_fails_once_the_listing_runs
+    with pytest.raises(RuntimeError, match="account refused"):
+        await asyncio.wait_for(session.boot_session(MockIBClient(), app_state, first_boot=False), timeout=2)
+    assert hanging_listing.cancelled == [True]
+    assert app_state.background_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_a_strategy_load_failing_after_the_prefetch_started_cancels_it_and_leaves_no_orphan(
+        rec, app_state, hanging_listing, monkeypatch):
+    async def account_waits_for_the_listing():
+        await hanging_listing.started.wait()
+
+    def broken_strategies():
+        raise ValueError("strategies file unreadable")
+
+    rec.hooks["account"] = account_waits_for_the_listing
+    monkeypatch.setattr(session, "load_strategies", broken_strategies)
+    with pytest.raises(ValueError, match="unreadable"):
+        await asyncio.wait_for(session.boot_session(MockIBClient(), app_state, first_boot=False), timeout=2)
+    assert hanging_listing.cancelled == [True]
+    assert app_state.background_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_boot_cancels_the_prefetch_and_leaves_no_orphan(rec, app_state, hanging_listing):
+    async def vix_stalls():
+        await asyncio.Event().wait()
+
+    rec.hooks["vix"] = vix_stalls
+    boot = asyncio.create_task(session.boot_session(MockIBClient(), app_state, first_boot=False))
+    await asyncio.wait_for(hanging_listing.started.wait(), timeout=2)
+    boot.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await boot
+    assert hanging_listing.cancelled == [True]
+    assert app_state.background_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_when_two_steps_fail_together_the_first_is_raised_and_the_second_is_logged(
+        rec, app_state, caplog):
+    async def account_refuses():
+        raise RuntimeError("account refused")
+
+    async def vix_refuses():
+        raise RuntimeError("vix refused")
+
+    rec.hooks["account"] = account_refuses
+    rec.hooks["vix"] = vix_refuses
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(RuntimeError, match="account refused"):
+            await session.boot_session(MockIBClient(), app_state, first_boot=False)
+    assert "vix refused" in caplog.text
+    assert "account refused" not in caplog.text            # the raised failure is not logged twice
+
+
+@pytest.mark.asyncio
+async def test_is_within_rth_is_evaluated_once_per_boot(monkeypatch, app_state):
+    r = Rec(monkeypatch, rth=False)
+    calls = []
+    monkeypatch.setattr(session, "is_within_rth", lambda: calls.append(1) or False)
+    await session.boot_session(MockIBClient(), app_state, first_boot=True)
+    assert len(calls) == 1 and "es_baseline" in r.started()
+
+
 LOOPS = ("price_push_loop", "status_push_loop", "account_push_loop", "log_push_loop",
          "strategy_evaluation_loop", "take_profit_loop", "chain_poll_loop", "chain_stream_loop",
          "chain_publish_loop")
@@ -315,3 +434,70 @@ async def test_a_failed_reconnect_boot_starts_no_loops_and_answers_500(server_st
         await server.reconnect_ib_on(7497)
     assert ei.value.status_code == 500
     assert not any(isinstance(c, tuple) and c[0] == "loops" for c in calls)
+
+
+# -- server wiring: the first boot of the lifespan goes through boot_session -------------------
+
+@pytest.fixture
+def lifespan_stub(monkeypatch, app_state, request):
+    """server.lifespan with no real IB, Discord, nest_asyncio patching or root log handler."""
+    from spx_trade_desk import server
+    calls = []
+    handler = logging.NullHandler()
+    request.addfinalizer(lambda: logging.getLogger().removeHandler(handler))
+    error_handler = object()
+
+    class FakeDiscord:
+        def __init__(self, ib, state):
+            pass
+
+        async def apply(self, settings, persist=True):
+            return {"ok": True, "running": False}
+
+        async def stop(self):
+            calls.append("discord_stop")
+
+    async def fake_boot(ib, state, **kw):
+        calls.append(("boot", kw))
+
+    def fake_loops(ib, state, bcast, *, recorder):
+        calls.append(("loops", recorder))
+
+    for name in ("ib", "broadcast_fn", "discord_manager"):    # the lifespan assigns these globals
+        monkeypatch.setattr(server, name, None)
+    monkeypatch.setattr(server, "state", app_state)
+    monkeypatch.setattr(server, "IBClient", lambda: object())
+    monkeypatch.setattr(server, "DiscordSettingsManager", FakeDiscord)
+    monkeypatch.setattr(server, "load_initial_settings", lambda: object())
+    monkeypatch.setattr(server, "LogStoreHandler", lambda state: handler)
+    monkeypatch.setattr(server, "nest_asyncio", SimpleNamespace(apply=lambda loop: None))
+    monkeypatch.setattr(server, "make_broadcast_fn", lambda state: "bcast")
+    monkeypatch.setattr(server, "make_ib_error_handler", lambda state, fn: error_handler)
+    monkeypatch.setattr(server, "boot_session", fake_boot)
+    monkeypatch.setattr(server, "start_background_loops", fake_loops)
+    return server, calls, error_handler
+
+
+@pytest.mark.asyncio
+async def test_the_first_boot_runs_boot_session_in_first_boot_mode_then_starts_the_loops(lifespan_stub):
+    server, calls, error_handler = lifespan_stub
+    async with server.lifespan(None):
+        boot = next(c for c in calls if isinstance(c, tuple) and c[0] == "boot")
+        loops = next(c for c in calls if isinstance(c, tuple) and c[0] == "loops")
+        assert boot[1]["first_boot"] is True and boot[1]["error_handler"] is error_handler
+        assert loops[1] is server.chain_recorder
+        assert calls.index(boot) < calls.index(loops)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_first_boot_keeps_serving_and_starts_no_loops(lifespan_stub, monkeypatch, caplog):
+    server, calls, _ = lifespan_stub
+
+    async def refused(ib, state, **kw):
+        raise ConnectionError("refused")
+
+    monkeypatch.setattr(server, "boot_session", refused)
+    with caplog.at_level(logging.ERROR):
+        async with server.lifespan(None):                  # the app still comes up
+            assert not any(isinstance(c, tuple) and c[0] == "loops" for c in calls)
+    assert "Startup failed: refused" in caplog.text

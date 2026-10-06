@@ -183,6 +183,12 @@ class ContractRegistry:
         and dropped: the next ``ensure_chain`` starts a fresh request on the new connection instead of
         joining it. A cancelled flight raises before it writes, so it cannot put entries, unknown marks
         or a bulk-failure backoff into the cleared registry.
+
+        Precondition: cancel every task that can await ``ensure_chain`` (the chain loops, the boot
+        prefetch) BEFORE calling this. A waiter that joined a flight through ``shield`` receives a
+        ``CancelledError`` that is indistinguishable from its own cancellation, so a loop that treats
+        it as "stop" (``chain_poll_loop`` breaks out) would exit silently. ``reconnect_ib_on`` is the
+        only call site and already stops the loops first.
         """
         inflight, self._inflight = self._inflight, {}
         for task in inflight.values():
