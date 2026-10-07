@@ -6,6 +6,7 @@ Times are invented (2099 dates) and nothing depends on the wall clock or on mark
 import calendar
 import datetime
 import json
+import re
 import time
 import urllib.request
 
@@ -271,10 +272,20 @@ def test_price_chart_failing_to_build_does_not_stop_the_page_from_starting(brows
     problems = []
 
     def serve_stub(page):
+        # The page pins the real library with an integrity hash, which a stub can never match: drop the
+        # attributes from the served page so the stub is what runs.
+        def without_sri(route):
+            resp = route.fetch()
+            page_html = re.sub(r'\s+(integrity|crossorigin)="[^"]*"', "", resp.text())
+            route.fulfill(status=resp.status, content_type="text/html; charset=utf-8", body=page_html)
+
+        page.route(re.compile(r"^http://127\.0\.0\.1:\d+/$"), without_sri)
         page.route(LC_URL, lambda route: route.fulfill(status=200, content_type="application/javascript",
                                                        body=LC_STUBS[stub]))
 
-    browser, pg = open_page(p, url, "dashboard", problems=problems, before_goto=serve_stub)
+    # A document served through a route loses Chromium's loopback address space, which blocks its WebSocket.
+    browser, pg = open_page(p, url, "dashboard", problems=problems, before_goto=serve_stub,
+                            launch_args=["--disable-features=LocalNetworkAccessChecks"])
     try:
         _assert_page_works_without_the_price_chart(pg, problems)
         assert any("Price chart unavailable" in m for m in problems)             # the cause is logged, once
@@ -285,6 +296,14 @@ def test_price_chart_failing_to_build_does_not_stop_the_page_from_starting(brows
 
 
 # --- client perf reports -------------------------------------------------------------------------
+
+def test_pinned_cdn_scripts_carry_integrity_hashes_and_still_load(page):
+    got = page.evaluate("""() => [...document.querySelectorAll('script[src^="https://"]')]
+        .map(s => [s.src.split('/')[2], s.integrity.slice(0, 7), s.crossOrigin])""")
+    assert sorted(got) == [["cdn.jsdelivr.net", "sha384-", "anonymous"], ["cdn.plot.ly", "sha384-", "anonymous"]]
+    assert page.evaluate("() => [typeof LightweightCharts, typeof Plotly, state.priceChartReady]") == [
+        "object", "object", True]
+
 
 def test_perf_ignores_a_server_timestamp_that_is_not_plausible(page):
     spans = page.evaluate("""() => {

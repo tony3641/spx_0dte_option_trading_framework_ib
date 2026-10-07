@@ -24,13 +24,13 @@ def _proactor_policy():
     return prev
 
 
-def open_page(p, base_url, tab="dashboard", problems=None, before_goto=None):
+def open_page(p, base_url, tab="dashboard", problems=None, before_goto=None, launch_args=None):
     """Open the dashboard on `tab` with the bench helpers loaded.
 
     `problems` (a list) collects page errors and console errors seen from the first byte on;
-    `before_goto(page)` runs before navigation (routes, init scripts).
+    `before_goto(page)` runs before navigation (routes, init scripts); `launch_args` are extra Chromium flags.
     """
-    browser = p.chromium.launch()
+    browser = p.chromium.launch(args=launch_args or [])
     page = browser.new_page(viewport={"width": 1600, "height": 1000})
 
     def on_pageerror(exc):
