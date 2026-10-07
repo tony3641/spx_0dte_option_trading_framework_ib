@@ -6,8 +6,8 @@ Kinds (``message_kind``):
   gets a fresh ``init``).
 - log: ordered, in their own bounded deque; overflow drops the oldest and sends one note.
 - merge: ``chain_tick``; pending ticks are merged per (strike, right), field by field.
-- latest: a newer message replaces an unsent one with the same key (type, or type + minute for
-  ``price_bar``).
+- latest: a newer message replaces an unsent one with the same key (type, or type + bar / point
+  time for ``price_bar`` and ``price_overnight``).
 A send longer than ``PUSH_SEND_TIMEOUT_S`` or a send error closes that client only. Loop thread only.
 """
 import asyncio
@@ -59,6 +59,9 @@ def _latest_key(message: dict) -> str:
     if mtype == "price_bar":
         bar = (message.get("data") or {}).get("bar") or {}
         return f"price_bar:{bar.get('time', '')}"
+    if mtype == "price_overnight":
+        point = (message.get("data") or {}).get("point") or {}
+        return f"price_overnight:{point.get('time', '')}"
     return mtype
 
 

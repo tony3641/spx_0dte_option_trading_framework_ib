@@ -96,6 +96,24 @@ async def test_price_bar_coalesces_per_minute_only():
 
 
 @pytest.mark.asyncio
+async def test_price_overnight_coalesces_per_point_time_only():
+    gate = asyncio.Event()
+    ws = SlowWS(gate)
+    ch = push.ClientChannel(ws)
+    ch.start()
+    ch.send_message({"type": "ping"})
+    await _settle()
+    for minute, value in (("20:00", 1.0), ("20:00", 2.0), ("20:01", 3.0)):
+        ch.send_message({"type": "price_overnight",
+                         "data": {"point": {"time": f"2099-01-02T{minute}:00-05:00", "value": value}}})
+    gate.set()
+    await _settle()
+    points = [m["data"]["point"]["value"] for m in ws.sent if m["type"] == "price_overnight"]
+    assert points == [2.0, 3.0]
+    await ch.aclose(drain=False)
+
+
+@pytest.mark.asyncio
 async def test_critical_goes_before_log_merge_and_latest():
     gate = asyncio.Event()
     ws = SlowWS(gate)

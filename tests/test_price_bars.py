@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from spx_trade_desk.core.app_state import create_app_state
+from spx_trade_desk.ib.connection import update_spx_es_prices
 from spx_trade_desk.market import price_bars
 from spx_trade_desk.market.hours import ET
 from tests.conftest import MockIBClient
@@ -203,8 +204,8 @@ async def test_error_and_stall_re_request_with_backoff():
     await feed.tick()
     assert ib.count_calls("req_historical_bars_live") == 2
     clock.mono += price_bars.PRICE_BARS_STALL_S + 1   # silent for 3 minutes in RTH
-    await feed.tick()
-    clock.mono += 5.1
+    await feed.tick()                                 # no update since the last load: the backoff grew
+    clock.mono += 15.1
     await feed.tick()
     assert ib.count_calls("req_historical_bars_live") == 3
 
@@ -271,3 +272,212 @@ async def test_seed_price_bars_creates_the_feed_without_broadcasting():
     ib.live_bars_initial = [_bar(DAY_PREV, "15:59", 95.0)]
     await price_bars.seed_price_bars(ib, st)
     assert st.price_feed is not None and st.price_feed.ib is ib and len(st.price_history) == 1
+
+
+# -- fix round 1 ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("refresh_first", [True, False])
+@pytest.mark.asyncio
+async def test_close_transition_never_publishes_a_price_from_the_stale_baseline(monkeypatch, refresh_first):
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "15:59", 50), []
+    monkeypatch.setattr("spx_trade_desk.ib.connection.is_within_rth", clock.rth)
+    ib.live_bars_initial = [_bar(DAY, "15:59", 5010.0)]
+    feed = _feed(ib, st, clock, msgs)
+    await feed.start()
+    st.data_mode, st.spx_stream.last = "live", 5010.0
+    st.es_stream = SimpleNamespace(last=5060.0)
+    st.es_at_spx_close = 5000.0                       # yesterday's baseline: stale at the close
+    await update_spx_es_prices(st)
+    await feed.tick()
+    clock.set(DAY, "16:00", 2)
+    for n in range(2):                                # the transition pass, then the next one
+        if refresh_first:
+            await update_spx_es_prices(st)
+            await feed.tick()
+        else:
+            await feed.tick()
+            await update_spx_es_prices(st)
+        if n == 0:
+            assert st.spx_price == st.live_price == 5010.0 and not st.price_overnight
+            assert (st.es_at_spx_close, st.spx_last_close) == (5060.0, 5010.0)
+    values = [p["value"] for p in st.price_overnight]
+    assert values and set(values) == {5010.0}         # never the stale-derived 5070.12
+
+
+@pytest.mark.asyncio
+async def test_a_new_feed_on_the_same_state_adds_no_second_point_for_the_minute():
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "20:00", 1), []
+    ib.live_bars_initial = [_bar(DAY, "15:59", 95.0)]
+    first = _feed(ib, st, clock, msgs)
+    await first.start()
+    st.es_derived, st.spx_price = True, 96.0
+    await first.tick()
+    second = _feed(ib, st, clock, msgs)               # a reconnect builds a fresh feed on the same state
+    await second.start()
+    await second.tick()
+    clock.set(DAY, "20:01", 2)
+    await second.tick()
+    assert [p["time"][11:16] for p in st.price_overnight] == ["20:00", "20:01"]
+
+
+@pytest.mark.asyncio
+async def test_backoff_keeps_growing_until_an_update_arrives():
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "10:00"), []
+    ib.live_bars_initial = [_bar(DAY, "09:30", 100.0)]
+    feed = _feed(ib, st, clock, msgs)
+    await feed.start()
+
+    async def fail_then_wait(delay):
+        ib.push_live_error(next(iter(ib.live_bar_subs)), 10182, "updates ended")
+        before = ib.count_calls("req_historical_bars_live")
+        clock.mono += delay - 0.1
+        await feed.tick()
+        assert ib.count_calls("req_historical_bars_live") == before        # not yet
+        clock.mono += 0.2
+        await feed.tick()
+        assert ib.count_calls("req_historical_bars_live") == before + 1    # the load succeeds, no update
+
+    await fail_then_wait(5.0)
+    await fail_then_wait(15.0)
+    await fail_then_wait(60.0)
+    ib.push_live_bar(next(iter(ib.live_bar_subs)), _bar(DAY, "09:31", 101.0))
+    await fail_then_wait(5.0)                         # an update proved the request works: back to 5 s
+
+
+@pytest.mark.asyncio
+async def test_the_final_update_after_the_close_refreshes_the_last_close():
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "15:59", 50), []
+    ib.live_bars_initial = [_bar(DAY, "15:59", 101.0)]
+    feed = _feed(ib, st, clock, msgs)
+    await feed.start()
+    await feed.tick()
+    clock.set(DAY, "16:00", 2)
+    await feed.tick()
+    assert st.spx_last_close == 101.0
+    ib.push_live_bar(next(iter(ib.live_bar_subs)), _bar(DAY, "15:59", 102.0))     # IB's final 15:59 bar
+    assert st.spx_last_close == 102.0 and st.spx_price == 102.0
+
+
+# -- price_bars_loop ------------------------------------------------------------------------------
+
+@pytest.fixture
+def loop_env(monkeypatch):
+    """Fast loop with the ES refresh and the feed's tick replaced by counters."""
+    calls = {"refresh": 0, "tick": 0}
+
+    async def refresh(state):
+        calls["refresh"] += 1
+
+    async def tick(self):
+        calls["tick"] += 1
+
+    monkeypatch.setattr(price_bars, "update_spx_es_prices", refresh)
+    monkeypatch.setattr(price_bars, "PRICE_PUSH_INTERVAL", 0.01)
+    monkeypatch.setattr(price_bars.PriceBarFeed, "tick", tick)
+    return calls
+
+
+async def _stop(task):
+    task.cancel()
+    await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_loop_refreshes_prices_while_the_feed_waits_on_ib(loop_env):
+    ib, st, msgs = MockIBClient(), _state(), []
+    gate = asyncio.Event()
+    real = ib.req_historical_bars_live
+
+    async def blocked(contract, on_update, on_error=None, **kw):
+        await gate.wait()
+        return await real(contract, on_update, on_error, **kw)
+
+    ib.req_historical_bars_live = blocked
+
+    async def bcast(m):
+        msgs.append(m)
+
+    task = asyncio.create_task(price_bars.price_bars_loop(ib, st, bcast))
+    await asyncio.sleep(0.15)
+    assert loop_env["refresh"] >= 3 and loop_env["tick"] == 0     # the refresh did not wait for the load
+    gate.set()
+    await asyncio.sleep(0.1)
+    assert loop_env["tick"] > 0
+    await _stop(task)
+
+
+@pytest.mark.parametrize("fresh", [True, False])
+@pytest.mark.asyncio
+async def test_loop_survives_a_failing_start_or_snapshot(loop_env, monkeypatch, fresh):
+    ib, st, msgs = MockIBClient(), _state(), []
+
+    async def boom(self, *a, **k):
+        raise RuntimeError("boom")
+
+    if not fresh:
+        await price_bars.seed_price_bars(ib, st)
+    monkeypatch.setattr(price_bars.PriceBarFeed, "start" if fresh else "broadcast_snapshot", boom)
+
+    async def bcast(m):
+        msgs.append(m)
+
+    task = asyncio.create_task(price_bars.price_bars_loop(ib, st, bcast))
+    await asyncio.sleep(0.1)
+    assert not task.done() and loop_env["tick"] > 0 and loop_env["refresh"] > 0
+    await _stop(task)
+
+
+@pytest.mark.asyncio
+async def test_loop_first_boot_reuses_the_seeded_feed_and_only_sends_a_snapshot(loop_env):
+    ib, st, msgs = MockIBClient(), _state(), []
+    ib.live_bars_initial = [_bar(DAY_PREV, "15:59", 95.0)]
+    await price_bars.seed_price_bars(ib, st)
+    seeded = st.price_feed
+
+    async def bcast(m):
+        msgs.append(m)
+
+    task = asyncio.create_task(price_bars.price_bars_loop(ib, st, bcast))
+    await asyncio.sleep(0.05)
+    assert st.price_feed is seeded and seeded.broadcast_fn is bcast
+    assert ib.count_calls("req_historical_bars_live") == 1
+    assert [m["type"] for m in msgs] == ["price_snapshot"]
+    await _stop(task)
+
+
+@pytest.mark.asyncio
+async def test_loop_after_a_reconnect_builds_a_new_feed_on_the_new_client(loop_env):
+    old_ib, new_ib, st, msgs = MockIBClient(), MockIBClient(), _state(), []
+    new_ib.live_bars_initial = [_bar(DAY_PREV, "15:59", 95.0)]
+    await price_bars.seed_price_bars(old_ib, st)
+    old_feed = st.price_feed
+
+    async def bcast(m):
+        msgs.append(m)
+
+    task = asyncio.create_task(price_bars.price_bars_loop(new_ib, st, bcast))
+    await asyncio.sleep(0.05)
+    assert st.price_feed is not old_feed and st.price_feed.ib is new_ib
+    assert new_ib.count_calls("req_historical_bars_live") == 1 and len(st.price_history) == 1
+    assert old_ib.count_calls("req_historical_bars_live") == 1      # the old client is left alone
+    assert [m["type"] for m in msgs] == ["price_snapshot"]
+    await _stop(task)
+
+
+@pytest.mark.asyncio
+async def test_loop_cancel_stops_the_request_and_the_refresh(loop_env):
+    ib, st, msgs = MockIBClient(), _state(), []
+    ib.live_bars_initial = [_bar(DAY_PREV, "15:59", 95.0)]
+    await price_bars.seed_price_bars(ib, st)
+
+    async def bcast(m):
+        msgs.append(m)
+
+    task = asyncio.create_task(price_bars.price_bars_loop(ib, st, bcast))
+    await asyncio.sleep(0.05)
+    assert loop_env["refresh"] > 0 and loop_env["tick"] > 0
+    await _stop(task)
+    assert ib.count_calls("cancel_historical_bars") == 1 and ib.live_bar_subs == {}
+    n = loop_env["refresh"]
+    await asyncio.sleep(0.05)
+    assert loop_env["refresh"] == n                                  # the refresh task is gone too

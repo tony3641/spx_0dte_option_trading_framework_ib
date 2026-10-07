@@ -86,14 +86,18 @@ class PriceBarFeed:
         self._attempt = 0
         self._next_retry = 0.0
         self._was_rth: Optional[bool] = None
-        self._last_overnight_minute = ""
         self._open_reset_day = ""
         self._tasks: set = set()                 # in-flight broadcasts started from IB callbacks
 
     # -- request lifecycle ----------------------------------------------------
 
     async def start(self) -> bool:
-        """(Re)request the bars; replace the series; broadcast a snapshot. True when bars arrived."""
+        """(Re)request the bars; replace the series; broadcast a snapshot.
+
+        True when the series is usable: bars arrived, or RTH has just opened and there is no bar yet
+        (IB updates will fill it). False when the request failed or came back empty outside RTH; a
+        retry is then scheduled.
+        """
         self.stop()
         st = self.state
         if st.spx_contract is None:
@@ -134,7 +138,8 @@ class PriceBarFeed:
             st.historical_date = target
         if st.data_mode != "live":
             st.data_mode = "historical"
-        self._attempt = 0
+        if not self._keep:
+            self._attempt = 0               # no IB updates to wait for: the backfill is the success
         logger.info(f"Price bars: {len(rows)} bars for {target} "
                     f"({'keepUpToDate' if self._keep else 'one-shot backfill'})")
         await self.broadcast_snapshot()
@@ -163,6 +168,7 @@ class PriceBarFeed:
     # -- IB callbacks (loop thread) ----------------------------------------------
 
     def _on_update(self, bar) -> None:
+        self._attempt = 0                        # the request works: the next failure retries after 5 s again
         now = self._clock()
         if self._last_update_mono is not None:
             perf.record("price_bars.update_gap", (now - self._last_update_mono) * 1000.0)
@@ -171,8 +177,14 @@ class PriceBarFeed:
         d = bar_to_dict(bar)
         if d["time"][:10] != self.state.price_session_date:
             return
-        if _apply_bar(self.state.price_history, d):
-            self._emit({"type": "price_bar", "data": {"session_date": self.state.price_session_date, "bar": d}})
+        st = self.state
+        if _apply_bar(st.price_history, d):
+            if not self._rth() and st.price_history[-1]["time"] == d["time"]:
+                # IB's final update of the session can land after the close: keep the ES baseline base current.
+                st.spx_last_close = d["close"]
+                if not st.es_derived:
+                    st.spx_price = d["close"]
+            self._emit({"type": "price_bar", "data": {"session_date": st.price_session_date, "bar": d}})
 
     def _on_error(self, code: int, message: str) -> None:
         logger.warning(f"Price bars request error {code}: {message}; re-requesting")
@@ -189,16 +201,20 @@ class PriceBarFeed:
         mono = self._clock()
 
         if self._was_rth and not rth:                 # the session just closed
+            self._was_rth = rth
             if st.price_history:
                 st.spx_last_close = st.price_history[-1]["close"]
             if st.es_price > 0:
                 st.es_at_spx_close = st.es_price
+            if st.spx_last_close > 0:
+                # The ES refresh may already have derived a price from the previous baseline: re-base it.
+                st.spx_price = st.live_price = st.spx_last_close
+            return                                    # the overnight line starts on the next pass
         self._was_rth = rth
 
         if rth and st.price_session_date != today and self._open_reset_day != today:
             self._open_reset_day = today
             st.price_overnight.clear()
-            self._last_overnight_minute = ""
             logger.info("Price bars: regular session opened, switching to today's bars")
             await self.start()
             return
@@ -243,9 +259,10 @@ class PriceBarFeed:
     def _sample_overnight(self, now: datetime) -> Optional[dict]:
         st = self.state
         minute = now.replace(second=0, microsecond=0).isoformat()
-        if minute == self._last_overnight_minute or not st.es_derived or st.spx_price <= 0:
+        if not st.es_derived or st.spx_price <= 0:
             return None
-        self._last_overnight_minute = minute
+        if st.price_overnight and st.price_overnight[-1]["time"] >= minute:
+            return None                              # one point per minute, also across a feed restart
         point = {"time": minute, "value": round(st.spx_price, 2)}
         st.price_overnight.append(point)
         return {"type": "price_overnight", "data": {"point": point}}
@@ -280,23 +297,45 @@ async def seed_price_bars(ib, state) -> None:
     await feed.start()
 
 
+async def _refresh_prices(state) -> None:
+    """SPX/ES price refresh every PRICE_PUSH_INTERVAL, independent of the bar feed's IB waits."""
+    while True:
+        try:
+            await asyncio.sleep(PRICE_PUSH_INTERVAL)
+            await update_spx_es_prices(state)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Price refresh error: {e}")
+            await asyncio.sleep(5)
+
+
 async def price_bars_loop(ib, state, broadcast_fn):
-    """Session loop: SPX/ES price refresh, live merge, session transitions, overnight line."""
+    """Session loop: live merge, session transitions, overnight line; the price refresh runs beside it.
+
+    The refresh is its own task because ``feed.tick`` can wait on IB (a re-request at the 09:30 reset
+    takes the pacer plus up to 30 s) and spx_price / data_mode / the ES derivation must not stall.
+    """
     feed = state.price_feed
     fresh = feed is None or feed.ib is not ib
     if fresh:
         feed = PriceBarFeed(ib, state)
         state.price_feed = feed
     feed.broadcast_fn = broadcast_fn
+    refresh = asyncio.create_task(_refresh_prices(state))
     try:
-        if fresh:
-            await feed.start()                  # reconnect: re-request off the boot path
-        else:
-            await feed.broadcast_snapshot()
+        try:
+            if fresh:
+                await feed.start()                  # reconnect: re-request off the boot path
+            else:
+                await feed.broadcast_snapshot()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Price bars start error: {e}")     # keep looping; a retry is scheduled
         while True:
             try:
                 await asyncio.sleep(PRICE_PUSH_INTERVAL)
-                await update_spx_es_prices(state)
                 await feed.tick()
             except asyncio.CancelledError:
                 raise
@@ -304,4 +343,8 @@ async def price_bars_loop(ib, state, broadcast_fn):
                 logger.error(f"Price bars loop error: {e}")
                 await asyncio.sleep(5)
     except asyncio.CancelledError:
+        pass
+    finally:
         feed.stop()
+        refresh.cancel()
+        await asyncio.gather(refresh, return_exceptions=True)
