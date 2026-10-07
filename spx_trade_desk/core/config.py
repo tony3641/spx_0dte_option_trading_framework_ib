@@ -56,6 +56,8 @@ _YAML_PARAMS = _load_yaml_params()
 
 def _get_setting(name: str, default: Any, cast: Callable[[Any], Any]) -> Any:
     env_val = os.getenv(name)
+    if env_val is not None and not env_val.strip() and cast is not str:
+        return default      # `NAME=` (a blank .env line) means "not set", never False or 0
     if env_val is not None:
         try:
             return cast(env_val)
@@ -67,6 +69,18 @@ def _get_setting(name: str, default: Any, cast: Callable[[Any], Any]) -> Any:
         return cast(yaml_val)
     except Exception:
         return default
+
+
+def _as_bool(value: Any) -> bool:
+    """Parse a boolean setting (env strings or YAML values); anything else is an error."""
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off", ""):
+        return False
+    raise ValueError(f"not a boolean: {value!r}")
 
 
 def _parse_hhmm(value: Any) -> time:
@@ -105,6 +119,9 @@ CHAIN_REFRESH_SECONDS = _get_setting("CHAIN_REFRESH_SECONDS", 10, int)
 DASHBOARD_CHAIN_REFRESH_SECONDS = _get_setting("DASHBOARD_CHAIN_REFRESH_SECONDS", 300, int)
 CHAIN_TAB_FULL_REFRESH_SECONDS = _get_setting("CHAIN_TAB_FULL_REFRESH_SECONDS", 300, int)
 PRICE_PUSH_INTERVAL = _get_setting("PRICE_PUSH_INTERVAL", 1.0, float)
+# Price chart bars (market/price_bars.py): False = one-shot backfill + live aggregation from SPX last.
+PRICE_BARS_KEEP_UP_TO_DATE = _get_setting("PRICE_BARS_KEEP_UP_TO_DATE", True, _as_bool)
+PRICE_BARS_STALL_S = 180.0      # RTH: no IB update for this long re-requests the bars
 
 # ---------------------------------------------------------------------------
 # Server
@@ -131,15 +148,28 @@ CHAIN_STREAM_UPDATE_INTERVAL = _get_setting("CHAIN_STREAM_UPDATE_INTERVAL", 0.5,
 CHAIN_QUOTE_MAX_AGE_S = _get_setting("CHAIN_QUOTE_MAX_AGE_S", 180.0, float)
 CHAIN_STREAM_UNKNOWN_RETRY_SECS = _get_setting("CHAIN_STREAM_UNKNOWN_RETRY_SECS", 120.0, float)
 VIEWPORT_CENTER_MIN_INTERVAL = _get_setting("VIEWPORT_CENTER_MIN_INTERVAL", 0.2, float)
+# Push channel (web/push.py): per-browser send queue.
+# Floors keep a typo from dropping every browser: a 10-message backlog limit or a 0 s timeout would.
+PUSH_ORDERED_BACKLOG_MAX = max(10, _get_setting("PUSH_ORDERED_BACKLOG_MAX", 1000, int))   # unsent critical messages before the client is dropped (min 10)
+PUSH_SEND_TIMEOUT_S = max(0.5, _get_setting("PUSH_SEND_TIMEOUT_S", 5.0, float))          # one send longer than this drops the client (min 0.5)
 
 # ---------------------------------------------------------------------------
 # Chain fetch internals
 # ---------------------------------------------------------------------------
 BATCH_SIZE = _get_setting("BATCH_SIZE", 200, int)
+# QUALIFY_BATCH_SIZE only sizes the single-qualification fallback (the registry lists an expiry in one request).
 QUALIFY_BATCH_SIZE = _get_setting("QUALIFY_BATCH_SIZE", 150, int)
-QUAL_CACHE_REQUALIFY_MOVE = _get_setting("QUAL_CACHE_REQUALIFY_MOVE", 20.0, float)
 DEFAULT_ANNUAL_VOL = _get_setting("DEFAULT_ANNUAL_VOL", 0.20, float)
 TRADING_DAYS_PER_YEAR = _get_setting("TRADING_DAYS_PER_YEAR", 252, int)
+
+# ---------------------------------------------------------------------------
+# IB layer: request lanes, contract cache, perf log (ib/pacing.py, ib/contracts.py, core/perf.py)
+# ---------------------------------------------------------------------------
+PERF_LOG_SECONDS = _get_setting("PERF_LOG_SECONDS", 60.0, float)    # 0 disables the periodic perf log line
+IB_REQUEST_RATE = _get_setting("IB_REQUEST_RATE", 30.0, float)     # data-lane messages/s; <= 0 disables the pacer
+IB_REQUEST_BURST = _get_setting("IB_REQUEST_BURST", 5, int)
+ORDER_USE_CONTRACT_CACHE = _get_setting("ORDER_USE_CONTRACT_CACHE", True, _as_bool)   # False: live lookup per order leg
+ORDER_MID_MAX_AGE_S = _get_setting("ORDER_MID_MAX_AGE_S", 2.0, float)      # quote-book mid accepted for dynamic fill
 
 # ---------------------------------------------------------------------------
 # Monthly/account/risk-free

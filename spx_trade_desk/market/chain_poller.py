@@ -2,7 +2,8 @@
 
 Each cycle polls every contract in the chain range (+-8 daily sigma, multiples of 5)
 that the stream does not currently hold, nearest strikes first, in batches the size of
-the line budget's 'poll' share. Results go into ``state.quote_book``.
+the line budget's 'poll' share (at most POLL_BATCH_MAX, so one snapshot never paces hundreds
+of subscribes ahead of an order). Results go into ``state.quote_book``.
 """
 import asyncio
 import logging
@@ -24,6 +25,7 @@ ANNUAL_VOL_REFRESH_S = 300.0
 POLL_PACE_S = 1.0          # breather between productive cycles
 POLL_IDLE_S = 10.0         # back-off when a cycle wrote nothing (empty range / cooldown)
 POLL_START_DELAY_S = 1.0
+POLL_BATCH_MAX = 50        # lines per snapshot batch, whatever the poll share (as the chain fetcher)
 
 
 def poll_targets(strikes, spot: float, annual_vol: float, streamed: set) -> List[Key]:
@@ -41,15 +43,15 @@ async def poll_once(ib, state, now: Callable[[], float] = time.monotonic) -> int
         book.reset(state.expiration)
     targets = poll_targets(state.strikes, state.spx_price, state.annual_vol,
                            set(state.chain_stream_tickers.keys()))
-    qualified = await state.qual_cache.qualify(ib, state.expiration, state.trading_class,
-                                               targets, now())
+    qualified = await state.contracts.qualify_keys(ib, state.expiration, state.trading_class,
+                                                   targets, now())
     ordered = [qualified[k] for k in targets if k in qualified]
-    batch_n = max(1, ib.line_budget.capacity("poll"))
+    batch_n = max(1, min(ib.line_budget.capacity("poll"), POLL_BATCH_MAX))
     written = 0
     for i in range(0, len(ordered), batch_n):
         refresh = state.force_chain_fetch_event
         if refresh is not None and refresh.is_set():
-            break          # the loop top clears the event and the qualification cache
+            break          # the loop top clears the event and re-reads the contract listing
         streams = await ib.fetch_snapshot(ordered[i:i + batch_n], generic="101",
                                           timeout=6.0, share="poll")
         opts = [o for o in (_stream_to_option_data(s) for s in streams) if o is not None]
@@ -73,8 +75,8 @@ def refresh_expiration(state) -> None:
 
 
 async def chain_poll_loop(ib, state, broadcast_fn):
-    """Poll the wings continuously; a manual refresh restarts the cycle with a fresh
-    qualification cache."""
+    """Poll the wings continuously; a manual refresh restarts the cycle and re-reads the
+    contract listing."""
     await asyncio.sleep(POLL_START_DELAY_S)
     if state.force_chain_fetch_event is None:
         state.force_chain_fetch_event = asyncio.Event()
@@ -98,8 +100,8 @@ async def chain_poll_loop(ib, state, broadcast_fn):
                 last_vol = time.monotonic()
             if state.force_chain_fetch_event.is_set():
                 state.force_chain_fetch_event.clear()
-                state.qual_cache.clear()
-                logger.info("Manual chain refresh: qualification cache cleared")
+                state.contracts.relist()
+                logger.info("Manual chain refresh: contract listing will be re-read")
             if len(state.quote_book) == 0:
                 state.chain_fetching = True        # drives the loading overlay until first publish
             t0 = time.monotonic()

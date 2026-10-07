@@ -25,9 +25,10 @@
     function handleAccountUpdate(data) {
         if (data.summary) state.accountSummary = data.summary;
         if (data.positions) state.positions = data.positions;
-        if (data.orders) state.openOrders = data.orders;
+        if (data.orders) { state.openOrders = data.orders; resolvePendingCancels(); }
         if (data.executions) state.executions = data.executions;
-        if (state.activeTab === 'account') renderAccountTab();
+        renderWhenVisible('account', 'account.tab', renderAccountTab);
+        renderWhenVisible('dashboard', 'dash.positions', renderDashPositions);
         // Always update summary badges (visible on all tabs)
         renderAccountSummaryBadges();
     }
@@ -274,6 +275,12 @@
             showOrderToast('Not connected to server', 'err');
             return;
         }
+        const sentAt = state.pendingCancels.get(orderId);
+        if (sentAt !== undefined && Date.now() - sentAt < CANCEL_PENDING_TTL_MS) {
+            showOrderToast('Cancel already requested for order ' + orderId, 'info');    // a second click sends nothing
+            return;
+        }
+        state.pendingCancels.set(orderId, Date.now());
         ws.send('cancel_order:' + orderId);
         showOrderToast('Cancel request sent for order ' + orderId, 'info');
     }

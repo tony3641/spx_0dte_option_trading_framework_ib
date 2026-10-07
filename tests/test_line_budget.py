@@ -124,3 +124,56 @@ async def test_grant_then_cancel_before_resume_does_not_leak_lines():
     with pytest.raises(asyncio.CancelledError):
         await t
     assert b.used("poll") == 0
+
+
+def test_observe_limit_shrinks_stream_first_then_poll_never_fixed_or_order():
+    b = LineBudget(split_lines(100))                      # fixed 4, order 4, poll 12, stream 78
+    assert b.observe_limit(90) == {"fixed": 4, "order": 4, "poll": 12, "stream": 70}
+    assert b.observe_limit(30) == {"fixed": 4, "order": 4, "poll": 12, "stream": 10}
+    assert b.observe_limit(10) == {"fixed": 4, "order": 4, "poll": 2, "stream": 0}
+    assert b.ceiling == 10
+
+
+def test_observe_limit_keeps_the_stream_share_even():
+    b = LineBudget(split_lines(100))
+    assert b.observe_limit(97)["stream"] == 76            # 77 would split a call/put pair
+
+
+def test_observe_limit_never_grows_the_budget():
+    b = LineBudget(split_lines(100))
+    b.observe_limit(60)
+    shrunk = b.shares()
+    assert b.observe_limit(10_000) == shrunk
+    assert b.ceiling == 60
+
+
+@pytest.mark.asyncio
+async def test_observe_limit_fails_a_queued_waiter_that_no_longer_fits_and_unblocks_the_queue():
+    b = LineBudget({"fixed": 4, "order": 4, "poll": 12, "stream": 0})
+    await b.acquire("poll", 12)                           # batch A holds every poll line
+    oversized = asyncio.create_task(b.acquire("poll", 12))   # batch B queued for the old full size
+    behind = asyncio.create_task(b.acquire("poll", 2))       # a small batch queued behind it
+    await asyncio.sleep(0)
+    b.observe_limit(10)                                   # stream is already 0: poll shrinks to 2
+    assert b.capacity("poll") == 2
+    with pytest.raises(ValueError):
+        await asyncio.wait_for(oversized, timeout=0.5)    # fails promptly instead of blocking the queue
+    b.release("poll", 12)                                 # batch A finishes
+    await asyncio.wait_for(behind, timeout=0.5)
+    assert b.used("poll") == 2
+    b.release("poll", 2)
+    await asyncio.wait_for(b.acquire("poll", 2), timeout=0.5)   # a later batch is not stranded
+    assert b.used("poll") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_waiter_cancelled_after_it_was_failed_does_not_release_lines_it_never_held():
+    b = LineBudget({"fixed": 4, "order": 4, "poll": 12, "stream": 0})
+    await b.acquire("poll", 12)
+    oversized = asyncio.create_task(b.acquire("poll", 12))
+    await asyncio.sleep(0)
+    b.observe_limit(10)                                   # fails the queued waiter...
+    oversized.cancel()                                    # ...which is cancelled before it resumes
+    with pytest.raises(asyncio.CancelledError):
+        await oversized
+    assert b.used("poll") == 12                           # batch A's lines are still its own

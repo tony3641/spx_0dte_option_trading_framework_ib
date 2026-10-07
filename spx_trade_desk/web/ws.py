@@ -14,20 +14,47 @@ from typing import Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from spx_trade_desk.core import config
 from spx_trade_desk.core.config import VIEWPORT_CENTER_MIN_INTERVAL
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import now_et, market_status, get_expiration_display, is_within_rth
-from spx_trade_desk.market.chain_fetcher import clear_qualification_cache
 from spx_trade_desk.market.chain_manager import monthly_gex_fetch
+from spx_trade_desk.market.price_bars import snapshot_payload
 from spx_trade_desk.ib.account import refresh_account_state, build_account_payload
 from spx_trade_desk.ib.orders import handle_place_order, handle_cancel_order
 from spx_trade_desk.ib.connection import update_vix
 from spx_trade_desk.strategy.engine import reset_strategy_runtime
 from spx_trade_desk.strategy.store import load_strategies, save_strategy, delete_strategy
 from spx_trade_desk.strategy.models import Strategy
+from spx_trade_desk.web import push
+from spx_trade_desk.web.push import ClientChannel, encode, record_client_perf, stamp
 
 logger = logging.getLogger(__name__)
 
-_IGNORED_IB_ERROR_CODES = {2104, 2106, 2107, 2108, 2119, 2158}
+# 101 (max market-data lines): IBClient logs it and shrinks the line budget; no toast per refused line.
+_IGNORED_IB_ERROR_CODES = {101, 2104, 2106, 2107, 2108, 2119, 2158}
+
+# Strong references to in-flight cancel_order tasks (the loop only keeps weak ones). They outlive
+# their connection: a cancel the user clicked right before closing the tab still reaches IB.
+_CANCEL_TASKS: set = set()
+
+
+async def drain_detached_tasks(timeout: float = 2.0) -> int:
+    """Shutdown helper: wait up to ``timeout`` s for the detached cancel replies and socket closes.
+
+    Those tasks are not owned by any loop or connection, so without this the loop closes with them
+    pending ("Task was destroyed but it is pending"). Whatever is still running after the timeout is
+    cancelled and awaited. Returns how many were still running at the timeout.
+    """
+    pending = {t for t in (*_CANCEL_TASKS, *push._CLOSE_TASKS) if not t.done()}
+    if not pending:
+        return 0
+    _, still = await asyncio.wait(pending, timeout=timeout)
+    for task in still:
+        task.cancel()
+    if still:
+        await asyncio.gather(*still, return_exceptions=True)
+    return len(still)
 
 
 def _unquote_name(name: str) -> str:
@@ -69,6 +96,8 @@ def _strategy_list_payload(state) -> dict:
 
 
 async def broadcast(state, message: dict):
+    """Feed the alert bridge, then enqueue on every client's channel. Never awaits a socket."""
+    t0 = time.perf_counter()
     # Feed the Discord alert observer (no-op when None / not configured).
     bridge = getattr(state, "alert_bridge", None)
     if bridge is not None:
@@ -78,19 +107,13 @@ async def broadcast(state, message: dict):
             logger.error(f"AlertBridge forward error: {e}")
     if not state.ws_clients:
         return
-    try:
-        data = json.dumps(message, allow_nan=False)
-    except ValueError as e:
-        logger.error(f"Dropping non-JSON-serializable payload type={message.get('type')}: {e}")
+    stamped = stamp(message)
+    text = encode(stamped)
+    if text is None:
         return
-    dead = []
-    for ws in state.ws_clients:
-        try:
-            await ws.send_text(data)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        state.ws_clients.discard(ws)
+    for channel in list(state.ws_clients.values()):
+        channel.enqueue(stamped, text)
+    perf.record("push.broadcast", (time.perf_counter() - t0) * 1000.0)
 
 
 def make_broadcast_fn(state):
@@ -98,6 +121,23 @@ def make_broadcast_fn(state):
     async def _broadcast(message: dict):
         await broadcast(state, message)
     return _broadcast
+
+
+async def _cancel_and_reply(ib, state, order_id: int, out) -> None:
+    """Run the confirmed cancel off the read loop; reply on the client's channel when it settles."""
+    try:
+        resp = await handle_cancel_order(ib, state, order_id, refresh_fn=refresh_account_state)
+    except Exception as e:
+        logger.error(f"cancel_order error: {e}", exc_info=True)
+        resp = {"type": "order_status", "data": {"status": "Error", "orderId": order_id, "message": str(e)}}
+    data = resp.get("data")
+    if isinstance(data, dict):
+        # Every cancel reply names its order and says it is a cancel reply: place_order replies share the
+        # `order_status` type, and the browser must never take one for the other (even an early error that
+        # has no order id of its own).
+        data["action"] = "cancel"
+        data.setdefault("orderId", order_id)
+    out.send_message(resp)      # a no-op once the client has gone
 
 
 def _serialize_ib_error_contract(contract) -> dict | None:
@@ -159,8 +199,19 @@ def make_ib_error_handler(state, broadcast_fn):
     return _on_ib_error
 
 
+def maybe_log_perf(last_ts: float, now: float, interval: float) -> float:
+    """Log the perf summary when ``interval`` seconds passed since ``last_ts``; return the new stamp."""
+    if interval <= 0 or now - last_ts < interval:
+        return last_ts
+    line = perf.summary_line()
+    if line:
+        logger.info(line)
+    return now
+
+
 async def status_push_loop(state, broadcast_fn):
     """Push status updates every few seconds."""
+    last_perf_log = time.monotonic()
     while True:
         try:
             await asyncio.sleep(5)
@@ -187,6 +238,7 @@ async def status_push_loop(state, broadcast_fn):
                 },
             }
             await broadcast_fn(status)
+            last_perf_log = maybe_log_perf(last_perf_log, time.monotonic(), config.PERF_LOG_SECONDS)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -201,7 +253,9 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
     by the server module.
     """
     await ws.accept()
-    state.ws_clients.add(ws)
+    out = ClientChannel(ws, on_close=lambda _ch: state.ws_clients.pop(ws, None))
+    state.ws_clients[ws] = out
+    out.start()
     logger.info(f"WebSocket client connected (total: {len(state.ws_clients)})")
 
     try:
@@ -213,7 +267,7 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                 "market_status": market_status(),
                 "expiration": get_expiration_display(state.expiration) if state.expiration else "N/A",
                 "spot_price": round(state.spx_price, 2),
-                "price_history": list(state.price_history),
+                "price": snapshot_payload(state, is_within_rth()),
                 "gex": state.latest_gex,
                 "last_chain_update": state.last_chain_update or "Never",
                 "data_mode": state.data_mode,
@@ -227,22 +281,25 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                 "monthly_expiration": get_expiration_display(state.monthly_expiration) if state.monthly_expiration else "N/A",
             }
         }
-        await ws.send_text(json.dumps(init_msg))
+        out.send_message(init_msg)
         # Push the strategy list on connect so a client opening any tab directly
         # (e.g. #sim) receives strategies without first visiting the Strategies
         # tab — otherwise its strategy dropdown stays empty. If the boot path never
         # reached load_strategies() (e.g. IB was down), load from disk now.
         if not state.strategies:
             state.strategies = load_strategies()
-        await ws.send_text(json.dumps(_strategy_list_payload(state)))
+        out.send_message(_strategy_list_payload(state))
+        # The init carries the cached full chain, which can be up to CHAIN_REFRESH_SECONDS old: have the
+        # chain stream resend whole rows on its next cycle (about 0.5 s) instead of only the changes.
+        state.chain_resync_requested = True
 
-        while True:
+        while not out.closed:      # the channel closed itself (slow or gone client): stop reading
             try:
                 msg = await asyncio.wait_for(ws.receive_text(), timeout=30)
 
                 if msg == "refresh_chain":
                     logger.info("Client requested chain refresh")
-                    clear_qualification_cache("option-tab manual refresh")
+                    state.contracts.relist()
                     if state.force_chain_fetch_event is not None:
                         state.force_chain_fetch_event.set()
 
@@ -274,21 +331,21 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                     state.active_tab = "account"
                     logger.info("Client active tab: account")
                     refresh_account_state(ib, state)
-                    await ws.send_text(json.dumps({
+                    out.send_message({
                         "type": "account_update",
                         "data": build_account_payload(state),
-                    }))
+                    })
 
                 elif msg == "set_tab:strategies":
                     state.active_tab = "strategies"
                     logger.info("Client active tab: strategies")
                     state.strategies = load_strategies()
-                    await ws.send_text(json.dumps(_strategy_list_payload(state)))
+                    out.send_message(_strategy_list_payload(state))
 
                 elif msg == "set_tab:log":
                     state.active_tab = "log"
                     # Push current log backlog so a freshly-opened console fills up.
-                    await ws.send_text(json.dumps({"type": "log_history", "data": list(state.log_buffer)}))
+                    out.send_message({"type": "log_history", "data": list(state.log_buffer)})
 
                 elif msg == "set_tab:sim":
                     state.active_tab = "sim"
@@ -299,11 +356,11 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                         strat = Strategy.from_dict(body)
                         err = _budget_error(state, strat.budget)
                         if err:
-                            await ws.send_text(json.dumps({"type": "strategy_error", "data": {"message": err}}))
+                            out.send_message({"type": "strategy_error", "data": {"message": err}})
                             continue
                         state.strategies[strat.name] = strat
                         save_strategy(None, strat)
-                        await ws.send_text(json.dumps(_strategy_list_payload(state)))
+                        out.send_message(_strategy_list_payload(state))
                     except Exception as e:
                         logger.error(f"strategy_save error: {e}", exc_info=True)
 
@@ -317,13 +374,13 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                     if s is not None:
                         s.armed = True
                         reset_strategy_runtime(state, s.name)
-                        await ws.send_text(json.dumps(_strategy_list_payload(state)))
+                        out.send_message(_strategy_list_payload(state))
 
                 elif msg.startswith("strategy_disarm:"):
                     s = state.strategies.get(_unquote_name(msg.split(":", 1)[1]))
                     if s is not None:
                         s.armed = False
-                        await ws.send_text(json.dumps(_strategy_list_payload(state)))
+                        out.send_message(_strategy_list_payload(state))
 
                 elif msg.startswith("strategy_kill_switch:"):
                     state.auto_trade_kill_switch = msg.split(":", 1)[1] == "true"
@@ -332,31 +389,34 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                     try:
                         payload = json.loads(msg.split(":", 1)[1])
                         resp = await handle_place_order(
-                            ib, state, payload, ws=ws,
+                            ib, state, payload, ws=out,
                             refresh_fn=refresh_account_state,
                         )
-                        await ws.send_text(json.dumps(resp))
+                        out.send_message(resp)
                     except Exception as e:
                         logger.error(f"place_order error: {e}", exc_info=True)
-                        await ws.send_text(json.dumps({
+                        out.send_message({
                             "type": "order_status",
                             "data": {"status": "Error", "message": str(e)},
-                        }))
+                        })
 
                 elif msg.startswith("cancel_order:"):
                     try:
                         order_id = int(msg.split(":", 1)[1])
-                        resp = await handle_cancel_order(
-                            ib, state, order_id,
-                            refresh_fn=refresh_account_state,
-                        )
-                        await ws.send_text(json.dumps(resp))
-                    except Exception as e:
-                        logger.error(f"cancel_order error: {e}", exc_info=True)
-                        await ws.send_text(json.dumps({
-                            "type": "order_status",
-                            "data": {"status": "Error", "message": str(e)},
-                        }))
+                    except (TypeError, ValueError):
+                        out.send_message({"type": "order_status",
+                                          "data": {"status": "Error", "action": "cancel", "message": "Bad order id"}})
+                        continue
+                    # Off the read loop: the confirmed cancel can wait seconds for IB.
+                    task = asyncio.create_task(_cancel_and_reply(ib, state, order_id, out))
+                    _CANCEL_TASKS.add(task)
+                    task.add_done_callback(_CANCEL_TASKS.discard)
+
+                elif msg.startswith("perf_report:"):
+                    try:
+                        record_client_perf(msg.split(":", 1)[1])
+                    except Exception as e:      # a bad report never ends the connection
+                        logger.debug(f"perf_report ignored: {e!r}")
 
                 elif msg.startswith("viewport_center:"):
                     try:
@@ -372,15 +432,14 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                     state.viewport_center_strike = round(strike, 1)
 
             except asyncio.TimeoutError:
-                try:
-                    await ws.send_text(json.dumps({"type": "ping"}))
-                except Exception:
-                    break
+                out.send_message({"type": "ping"})
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
         logger.debug(f"WebSocket error: {e}")
     finally:
-        state.ws_clients.discard(ws)
+        # Unregister first so broadcasts stop feeding a closing channel, then flush what is queued.
+        state.ws_clients.pop(ws, None)
+        await out.aclose(drain=True)
         logger.info(f"WebSocket client disconnected (total: {len(state.ws_clients)})")

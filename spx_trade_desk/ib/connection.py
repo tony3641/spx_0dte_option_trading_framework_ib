@@ -14,6 +14,7 @@ from datetime import datetime
 from ibapi.contract import Contract
 
 from spx_trade_desk.core.config import IB_HOST, IB_PORT, IB_CLIENT_ID
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import (
     now_et,
     is_within_rth,
@@ -46,7 +47,8 @@ async def connect_ib(ib, state, host: str = None, port: int = None,
     p = port or IB_PORT
     cid = client_id or IB_CLIENT_ID
     try:
-        await ib.connect(h, p, cid, timeout=15)
+        with perf.timer("ib.connect"):
+            await ib.connect(h, p, cid, timeout=15)
         state.connected = True
         state.ib_port = p
         logger.info(f"Connected to IB at {h}:{p}")

@@ -42,6 +42,39 @@
         renderStrategy();
     }
 
+    // ---- Order dock. Collapsed (default): the header line (legs, net, max loss) and the order row.
+    // Expanded: the legs table and the combo numbers too. The order row is never hidden: an armed
+    // stop-loss or the Place Order button must not disappear behind a toggle.
+    let _dockExpanded = false;
+
+    function applyStrategyDock() {
+        const panel = document.getElementById('strategyPanel');
+        const btn = document.getElementById('strategyDockToggle');
+        if (!panel || !btn) return;
+        panel.classList.toggle('dock-collapsed', !_dockExpanded);
+        btn.setAttribute('aria-expanded', String(_dockExpanded));
+        btn.innerHTML = _dockExpanded ? '&#9660;' : '&#9650;';
+    }
+
+    function toggleStrategyDock(force) {
+        _dockExpanded = typeof force === 'boolean' ? force : !_dockExpanded;
+        applyStrategyDock();
+    }
+
+    function updateStrategyDockLine() {
+        const el = document.getElementById('strategyDockLine');
+        if (!el) return;
+        const legs = state.strategyLegs;
+        let text = 'Click Ask to buy or Bid to sell an option';
+        if (legs.length) {
+            const names = legs.map(l => `${l.action === 'BUY' ? 'Buy' : 'Sell'} ${l.strike}${l.right}`).join(' / ');
+            const net = (document.getElementById('comboNet') || {}).textContent || '-';
+            const maxLoss = net === '-' ? '-' : ((document.getElementById('comboMaxLoss') || {}).textContent || '-');
+            text = `${names}  |  ${net}  |  Max loss ${maxLoss}`;
+        }
+        if (el.textContent !== text) el.textContent = text;
+    }
+
     function clearStrategy() {
         state.strategyLegs = [];
         const lmtInput = document.getElementById('stratLmtPrice');
@@ -143,11 +176,12 @@
         const emptyEl = document.getElementById('strategyEmpty');
 
         if (state.strategyLegs.length === 0) {
-            content.innerHTML = '<div class="strategy-empty" id="strategyEmpty">Click <span style="color:#4ade80">Ask</span> to buy or <span style="color:#f87171">Bid</span> to sell an option</div>';
+            content.innerHTML = '<div class="strategy-empty" id="strategyEmpty">Click <span style="color:var(--up)">Ask</span> to buy or <span style="color:var(--down)">Bid</span> to sell an option</div>';
             summary.style.display = 'none';
             countEl.textContent = '';
             const orderRow = document.getElementById('orderEntryRow');
             if (orderRow) orderRow.style.display = 'none';
+            updateStrategyDockLine();
             refreshSelectionHighlights();
             return;
         }
@@ -163,17 +197,16 @@
             const q = getLegQuote(leg);
             const mid = (q.bid !== null && q.ask !== null) ? ((q.bid + q.ask) / 2).toFixed(2) : '-';
             const legDelta = getLegDelta(leg);
-            const legDeltaClass = legDelta === null ? '' : (legDelta > 0 ? 'summary-credit' : (legDelta < 0 ? 'summary-debit' : ''));
             const actionClass = leg.action === 'BUY' ? 'leg-buy' : 'leg-sell';
-            html += '<tr>';
+            html += `<tr data-leg-id="${leg.id}">`;
             html += `<td class="${actionClass}">${leg.action}</td>`;
             html += `<td>${leg.strike}</td>`;
             html += `<td>${leg.right === 'C' ? 'Call' : 'Put'}</td>`;
             html += `<td><span class="qty-group"><button class="qty-btn" onclick="bumpAllQty(-1)" title="Decrease all legs">-</button><input type="number" class="leg-qty" value="${leg.qty}" min="1" onchange="updateLegQty(${leg.id}, this.value)"><button class="qty-btn" onclick="bumpAllQty(1)" title="Increase all legs">+</button></span></td>`;
-            html += `<td>${q.bid !== null ? q.bid.toFixed(2) : '-'}</td>`;
-            html += `<td>${q.ask !== null ? q.ask.toFixed(2) : '-'}</td>`;
-            html += `<td>${mid}</td>`;
-            html += `<td class="${legDeltaClass}">${legDelta !== null ? formatSignedNumber(legDelta, 1) : '-'}</td>`;
+            html += `<td class="leg-bid">${q.bid !== null ? q.bid.toFixed(2) : '-'}</td>`;
+            html += `<td class="leg-ask">${q.ask !== null ? q.ask.toFixed(2) : '-'}</td>`;
+            html += `<td class="leg-mid">${mid}</td>`;
+            html += `<td class="${legDeltaCellClass(legDelta)}">${legDelta !== null ? formatSignedNumber(legDelta, 1) : '-'}</td>`;
             html += `<td><span class="leg-remove" onclick="removeLeg(${leg.id})">x</span></td>`;
             html += '</tr>';
         }
@@ -189,10 +222,33 @@
         if (orderRow) orderRow.style.display = '';
     }
 
+    function legDeltaCellClass(legDelta) {
+        const tone = legDelta === null ? '' : (legDelta > 0 ? 'summary-credit' : (legDelta < 0 ? 'summary-debit' : ''));
+        return tone ? `leg-delta ${tone}` : 'leg-delta';
+    }
+
+    // Patch the leg rows' price cells in place (the quantity inputs keep focus while quotes stream)
+    // and recompute the combo. A leg without a row means the table is stale: rebuild it.
     function updateStrategyPrices() {
         if (state.strategyLegs.length === 0) return;
-        // Re-render leg prices and recompute combo
-        renderStrategy();
+        const content = document.getElementById('strategyContent');
+        for (const leg of state.strategyLegs) {
+            const tr = content.querySelector(`tr[data-leg-id="${leg.id}"]`);
+            if (!tr) { renderStrategy(); return; }
+            const q = getLegQuote(leg);
+            const d = getLegDelta(leg);
+            const set = (cls, txt, className = cls) => {
+                const c = tr.querySelector(`.${cls}`);
+                if (!c) return;
+                if (c.textContent !== txt) c.textContent = txt;
+                if (c.className !== className) c.className = className;
+            };
+            set('leg-bid', q.bid !== null ? q.bid.toFixed(2) : '-');
+            set('leg-ask', q.ask !== null ? q.ask.toFixed(2) : '-');
+            set('leg-mid', (q.bid !== null && q.ask !== null) ? ((q.bid + q.ask) / 2).toFixed(2) : '-');
+            set('leg-delta', d !== null ? formatSignedNumber(d, 1) : '-', legDeltaCellClass(d));
+        }
+        computeCombo();
     }
 
     function computeCombo() {
@@ -304,6 +360,7 @@
             // Max profit / loss / breakeven
             computePayoff(mid);
         }
+        updateStrategyDockLine();
     }
 
     function computePayoff(premium) {
@@ -385,13 +442,14 @@
             case 'init':
                 handleInit(msg.data);
                 break;
-            case 'bar':
-                appendBar(msg.data);
-                updateBadges();
+            case 'price_snapshot':
+                handlePriceSnapshot(msg.data);
                 break;
-            case 'bar_update':
-                updateLastBar(msg.data);
-                updateBadges();
+            case 'price_bar':
+                handlePriceBar(msg.data);
+                break;
+            case 'price_overnight':
+                handlePriceOvernight(msg.data);
                 break;
             case 'chain_progress':
                 handleChainProgress(msg.data);
@@ -400,9 +458,8 @@
                 state.gex = msg.data;
                 if (msg.data.spot_price > 0) state.currentSpot = msg.data.spot_price;
                 state.esDerived = msg.data.es_derived || false;
-                updateGexChart();
-                updateSmileChart();
-                updatePriceChart();
+                requestGexRender();
+                updatePriceLevels(state.gex);
                 updateBadges();
                 break;
             case 'chain_quotes':
@@ -434,9 +491,7 @@
                     updateGexModeToggle();
                 }
                 if (state.gexMode === 'monthly') {
-                    updateGexChart();
-                    updateSmileChart();
-                    updatePriceChart();
+                    requestGexRender();
                     updateBadges();
                 }
                 break;
@@ -467,20 +522,16 @@
         if (data.spot_price > 0) state.currentSpot = data.spot_price;
         state.esDerived = data.es_derived || false;
 
-        // Restore bar history (OHLC)
-        if (data.price_history && data.price_history.length > 0) {
-            state.bars = data.price_history;
-            updatePriceChart();
-        }
+        // Restore the price chart (bars and overnight line)
+        if (data.price) handlePriceSnapshot(data.price);
 
         // Restore GEX
         if (data.gex) {
             state.gex = data.gex;
             if (data.gex.spot_price > 0) state.currentSpot = data.gex.spot_price;
             state.esDerived = data.es_derived || false;
-            updateGexChart();
-            updatePriceChart();
-            updateSmileChart();
+            requestGexRender();
+            updatePriceLevels(state.gex);
             // Cached GEX from server - hide loading overlays immediately
             document.getElementById('gexLoading').classList.add('hidden');
             document.getElementById('smileLoading').classList.add('hidden');
@@ -502,8 +553,7 @@
         }
         // Re-render charts with correct mode data
         if (state.gexMode === 'monthly' && state.monthlyGex) {
-            updateGexChart();
-            updateSmileChart();
+            requestGexRender();
         }
 
         // Restore option chain data for Tab 2

@@ -1,6 +1,23 @@
     // Init
     // ======================================================================
+    // The tab containers fill the viewport below the header, the levels strip and the tab bar. Their
+    // heights are not constants (the strip wraps, fonts differ), so measure them.
+    function syncShellHeight() {
+        let h = 0;
+        for (const sel of ['.header', '#levelsStrip', '.tab-bar']) {
+            const el = document.querySelector(sel);
+            if (el) h += el.getBoundingClientRect().height;
+        }
+        document.documentElement.style.setProperty('--shell-h', Math.ceil(h) + 'px');
+    }
+    window.addEventListener('resize', syncShellHeight);
+    if (window.ResizeObserver) {
+        const ro = new ResizeObserver(syncShellHeight);
+        for (const sel of ['.header', '#levelsStrip', '.tab-bar']) { const el = document.querySelector(sel); if (el) ro.observe(el); }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
+        syncShellHeight();
         initPriceChart();
         initGexChart();
         initSmileChart();
@@ -41,10 +58,23 @@
             }
         });
 
-        // Handle window resize - update margins for mobile/desktop transitions
+        // Size the Plotly charts from their containers: a chart is resized only while its container has
+        // a real size (never while the tab is hidden, which draws it squashed), one chart per frame.
+        const chartObserver = new ResizeObserver(entries => {
+            for (const e of entries) {
+                const el = e.target;
+                if (e.contentRect.width > 0 && e.contentRect.height > 0 && el._fullLayout) {
+                    scheduleRender(`resize.${el.id}`, () => {
+                        if (el.offsetWidth > 0 && el.offsetHeight > 0) Plotly.Plots.resize(el);
+                    }, { heavy: true });
+                }
+            }
+        });
+        ['gexChart', 'smileChart'].forEach(id => chartObserver.observe(document.getElementById(id)));
+
+        // Window resize only swaps the margins and font sizes for mobile/desktop transitions
         window.addEventListener('resize', () => {
             const fs = mobileAxisFontSize();
-            Plotly.relayout('priceChart', { margin: mobilePriceMargin() });
             Plotly.relayout('gexChart', {
                 margin: mobileGexMargin(),
                 'xaxis.title.font.size': fs,
@@ -52,15 +82,14 @@
                 'legend.font.size': fs,
             });
             Plotly.relayout('smileChart', { margin: mobileSmileMargin() });
-            Plotly.Plots.resize('priceChart');
-            Plotly.Plots.resize('gexChart');
-            Plotly.Plots.resize('smileChart');
             if (state.activeTab === 'chain') {
                 reportChainViewportCenter(true);
             }
         });
 
-        state.chainAgeTimer = setInterval(updateChainUpdateAge, 1000);
+        state.chainAgeTimer = setInterval(() => { updateChainUpdateAge(); refreshStaleMarks(); }, 1000);
+
+        document.getElementById('chainBody').addEventListener('click', onChainBodyClick);
 
         const chainWrap = document.getElementById('chainTableWrap');
         if (chainWrap) {

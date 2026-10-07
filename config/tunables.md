@@ -14,11 +14,19 @@ Source: spx_trade_desk/core/config.py
 - DASHBOARD_CHAIN_REFRESH_SECONDS = 300
 - CHAIN_TAB_FULL_REFRESH_SECONDS = 300
 - PRICE_PUSH_INTERVAL = 1.0
+- PRICE_BARS_KEEP_UP_TO_DATE = true (price chart bars come from an IB keepUpToDate request; false = one-shot backfill at boot, 09:30 and reconnect, with the forming bar aggregated from the live SPX last price; after 3 failed keepUpToDate starts in a row the server switches to false for the rest of the process). A blank value (`NAME=`) of a numeric or boolean setting means its default
 - SERVER_HOST = "0.0.0.0"
 - SERVER_PORT = 8000
 - MARKET_DATA_LINES = 100 (account IB line allowance; split into fixed/order/poll/stream shares at startup)
+- IB_REQUEST_RATE = 30 (messages per second the data lane may send to TWS; orders and cancels are never paced; 0 disables the pacer)
+- IB_REQUEST_BURST = 5 (messages that may go out back to back before the rate applies)
+- ORDER_USE_CONTRACT_CACHE = true (order path reuses cached contract ids; false forces a live lookup for every order)
+- ORDER_MID_MAX_AGE_S = 2.0 (dynamic fill takes its mid from the quote book only if the quote is at most this old)
+- PERF_LOG_SECONDS = 60 (one perf summary log line per interval; 0 disables; the same data is at /api/perf on localhost)
 - CHAIN_STREAM_UPDATE_INTERVAL = 0.5
 - VIEWPORT_CENTER_MIN_INTERVAL = 0.2
+- PUSH_ORDERED_BACKLOG_MAX = 1000, minimum 10 (a lower value is raised to 10) (unsent critical messages, such as order status, one browser may queue before it is dropped and reconnects to a fresh init; raise it only if a slow but healthy client gets dropped during order bursts)
+- PUSH_SEND_TIMEOUT_S = 5.0, minimum 0.5 (a lower value is raised to 0.5) (one WebSocket send slower than this drops that browser only; raise it for clients on a slow remote link, lower it to shed a stuck tab sooner)
 
 ## 2) Backend hardcoded tunables (not env-wired today)
 
@@ -27,13 +35,13 @@ Source: spx_trade_desk/core/config.py
 
 ### spx_trade_desk/core/app_state.py
 - price_history maxlen: 28800
+- price_overnight maxlen: 1440 (ES-derived SPX points, one per minute outside RTH)
 - annual_vol default: 0.20
 - risk_free_rate default: 0.043
 
 ### spx_trade_desk/market/chain_fetcher.py
 - BATCH_SIZE: 200
-- QUALIFY_BATCH_SIZE: 150
-- QUAL_CACHE_REQUALIFY_MOVE: 20.0 points
+- QUALIFY_BATCH_SIZE: 150 (only sizes the single-qualification fallback batches)
 - DEFAULT_ANNUAL_VOL: 0.20
 - TRADING_DAYS_PER_YEAR: 252
 - fetch_option_chain std_dev_range default: 5.0
@@ -48,10 +56,10 @@ Source: spx_trade_desk/core/config.py
 - chain stream startup delay: 2 s
 - chain stream no-data sleep: 5 s
 - chain stream no strikes sleep: 10 s
-- chain stream qualification: the shared QualificationCache (market/qualification.py), QUALIFY_BATCH_SIZE contracts per batch (core/config.py, default 150), no inter-batch delay
+- chain contract lookup: one shared ContractRegistry (ib/contracts.py): one bulk reqContractDetails per (expiry, trading class), single-qualification fallback in QUALIFY_BATCH_SIZE batches through the request pacer (ib/pacing.py); strikes missing from the listing are retried after CHAIN_STREAM_UNKNOWN_RETRY_SECS with one re-list
 - chain stream quote-book writes: only rows whose stream ticked since the previous pass
 - chain stream tick-log cadence: 10.0 s
-- chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py)
+- chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py); each cycle sends one `chain_tick` (with its `expiration_raw`) with only the fields that changed per (strike, right), nothing when nothing changed; the first cycle after a browser connects sends every field of every streamed row (the full `chain_quotes` comes from the publisher every CHAIN_REFRESH_SECONDS)
 - monthly cache TTL: 600 s
 - monthly fetch std_dev_range: 8.0
 
@@ -116,8 +124,15 @@ Source: spx_trade_desk/core/config.py
 - historical bars duration: 1 D
 - historical bars size: 1 min
 - historical fetch off-hours end time: 16:30:00 ET
-- price_push_loop cadence: PRICE_PUSH_INTERVAL (from spx_trade_desk/core/config.py)
-- price push error backoff: 1 s
+
+### spx_trade_desk/market/price_bars.py
+- price_bars_loop cadence: PRICE_PUSH_INTERVAL (live merge of the forming bar, overnight line)
+- price_bars_loop error backoff: 5 s
+- IB request: 1 D, 1 min, TRADES, regular hours, keepUpToDate (PRICE_BARS_KEEP_UP_TO_DATE)
+- PRICE_BARS_STALL_S: 180 s (RTH: no IB update for this long cancels and re-requests the bars)
+- re-request backoff after an IB error or stall: 5 s, 15 s, 60 s (cap)
+- LIVE_FAILURES_BEFORE_FALLBACK: 3 failed keepUpToDate starts in a row switch the feed to the one-shot backfill for the rest of the process (cleared by a start that returns bars or by an IB update)
+- overnight (ES-derived) line: one point per minute outside RTH, at most 1440 points
 
 ### spx_trade_desk/core/rates.py
 - SGOV source URL: https://finance.yahoo.com/quote/SGOV?p=SGOV
@@ -138,17 +153,37 @@ Source: spx_trade_desk/core/config.py
 - VALID_TABS: dashboard, chain, account
 - CHAIN_VIEWPORT_SEND_THROTTLE_MS: 200
 - CHAIN_VIEWPORT_CENTER_THRESHOLD: 30
+- state.gexWindowStrikes: 40 (the GEX and smile charts draw this many strike steps each side of spot; the step is the median gap between strikes)
+- state.gexShowAll: false (true draws every strike; the Near / All toggle sets it)
+- state.smileMinIntervalMs: 5000 (a changed IV smile redraws at most this often, with a trailing draw)
+- state.chainFlashMax: 40 (most tick flashes started per chain flush; 0 turns the flash off)
+- Theme storage key: `spx-theme` (`light` or `dark`; absent = follow the OS), set from static/js/theme.js
 
 ### static/js/ws.js
 - Initial viewport report delay after open: 120 ms
-- Reconnect delay: 3000 ms
+- Reconnect delays: 500, 1000, 2000 ms, then every 3000 ms (the attempt counter resets when a socket opens)
 
 ### static/js/main.js
-- Chain age update interval: 1000 ms
+- `--shell-h` CSS variable: measured height of the header, level strip and tab bar (`syncShellHeight()`, re-run on resize); the dashboard grid and chain container fill the rest of the viewport (CSS fallback 134px)
+- Chain age update interval: 1000 ms (also toggles the chain table's quote-stale marks)
 
 ### static/js/tabs.js
-- Dashboard resize delay after switch: 50 ms
+- (the 50 ms Dashboard resize timer is gone: a ResizeObserver in main.js sizes the GEX and smile charts)
 - Chain viewport recenter delay after switch: 80 ms
+
+### static/js/render-loop.js
+- Frame batching: one requestAnimationFrame flush per frame for light jobs
+- HEAVY_MAX_WAIT_FLUSHES: 4 (a heavy job, such as a GEX or smile Plotly draw, runs one per frame after the light jobs; after waiting behind this many busy flushes it runs in a frame that also has light jobs)
+
+### static/js/perf.js
+- PERF_REPORT_MS: 10000 (browser perf_report interval)
+- PERF_MAX_SAMPLES: 200 (per span name and report; the server keeps at most 50 names and 200 samples per name, and drops samples outside 0..60000 ms)
+
+### static/js/price-chart.js
+- Level price lines: Call Wall, Put Wall (solid), Gamma Flip, Max Pain (dashed)
+- Candle and line colors come from `themeColors()` (tokens in static/css/tokens.css), re-applied on `themechange`
+- A reconnect snapshot of the same session keeps the visible range (shifted by the number of new bars when the viewer was at the live edge); only the first snapshot and a new session fit the content
+- Times: ET wall-clock encoded as UTC seconds (Date.UTC)
 
 ### static/js/chain-table.js
 - Visible strike window: +/-5 sigma plus +/-60 points
@@ -156,10 +191,8 @@ Source: spx_trade_desk/core/config.py
 
 ### static/js/charts.js
 - Mobile breakpoint: 600 px
-- Theme colors:
-  - CHART_BG = #111827
-  - GRID_COLOR = #1e293b
-  - TEXT_COLOR = #94a3b8
+- state.spotLineMinIntervalMs: 2000 (at most one spot-line relayout per GEX / smile chart in this window; set in state.js)
+- Chart colors come from `themeColors()` (static/js/theme-colors.js), which reads the tokens in static/css/tokens.css; `chartTheme()` / `patchChartTheme()` re-theme the Plotly charts on `themechange`
 - Axis/title legend default font sizes: 9, 10, 11
 - Common line widths used for overlays/traces: 1.5, 2
 
@@ -169,6 +202,7 @@ Source: spx_trade_desk/core/config.py
 
 ### static/js/order-entry.js
 - Toast auto-hide timeout: 5000 ms
+- CANCEL_PENDING_TTL_MS: 60000 (a cancel IB has not confirmed after this long is reported as lost; a second click inside it sends nothing)
 
 ### static/js/strategy-builder.js
 - SPX tick rule: >2 uses 0.10, otherwise 0.05

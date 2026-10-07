@@ -1,7 +1,6 @@
     // State
     // ======================================================================
     const state = {
-        bars: [],          // [{time, open, high, low, close}]
         gex: null,         // latest gex data
         wsConnected: false,
         ibConnected: false,
@@ -18,7 +17,7 @@
         chainMeta: null,      // {spot_price, call_wall, put_wall, gamma_flip}
         strategyLegs: [],     // [{id, action, strike, right, qty, ...}]
         nextLegId: 1,
-        prevCellValues: {},   // for flash animation: "strike_right_field" - prev value
+        chainSideSeenMs: {},  // "strike|C" / "strike|P" -> ms of the last tick (or age-seeded full payload) for stale marks
         chainLastUpdateMs: null,
         chainAgeTimer: null,
         chainViewportCenterStrike: null,
@@ -27,6 +26,11 @@
         chainViewportSendTimer: null,
         // GEX mode toggle (dashboard)
         gexMode: '0dte',        // '0dte' | 'monthly'
+        spotLineMinIntervalMs: 2000,   // at most one spot-line relayout per GEX / smile chart in this window
+        chainFlashMax: 40,             // most tick flashes started per chain flush; 0 turns the flash off
+        gexWindowStrikes: 40,          // the GEX / smile charts draw this many strike steps each side of spot
+        gexShowAll: false,             // true: draw every strike (the "All" toggle)
+        smileMinIntervalMs: 5000,      // a changed smile redraws at most this often (trailing draw)
         monthlyGex: null,       // cached monthly GEX data
         monthlyExpiration: '',  // display string for monthly expiration
         // Account tab state
@@ -36,6 +40,9 @@
         executions: [],
         // Pending order confirmation callback
         pendingOrderPayload: null,
+        // Cancels IB has not confirmed yet: orderId -> request time (ms). Replies for these are cancel
+        // feedback, never the reply to a place_order in flight (order-entry.js).
+        pendingCancels: new Map(),
         // Tracks positions currently being liquidated (prevents duplicate orders)
         liquidatingPositions: new Set(),
         // Strategies tab state
@@ -57,13 +64,14 @@
         if (VALID_TABS.has(hashTab)) {
             return hashTab;
         }
-        const savedTab = localStorage.getItem(TAB_KEY);
+        let savedTab = null;
+        try { savedTab = localStorage.getItem(TAB_KEY); } catch (e) { /* storage blocked: start on the default tab */ }
         return VALID_TABS.has(savedTab) ? savedTab : 'dashboard';
     }
 
     function saveActiveTab(tab) {
         const validTab = getValidTab(tab);
-        localStorage.setItem(TAB_KEY, validTab);
+        try { localStorage.setItem(TAB_KEY, validTab); } catch (e) { /* storage blocked: the tab just is not remembered */ }
         if (history.replaceState) {
             history.replaceState(null, '', `#${validTab}`);
         } else {

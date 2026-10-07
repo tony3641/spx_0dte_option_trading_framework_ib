@@ -28,34 +28,22 @@ from pydantic import BaseModel
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from spx_trade_desk.ib.client import IBClient
+from spx_trade_desk.ib.session import boot_session, start_background_loops
 
 from spx_trade_desk.core import config
 from spx_trade_desk.resources import CHAIN_LIBRARY_DIR, STATIC_DIR
 from spx_trade_desk.core.app_state import AppState
-from spx_trade_desk.ib.connection import (
-    connect_ib, setup_spx_subscription, setup_chain_info,
-    setup_es_subscription, fetch_es_baseline,
-    setup_monthly_chain_info,
-)
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.account import (
     refresh_account_state, build_account_payload,
-    setup_account_subscription, account_push_loop,
 )
-from spx_trade_desk.market.bars import fetch_historical_bars, price_push_loop
-from spx_trade_desk.market.chain_manager import chain_stream_loop
-from spx_trade_desk.market.chain_poller import chain_poll_loop
-from spx_trade_desk.market.chain_publisher import chain_publish_loop
 from spx_trade_desk.market.chain_recorder import ChainRecorder
 from spx_trade_desk.web.ws import (
-    broadcast, make_broadcast_fn, make_ib_error_handler, status_push_loop,
+    broadcast, drain_detached_tasks, make_broadcast_fn, make_ib_error_handler,
     websocket_endpoint as ws_endpoint,
 )
-from spx_trade_desk.market.hours import is_within_rth, market_status, get_expiration_display
-from spx_trade_desk.core.rates import get_risk_free_rate
-from spx_trade_desk.strategy.store import load_strategies
-from spx_trade_desk.strategy.engine import strategy_evaluation_loop, take_profit_loop
-from spx_trade_desk.ib.connection import setup_vix_subscription, setup_vix1d_subscription
-from spx_trade_desk.core.log_buffer import LogStoreHandler, log_push_loop
+from spx_trade_desk.market.hours import market_status, get_expiration_display
+from spx_trade_desk.core.log_buffer import LogStoreHandler
 from spx_trade_desk.discord.settings import (
     DiscordSettings, DiscordSettingsManager, load_initial_settings,
 )
@@ -122,56 +110,9 @@ async def lifespan(_app):
         logger.error(f"Failed to start Discord bot: {e}", exc_info=True)
 
     try:
-        await connect_ib(ib, state)
-        ib.error_handler = make_ib_error_handler(state, broadcast_fn)
-        await setup_spx_subscription(ib, state)
-        await setup_chain_info(ib, state)
-        await setup_monthly_chain_info(ib, state)
-
-        # ES futures for off-hours derived price
-        await setup_es_subscription(ib, state)
-
-        # Use the current 7-day yield from SGOV as the risk-free rate
-        state.risk_free_rate = get_risk_free_rate()
-        logger.info(f"Risk-free rate set from SGOV 7 Day Yield: {state.risk_free_rate:.4%}")
-
-        # Seed chart with current/last session's intraday bars
-        await fetch_historical_bars(ib, state)
-
-        # ES baseline only needed outside RTH
-        if not is_within_rth():
-            await fetch_es_baseline(ib, state)
-            logger.info(
-                f"Historical mode: showing {state.historical_date}, "
-                f"ref price={state.spx_price:.2f}, "
-                f"ES baseline={state.es_at_spx_close:.2f}"
-            )
-
-        # Account subscription
-        await setup_account_subscription(ib, state)
-
-        # Strategy engine: load persisted strategies and subscribe VIX for the
-        # volatility condition
-        state.strategies = load_strategies()
-        await setup_vix_subscription(ib, state)
-        await setup_vix1d_subscription(ib, state)
-
-        # Start background loops
-        state.background_tasks.append(asyncio.create_task(price_push_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(status_push_loop(state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(account_push_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(log_push_loop(state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(strategy_evaluation_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(take_profit_loop(ib, state, broadcast_fn)))
-
-        # Chain service: wing poller (poll share), live stream (stream share) and the
-        # publisher that turns the merged quote book into GEX + chain payload. Nothing
-        # pauses the stream any more.
-        if state.force_chain_fetch_event is None:
-            state.force_chain_fetch_event = asyncio.Event()
-        state.background_tasks.append(asyncio.create_task(chain_poll_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(chain_stream_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(chain_publish_loop(ib, state, broadcast_fn, recorder=chain_recorder)))
+        await boot_session(ib, state, first_boot=True,
+                           error_handler=make_ib_error_handler(state, broadcast_fn))
+        start_background_loops(ib, state, broadcast_fn, recorder=chain_recorder)
         logger.info("All background tasks started")
 
     except Exception as e:
@@ -183,6 +124,11 @@ async def lifespan(_app):
     logger.info("Shutting down...")
     for task in state.background_tasks:
         task.cancel()
+    await asyncio.gather(*state.background_tasks, return_exceptions=True)
+    try:
+        await drain_detached_tasks()          # cancel replies and socket closes started by connections
+    except Exception as e:
+        logger.warning(f"Error draining detached tasks: {e}")
     if discord_manager is not None:
         try:
             await discord_manager.stop()
@@ -225,6 +171,14 @@ async def get_state():
     }
 
 
+@app.get("/api/perf")
+async def get_perf(request: Request):
+    """IB-layer timing spans and counters (localhost only)."""
+    if not _is_localhost(request):
+        raise HTTPException(status_code=403, detail="Localhost only")
+    return perf.snapshot()
+
+
 async def reconnect_ib_on(port: int) -> dict:
     """Reconnect IB on `port` (validated by callers). Same teardown/reconnect/
     restart behavior the /api/reconnect_ib endpoint had."""
@@ -249,7 +203,7 @@ async def reconnect_ib_on(port: int) -> dict:
         pass
     state.chain_stream_tickers.clear()
     state.chain_stream_contracts.clear()
-    state.qual_cache.clear()
+    state.contracts.clear()
     state.quote_book.reset("")
     state.chain_quotes_cache = None     # the engine must not score against the old session's quotes
 
@@ -265,32 +219,11 @@ async def reconnect_ib_on(port: int) -> dict:
         discord_manager.ib = ib   # keep the manager on the live client
 
     try:
-        await connect_ib(ib, state, port=port)
-        ib.error_handler = make_ib_error_handler(state, broadcast_fn)
-        await setup_spx_subscription(ib, state)
-        await setup_chain_info(ib, state)
-        await setup_monthly_chain_info(ib, state)
-        # The fresh IBClient has no account/ES subscriptions (unlike the
-        # pre-migration in-place reconnect), so re-subscribe them here.
-        await setup_account_subscription(ib, state)
-        await setup_es_subscription(ib, state)
-        # Restart the background loops against the new client (the originals
-        # were cancelled up front so a failed reconnect leaves no loops running).
-        state.background_tasks.append(asyncio.create_task(price_push_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(status_push_loop(state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(account_push_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(log_push_loop(state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(chain_poll_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(chain_stream_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(chain_publish_loop(ib, state, broadcast_fn, recorder=chain_recorder)))
-        # Strategy engine: re-subscribe VIX, reload strategies, and restart the
-        # auto-entry / take-profit loops so a manual reconnect does NOT silently
-        # stop auto-trading or position management.
-        await setup_vix_subscription(ib, state)
-        await setup_vix1d_subscription(ib, state)
-        state.strategies = load_strategies()
-        state.background_tasks.append(asyncio.create_task(strategy_evaluation_loop(ib, state, broadcast_fn)))
-        state.background_tasks.append(asyncio.create_task(take_profit_loop(ib, state, broadcast_fn)))
+        await boot_session(ib, state, first_boot=False, port=port,
+                           error_handler=make_ib_error_handler(state, broadcast_fn))
+        # The loops include the strategy engine and take-profit so a manual reconnect does NOT
+        # silently stop auto-trading or position management.
+        start_background_loops(ib, state, broadcast_fn, recorder=chain_recorder)
         if state.force_chain_fetch_event is not None:
             state.force_chain_fetch_event.set()
         await broadcast(state, {"type": "status", "data": {

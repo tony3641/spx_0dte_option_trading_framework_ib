@@ -104,14 +104,14 @@
         legDescs.forEach(d => {
             bodyHtml += `<div class="modal-row"><span>Leg</span><span>${d}</span></div>`;
         });
-        bodyHtml += `<div class="modal-row"><span>Limit Price</span><span style="color:#93c5fd">$${rawLmt.toFixed(2)}</span></div>`;
+        bodyHtml += `<div class="modal-row"><span>Limit Price</span><span style="color:var(--info)">$${rawLmt.toFixed(2)}</span></div>`;
         if (hasStopLoss) {
-            bodyHtml += `<div class="modal-row"><span>Stop Loss</span><span style="color:#f87171">STP LMT stop $${slStop.toFixed(2)} / limit $${slLimit.toFixed(2)}</span></div>`;
+            bodyHtml += `<div class="modal-row"><span>Stop Loss</span><span style="color:var(--down)">STP LMT stop $${slStop.toFixed(2)} / limit $${slLimit.toFixed(2)}</span></div>`;
         }
         if (isOutsideRth) {
-            bodyHtml += `<div class="modal-row"><span>Session</span><span style="color:#eab308">Extended hours (outsideRTH)</span></div>`;
+            bodyHtml += `<div class="modal-row"><span>Session</span><span style="color:var(--accent)">Extended hours (outsideRTH)</span></div>`;
         }
-        bodyHtml += `<div class="modal-row" style="margin-top:10px; padding-top:10px; border-top:1px solid #1e293b"><span style="color:#f87171">This order will be submitted to IB. Verify details carefully.</span><span></span></div>`;
+        bodyHtml += `<div class="modal-row" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border)"><span style="color:var(--down)">This order will be submitted to IB. Verify details carefully.</span><span></span></div>`;
 
         document.getElementById('orderModalTitle').textContent =
             legs.length === 1 ? 'Confirm Order' : `Confirm ${legs.length}-Leg Combo`;
@@ -181,7 +181,69 @@
         el._timeout = setTimeout(() => { el.className = 'order-toast hidden'; }, 5000);
     }
 
+    // ----- Cancel feedback -----------------------------------------------------------------------
+    // state.pendingCancels holds the cancels IB has not confirmed. An order_status is cancel feedback
+    // when the server tagged it `action: "cancel"` (the reply to a cancel_order) or when its id has a
+    // pending cancel (IB confirming later); it is never the reply to a place_order in flight.
+    const CANCEL_PENDING_TTL_MS = 60000;      // after this a pending cancel counts as lost and can be sent again
+    const CANCEL_TERMINAL = new Set(['Cancelled', 'ApiCancelled', 'Filled', 'Inactive']);
+
+    function isCancelReply(data) {
+        if (!data) return false;
+        if (data.action === 'cancel') return true;
+        return data.orderId !== undefined && data.orderId !== null && state.pendingCancels.has(data.orderId);
+    }
+
+    function handleCancelReply(data) {
+        const oid = data.orderId;
+        const st = data.status || '';
+        if (st === 'PendingCancel') {
+            // Stays pending: the next order_status or account_update for this order resolves it. A late
+            // reply for a cancel an account_update already resolved has nothing left to say.
+            if (state.pendingCancels.has(oid)) {
+                showOrderToast(`Cancel pending for order ${oid} (IB has not confirmed yet)`, 'info');
+            }
+        } else if (st === 'Cancelled' || st === 'ApiCancelled') {
+            state.pendingCancels.delete(oid);
+            showOrderToast(`Order ${oid} cancelled`, 'ok');
+        } else if (st === 'Error') {
+            state.pendingCancels.delete(oid);
+            const which = oid !== undefined && oid !== null ? `order ${oid}` : 'the order';   // a bad id has no order
+            showOrderToast(`Cancel failed for ${which}: ${data.message || 'unknown'}`, 'err');
+        } else if (CANCEL_TERMINAL.has(st) || data.action === 'cancel') {
+            state.pendingCancels.delete(oid);
+            showOrderToast(`Order ${oid} is already ${st}`, 'info');
+        }
+        // Any other status on an untagged message is an unrelated update: the cancel is still pending.
+    }
+
+    // Called with every account_update that carries the open orders (state.openOrders is current).
+    function resolvePendingCancels() {
+        const now = Date.now();
+        for (const [oid, t0] of state.pendingCancels) {
+            const o = state.openOrders.find(x => x.orderId === oid);
+            if (!o) {
+                state.pendingCancels.delete(oid);
+                showOrderToast(`Order ${oid} is no longer open (cancelled or filled)`, 'info');   // which one is not known
+            } else if (o.status === 'Cancelled' || o.status === 'ApiCancelled') {
+                state.pendingCancels.delete(oid);
+                showOrderToast(`Order ${oid} cancelled`, 'ok');
+            } else if (CANCEL_TERMINAL.has(o.status)) {
+                state.pendingCancels.delete(oid);
+                showOrderToast(`Order ${oid} is ${o.status}; the cancel came too late`, 'info');
+            } else if (now - t0 > CANCEL_PENDING_TTL_MS) {
+                state.pendingCancels.delete(oid);
+                showOrderToast(`Cancel for order ${oid} not confirmed after ${CANCEL_PENDING_TTL_MS / 1000} s; the order is still open`, 'err');
+            }
+        }
+    }
+
     function handleOrderStatus(data) {
+        if (isCancelReply(data)) {
+            handleCancelReply(data);
+            renderWhenVisible('account', 'account.tab', renderAccountTab);
+            return;
+        }
         // Dispatch to pending callback if any
         if (state._pendingOrderCallback) {
             const cb = state._pendingOrderCallback.fn;
@@ -199,7 +261,7 @@
             }
         }
         // Refresh account data
-        if (state.activeTab === 'account') renderAccountTab();
+        renderWhenVisible('account', 'account.tab', renderAccountTab);
     }
 
     function handleIbError(data) {

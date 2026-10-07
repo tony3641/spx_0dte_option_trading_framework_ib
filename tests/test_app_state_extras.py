@@ -19,11 +19,12 @@ def test_subsequent_runtime_state_defaults():
 
 def test_app_state_owns_the_chain_service_objects():
     from spx_trade_desk.core.app_state import create_app_state
-    from spx_trade_desk.market.qualification import QualificationCache
+    from spx_trade_desk.ib.contracts import ContractRegistry
     from spx_trade_desk.market.quote_book import QuoteBook
     st = create_app_state()
     assert isinstance(st.quote_book, QuoteBook)
-    assert isinstance(st.qual_cache, QualificationCache)
+    assert isinstance(st.contracts, ContractRegistry)
+    assert not hasattr(st, "qual_cache")
     assert st.vix1d_stream is None
     for gone in ("chain_fetch_active", "manual_refresh_requested", "chain_stream_unknown_keys"):
         assert not hasattr(st, gone)

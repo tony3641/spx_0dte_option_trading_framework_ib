@@ -1,0 +1,100 @@
+/* Design tokens: the only file that defines colors, shadows, radii, type and motion values.
+   Dark is the default set; :root[data-theme="light"] overrides it. theme.js sets data-theme
+   (the stored choice, else the OS setting) before first paint. Never hard-code a color elsewhere. */
+:root {
+    color-scheme: dark;
+    --bg-canvas: #07090c;
+    --bg-panel: #0d1117;
+    --bg-raised: #161b22;
+    --bg-hover: #1c2230;
+    --bg-selected: #212a3a;
+    --bg-input: #0a0e14;
+    --bg-overlay: #0b1018;
+    --border: #21262d;
+    --border-strong: #30363d;
+    --text-strong: #e6edf3;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --text-faint: #7d8590;
+    --accent: #f0b429;
+    --accent-hover: #ffc94d;
+    --accent-bg: rgba(240, 180, 41, .12);
+    --accent-fg: #07090c;
+    --up: #3fb950;
+    --up-strong: #7ee787;
+    --up-bg: rgba(63, 185, 80, .14);
+    --up-solid: #17402a;
+    --down: #f85149;
+    --down-strong: #ffa198;
+    --down-bg: rgba(248, 81, 73, .14);
+    --down-solid: #5c1d1f;
+    --info: #58a6ff;
+    --info-bg: rgba(88, 166, 255, .14);
+    --sigma-2-bg: #1f354f;
+    --sigma-3-bg: #264466;
+    --alt: #bc8cff;
+    --alt-bg: rgba(188, 140, 255, .14);
+    --itm-call: rgba(63, 185, 80, .10);
+    --itm-put: rgba(248, 81, 73, .10);
+    --flash-up: rgba(63, 185, 80, .38);
+    --flash-down: rgba(248, 81, 73, .38);
+    --scrim: rgba(2, 6, 23, .6);
+    --shadow-1: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 2px 6px rgba(0, 0, 0, .35);
+    --shadow-float: 0 8px 24px rgba(0, 0, 0, .55);
+
+    --font-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --font-num: Consolas, 'Cascadia Mono', 'SF Mono', monospace;
+    --r-sm: 4px;
+    --r-md: 6px;
+    --r-lg: 8px;
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 24px;
+    --dur-fast: 120ms;
+    --dur: 150ms;
+    --ease: cubic-bezier(.2, .7, .2, 1);
+}
+
+:root[data-theme="light"] {
+    color-scheme: light;
+    --bg-canvas: #f3f5f8;
+    --bg-panel: #ffffff;
+    --bg-raised: #eef1f5;
+    --bg-hover: #e6eaf0;
+    --bg-selected: #dde5f2;
+    --bg-input: #ffffff;
+    --bg-overlay: #ffffff;
+    --border: #d0d7de;
+    --border-strong: #afb8c1;
+    --text-strong: #0b1220;
+    --text: #24292f;
+    --text-muted: #57606a;
+    --text-faint: #636c76;
+    --accent: #8a5a00;
+    --accent-hover: #6f4700;
+    --accent-bg: rgba(138, 90, 0, .10);
+    --accent-fg: #ffffff;
+    --up: #17722f;
+    --up-strong: #0f5323;
+    --up-bg: rgba(23, 114, 47, .10);
+    --up-solid: #aceebb;
+    --down: #cf222e;
+    --down-strong: #a40e26;
+    --down-bg: rgba(207, 34, 46, .10);
+    --down-solid: #ffcecb;
+    --info: #0860ca;
+    --info-bg: rgba(8, 96, 202, .10);
+    --sigma-2-bg: #c4d9f2;
+    --sigma-3-bg: #abc9ed;
+    --alt: #7a45d6;
+    --alt-bg: rgba(122, 69, 214, .10);
+    --itm-call: rgba(23, 114, 47, .08);
+    --itm-put: rgba(207, 34, 46, .08);
+    --flash-up: rgba(23, 114, 47, .30);
+    --flash-down: rgba(207, 34, 46, .30);
+    --scrim: rgba(31, 35, 40, .4);
+    --shadow-1: 0 1px 2px rgba(31, 35, 40, .08);
+    --shadow-float: 0 8px 24px rgba(31, 35, 40, .18);
+}

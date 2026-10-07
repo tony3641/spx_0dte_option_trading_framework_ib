@@ -13,11 +13,15 @@ import time
 
 import pytest
 
+from spx_trade_desk.core import config
+from spx_trade_desk.core.perf import perf
+from spx_trade_desk.ib import orders as orders_mod
 from spx_trade_desk.ib.orders import (
     handle_place_order, handle_cancel_order,
     watch_and_push_status, watch_parent_and_cancel_child,
 )
 from spx_trade_desk.ib.client import OrderHandle
+from spx_trade_desk.market.gex import OptionData
 from tests.conftest import MockContract, MockContractDetails, MockOrder
 from spx_trade_desk.core.config import spx_tick_for_price, round_abs_to_tick, round_signed_to_tick
 
@@ -1782,3 +1786,331 @@ async def test_dynamic_fill_without_a_free_order_line_returns_error(app_state):
     assert result["data"]["status"] == "Error"
     assert "midpoint" in result["data"]["message"]
     assert ib.get_placed_orders() == []
+
+
+# ---------------------------------------------------------------------------
+# IB-layer latency work: cached conIds, no fixed sleeps, confirmed cancel, mid from the book
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_second_single_leg_order_for_the_same_contract_makes_no_lookup(mock_ib, app_state, sample_legs_single):
+    await handle_place_order(mock_ib, app_state, sample_legs_single)
+    assert mock_ib.count_calls("req_contract_details") == 1
+    await handle_place_order(mock_ib, app_state, copy.deepcopy(sample_legs_single))
+    assert mock_ib.count_calls("req_contract_details") == 1             # cache hit
+
+
+@pytest.mark.asyncio
+async def test_second_combo_order_for_the_same_legs_makes_no_lookup(mock_ib, app_state, sample_legs_combo):
+    await handle_place_order(mock_ib, app_state, sample_legs_combo)
+    assert mock_ib.count_calls("req_contract_details") == 2
+    await handle_place_order(mock_ib, app_state, copy.deepcopy(sample_legs_combo))
+    assert mock_ib.count_calls("req_contract_details") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_refused_combo_leg_caches_nothing(mock_ib, app_state, sample_legs_combo, monkeypatch):
+    async def wrong_strike(contract, timeout=30.0):
+        wrong = MockContract(conId=99999, symbol="SPX", secType="OPT",
+                             lastTradeDateOrContractMonth=contract.lastTradeDateOrContractMonth,
+                             strike=contract.strike + 10.0, right=contract.right,
+                             exchange="SMART", tradingClass="SPXW")
+        return [MockContractDetails(minTick=0.05, contract=wrong)]
+
+    monkeypatch.setattr(mock_ib, "req_contract_details", wrong_strike)
+    result = await handle_place_order(mock_ib, app_state, sample_legs_combo)
+    assert "Qualified 0/2 legs" in result["data"]["message"]
+    assert len(app_state.contracts) == 0 and mock_ib.get_placed_orders() == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_single_leg_caches_nothing(mock_ib, app_state, sample_legs_single, monkeypatch):
+    async def wrong_strike(contract, timeout=30.0):
+        wrong = MockContract(conId=99999, symbol="SPX", secType="OPT",
+                             lastTradeDateOrContractMonth=contract.lastTradeDateOrContractMonth,
+                             strike=contract.strike + 10.0, right=contract.right,
+                             exchange="SMART", tradingClass="SPXW")
+        return [MockContractDetails(minTick=0.05, contract=wrong)]
+
+    monkeypatch.setattr(mock_ib, "req_contract_details", wrong_strike)
+    result = await handle_place_order(mock_ib, app_state, sample_legs_single)
+    assert result["data"]["status"] == "Error"
+    assert "Failed to qualify" in result["data"]["message"]
+    assert len(app_state.contracts) == 0 and mock_ib.get_placed_orders() == []
+
+
+@pytest.mark.asyncio
+async def test_an_off_grid_strike_is_refused_even_when_its_rounded_key_is_cached(mock_ib, app_state, sample_legs_single):
+    """The registry key rounds the strike to 0.1: a cache hit must not turn 5200.04 into the 5200.0 order.
+
+    The cached neighbour is discarded and the strike is looked up live; IB does not list 5200.04.
+    """
+    await handle_place_order(mock_ib, app_state, sample_legs_single)               # caches 5200.0 C
+    mock_ib.unlisted_strikes.add(5200.04)
+    off_grid = copy.deepcopy(sample_legs_single)
+    off_grid["legs"][0]["strike"] = 5200.04
+    out = await handle_place_order(mock_ib, app_state, off_grid)
+    assert out["data"]["status"] == "Error" and "Failed to qualify" in out["data"]["message"]
+    assert mock_ib.count_calls("req_contract_details") == 2                       # the cached hit did not answer
+    assert len(mock_ib.get_placed_orders()) == 1                                  # only the first order
+
+
+@pytest.mark.asyncio
+async def test_an_off_grid_combo_leg_is_refused_even_when_its_rounded_key_is_cached(mock_ib, app_state, sample_legs_combo):
+    await handle_place_order(mock_ib, app_state, sample_legs_combo)               # caches both legs
+    mock_ib.unlisted_strikes.add(5210.04)
+    off_grid = copy.deepcopy(sample_legs_combo)
+    off_grid["legs"][1]["strike"] = 5210.04
+    out = await handle_place_order(mock_ib, app_state, off_grid)
+    assert out["data"]["status"] == "Error" and "Qualified 0/2 legs" in out["data"]["message"]
+    assert len(mock_ib.get_placed_orders()) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_off_grid_strike_that_exists_live_orders_that_exact_contract_not_the_cached_neighbour(mock_ib, app_state, sample_legs_single):
+    await handle_place_order(mock_ib, app_state, sample_legs_single)               # caches 5200.0 C
+    cached_con_id = mock_ib.get_last_trade().contract.conId
+    off_grid = copy.deepcopy(sample_legs_single)
+    off_grid["legs"][0]["strike"] = 5200.04                                       # the mock lists any strike
+    out = await handle_place_order(mock_ib, app_state, off_grid)
+    assert out["data"]["status"] != "Error"
+    placed = mock_ib.get_last_trade().contract
+    assert placed.strike == pytest.approx(5200.04) and placed.conId != cached_con_id
+
+
+@pytest.mark.asyncio
+async def test_the_kill_switch_forces_a_lookup_for_every_order(mock_ib, app_state, sample_legs_single, monkeypatch):
+    monkeypatch.setattr(config, "ORDER_USE_CONTRACT_CACHE", False)
+    await handle_place_order(mock_ib, app_state, sample_legs_single)
+    await handle_place_order(mock_ib, app_state, copy.deepcopy(sample_legs_single))
+    assert mock_ib.count_calls("req_contract_details") == 2
+
+
+@pytest.mark.asyncio
+async def test_single_leg_orders_qualify_on_smart(mock_ib, app_state, sample_legs_single):
+    seen = []
+    original = mock_ib.req_contract_details
+
+    async def spy(contract, timeout=30.0):
+        seen.append(contract.exchange)
+        return await original(contract)
+
+    mock_ib.req_contract_details = spy
+    await handle_place_order(mock_ib, app_state, sample_legs_single)
+    assert seen == ["SMART"]
+    assert mock_ib.get_last_trade().contract.exchange == "SMART"
+
+
+@pytest.mark.asyncio
+async def test_combo_legs_qualify_on_smart_but_still_route_on_cboe(mock_ib, app_state, sample_legs_combo):
+    seen = []
+    original = mock_ib.req_contract_details
+
+    async def spy(contract, timeout=30.0):
+        seen.append(contract.exchange)
+        return await original(contract)
+
+    mock_ib.req_contract_details = spy
+    await handle_place_order(mock_ib, app_state, sample_legs_combo)
+    assert seen == ["SMART", "SMART"]
+    trade = mock_ib.get_last_trade()
+    assert trade.contract.exchange == "CBOE"
+    assert all(cl.exchange == "CBOE" for cl in trade.contract.comboLegs)
+
+
+@pytest.mark.asyncio
+async def test_two_identical_orders_at_once_are_both_placed_and_leave_one_registry_entry(mock_ib, app_state, sample_legs_single):
+    r1, r2 = await asyncio.gather(
+        handle_place_order(mock_ib, app_state, sample_legs_single),
+        handle_place_order(mock_ib, app_state, copy.deepcopy(sample_legs_single)))
+    assert r1["data"]["status"] == r2["data"]["status"] == "Filled"
+    assert len(mock_ib.get_placed_orders()) == 2
+    assert len(app_state.contracts) == 1
+
+
+@pytest.mark.asyncio
+async def test_single_leg_stop_child_follows_its_parent_without_a_sleep(
+        mock_ib, app_state, sample_legs_single, sample_stop_loss, monkeypatch):
+    delays = []
+    real_sleep = asyncio.sleep
+
+    async def spy_sleep(delay, *a, **k):
+        delays.append(delay)
+        return await real_sleep(delay, *a, **k)
+
+    monkeypatch.setattr(asyncio, "sleep", spy_sleep)
+    sample_legs_single["stopLoss"] = sample_stop_loss
+    await handle_place_order(mock_ib, app_state, sample_legs_single)
+    placed = [c for c in mock_ib.call_log if c["method"] == "place_order"]
+    assert [c["parentId"] for c in placed] == [0, placed[0]["orderId"]]       # parent first, then its child
+    assert 0.05 not in delays
+
+
+@pytest.mark.asyncio
+async def test_combo_stop_child_follows_its_parent_without_a_sleep(
+        mock_ib, app_state, sample_legs_combo, sample_stop_loss, monkeypatch):
+    delays = []
+    real_sleep = asyncio.sleep
+
+    async def spy_sleep(delay, *a, **k):
+        delays.append(delay)
+        return await real_sleep(delay, *a, **k)
+
+    monkeypatch.setattr(asyncio, "sleep", spy_sleep)
+    sample_legs_combo["stopLoss"] = sample_stop_loss
+    await handle_place_order(mock_ib, app_state, sample_legs_combo)
+    placed = [c for c in mock_ib.call_log if c["method"] == "place_order"]
+    assert [c["parentId"] for c in placed] == [0, placed[0]["orderId"]]
+    assert 0.05 not in delays
+
+
+@pytest.mark.asyncio
+async def test_cancel_waits_for_ibs_confirmation_and_records_the_span(mock_ib_pending, app_state, sample_legs_single):
+    perf.reset()
+    result = await handle_place_order(mock_ib_pending, app_state, sample_legs_single)     # a live order
+    out = await handle_cancel_order(mock_ib_pending, app_state, result["data"]["orderId"])
+    assert out["data"]["status"] == "Cancelled"
+    assert perf.snapshot()["metrics"]["order.cancel_to_terminal"]["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_reports_pending_when_ib_does_not_confirm(mock_ib_pending, app_state, sample_legs_single, monkeypatch):
+    monkeypatch.setattr(orders_mod, "CANCEL_CONFIRM_TIMEOUT_S", 0.05)
+    result = await handle_place_order(mock_ib_pending, app_state, sample_legs_single)
+    order_id = result["data"]["orderId"]
+    monkeypatch.setattr(mock_ib_pending, "cancel_order", lambda oid: None)    # IB never answers
+    out = await handle_cancel_order(mock_ib_pending, app_state, order_id)
+    assert out["data"]["status"] == "PendingCancel"
+    assert "not confirmed" in out["data"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_that_races_a_fill_reports_the_real_status(mock_ib, app_state, sample_legs_single, monkeypatch):
+    result = await handle_place_order(mock_ib, app_state, sample_legs_single)   # the mock fills at once
+    order_id = result["data"]["orderId"]
+    monkeypatch.setattr(mock_ib, "cancel_order", lambda oid: None)             # too late: the fill won
+    out = await handle_cancel_order(mock_ib, app_state, order_id)
+    assert out["data"]["status"] == "Filled"
+    assert "already" in out["data"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_waits_for_a_late_confirmation_and_returns_only_then(mock_ib_pending, app_state, sample_legs_single):
+    """IB confirms the cancel after the handler has started: the handler must still be waiting until then."""
+    result = await handle_place_order(mock_ib_pending, app_state, sample_legs_single)    # stays Submitted
+    order_id = result["data"]["orderId"]
+    handle = mock_ib_pending.orders[order_id]
+    assert handle.status == "Submitted"
+    confirm_calls = []
+
+    def silent_cancel(oid):                       # the request goes out; IB answers later, from its own thread
+        confirm_calls.append(oid)
+
+    mock_ib_pending.cancel_order = silent_cancel
+    loop = asyncio.get_running_loop()
+    task = asyncio.create_task(handle_cancel_order(mock_ib_pending, app_state, order_id))
+    await asyncio.sleep(0.02)
+    assert confirm_calls == [order_id] and not task.done()                   # waiting: nothing confirmed yet
+    loop.call_later(0.02, mock_ib_pending._apply_status, handle, "Cancelled")
+    out = await asyncio.wait_for(task, timeout=1.0)
+    assert out["data"]["status"] == "Cancelled" and handle.is_terminal()
+
+
+@pytest.mark.asyncio
+async def test_cancel_returns_pending_at_the_timeout_and_a_later_confirmation_does_not_change_that(
+        mock_ib_pending, app_state, sample_legs_single, monkeypatch):
+    monkeypatch.setattr(orders_mod, "CANCEL_CONFIRM_TIMEOUT_S", 0.05)
+    result = await handle_place_order(mock_ib_pending, app_state, sample_legs_single)
+    order_id = result["data"]["orderId"]
+    handle = mock_ib_pending.orders[order_id]
+    monkeypatch.setattr(mock_ib_pending, "cancel_order", lambda oid: None)
+    late = asyncio.get_running_loop().call_later(30.0, mock_ib_pending._apply_status, handle, "Cancelled")
+    try:
+        out = await handle_cancel_order(mock_ib_pending, app_state, order_id)
+    finally:
+        late.cancel()
+    assert out["data"]["status"] == "PendingCancel" and not handle.is_terminal()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_already_terminal_order_records_no_cancel_to_terminal_sample(
+        mock_ib, app_state, sample_legs_single, monkeypatch):
+    result = await handle_place_order(mock_ib, app_state, sample_legs_single)          # filled at once
+    order_id = result["data"]["orderId"]
+    monkeypatch.setattr(mock_ib, "cancel_order", lambda oid: None)
+    perf.reset()
+    out = await handle_cancel_order(mock_ib, app_state, order_id)
+    assert out["data"]["status"] == "Filled"
+    assert "order.cancel_to_terminal" not in perf.snapshot()["metrics"]       # nothing was waited for
+
+
+def _dynamic_payload():
+    return {"legs": [{"symbol": "SPX", "expiry": "20260410", "strike": 5200.0, "right": "C",
+                      "action": "BUY", "qty": 1}],
+            "orderType": "LMT", "tif": "DAY", "dynamicFill": True, "repriceIntervalSec": 0.01}
+
+
+@pytest.mark.asyncio
+async def test_dynamic_fill_takes_a_fresh_two_sided_mid_from_the_quote_book(mock_ib, app_state, monkeypatch):
+    monkeypatch.setattr(config, "ORDER_MID_MAX_AGE_S", 2.0)
+    app_state.quote_book.reset("20260410")
+    app_state.quote_book.update([OptionData(strike=5200.0, right="C", bid=3.4, ask=3.6)],
+                                "stream", time.monotonic())
+    await handle_place_order(mock_ib, app_state, _dynamic_payload())
+    assert mock_ib.get_last_trade().order.lmtPrice == 3.5
+    assert mock_ib.count_calls("subscribe_tick") == 0                  # no temporary market-data line
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bid,ask,age", [(3.4, 3.6, 10.0),      # stale
+                                         (None, 3.6, 0.0),      # one-sided
+                                         (0.0, 3.6, 0.0)])      # no bid
+async def test_dynamic_fill_falls_back_to_a_live_lookup_when_the_book_quote_is_not_usable(
+        mock_ib, app_state, monkeypatch, bid, ask, age):
+    monkeypatch.setattr(config, "ORDER_MID_MAX_AGE_S", 2.0)
+    app_state.quote_book.reset("20260410")
+    app_state.quote_book.update([OptionData(strike=5200.0, right="C", bid=bid, ask=ask)],
+                                "stream", time.monotonic() - age)
+    await handle_place_order(mock_ib, app_state, _dynamic_payload())
+    assert mock_ib.count_calls("subscribe_tick") == 1
+
+
+@pytest.mark.asyncio
+async def test_dynamic_fill_ignores_a_book_of_another_series_or_expiry(mock_ib, app_state, monkeypatch):
+    monkeypatch.setattr(config, "ORDER_MID_MAX_AGE_S", 2.0)
+    app_state.quote_book.reset("20260410")
+    app_state.quote_book.update([OptionData(strike=5200.0, right="C", bid=3.4, ask=3.6)],
+                                "stream", time.monotonic())
+    app_state.trading_class = "SPX"                                   # the book holds the monthly series
+    await handle_place_order(mock_ib, app_state, _dynamic_payload())
+    assert mock_ib.count_calls("subscribe_tick") == 1                 # the order is for SPXW: no book mid
+    app_state.trading_class = "SPXW"
+    app_state.quote_book.reset("20260411")                            # another expiry
+    app_state.quote_book.update([OptionData(strike=5200.0, right="C", bid=3.4, ask=3.6)],
+                                "stream", time.monotonic())
+    await handle_place_order(mock_ib, app_state, _dynamic_payload())
+    assert mock_ib.count_calls("subscribe_tick") == 2
+
+
+@pytest.mark.asyncio
+async def test_place_to_ack_spans_are_recorded_by_kind(
+        mock_ib, app_state, sample_legs_single, sample_legs_combo, sample_stop_loss):
+    perf.reset()
+    await handle_place_order(mock_ib, app_state, sample_legs_single)
+    await handle_place_order(mock_ib, app_state, sample_legs_combo)
+    sample_legs_single["stopLoss"] = sample_stop_loss
+    await handle_place_order(mock_ib, app_state, sample_legs_single)
+    m = perf.snapshot()["metrics"]
+    assert m["order.place_to_ack.single"]["n"] == 1
+    assert m["order.place_to_ack.combo"]["n"] == 1
+    assert m["order.place_to_ack.single_bracket"]["n"] == 1
+    assert m["order.first_after_connect"]["n"] == 1                    # only the first order of a connection
+    assert m["order.qualify"]["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_combo_bracket_place_to_ack_span_is_recorded(mock_ib, app_state, sample_legs_combo, sample_stop_loss):
+    perf.reset()
+    sample_legs_combo["stopLoss"] = sample_stop_loss
+    await handle_place_order(mock_ib, app_state, sample_legs_combo)
+    assert perf.snapshot()["metrics"]["order.place_to_ack.combo_bracket"]["n"] == 1

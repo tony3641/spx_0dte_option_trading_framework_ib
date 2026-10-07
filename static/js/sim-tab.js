@@ -254,13 +254,14 @@
     }
 
     // Shared Plotly styling for every sim chart (was chart-local; the SPX fan needs it too).
-    const SIM_DARK = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-                       font: { color: '#c9cdd4' } };
+    const simTheme = () => ({ paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                              font: { color: themeColors().text } });
     const SIM_MARGIN = { l: 64, r: 20, t: 8, b: 46 };
-    const simAxis = (label) => ({ title: { text: label, font: { size: 11, color: '#9aa0aa' } },
-                                  gridcolor: 'rgba(255,255,255,0.06)' });
+    const simAxis = (label) => ({ title: { text: label, font: { size: 11, color: themeColors().textMuted } },
+                                  gridcolor: themeColors().border });
 
     function charts(cell, meta) {
+        const c = themeColors();
         const stats = cell.stats || {};
         const bar_secs = _bar_seconds((meta && meta.bar_size) || '5m');
 
@@ -269,10 +270,10 @@
         if (stats.entered > 0 && cell.hist && cell.hist.edges && cell.hist.edges.length > 1) {
             Plotly.newPlot('simHist', [{
                 type: 'bar', x: cell.hist.edges.slice(1).map((e, i) => (e + cell.hist.edges[i]) / 2),
-                y: cell.hist.counts, marker: { color: '#4a89dc' }, name: 'Paths',
+                y: cell.hist.counts, marker: { color: c.info }, name: 'Paths',
             }], Object.assign({ bargap: 0.02, showlegend: false,
                     xaxis: simAxis('Day PnL ($)'), yaxis: simAxis('Number of paths (binned)'),
-                    margin: SIM_MARGIN }, SIM_DARK),
+                    margin: SIM_MARGIN }, simTheme()),
                 { responsive: true, displayModeBar: false });
         }
 
@@ -282,23 +283,23 @@
             const x = f.minutes.map(i => _minute_of_day(i, bar_secs));
             const ticks = _clock_ticks(x);
             Plotly.newPlot('simFan', [
-                { x, y: f.q95, mode: 'lines', line: { width: 1, color: '#3f8f5f' }, name: '95th pct' },
-                { x, y: f.q75, mode: 'lines', line: { width: 1, color: '#3f8f5f' }, name: '75th pct' },
-                { x, y: f.q50, mode: 'lines', line: { width: 2, color: '#e8c15a' }, name: 'Median' },
-                { x, y: f.q25, mode: 'lines', line: { width: 1, color: '#e06c60' }, name: '25th pct' },
-                { x, y: f.q05, mode: 'lines', line: { width: 1, color: '#e06c60' },
-                  fill: 'tonexty', fillcolor: 'rgba(224,108,96,0.12)', name: '5th pct' },
+                { x, y: f.q95, mode: 'lines', line: { width: 1, color: c.up }, name: '95th pct' },
+                { x, y: f.q75, mode: 'lines', line: { width: 1, color: c.up }, name: '75th pct' },
+                { x, y: f.q50, mode: 'lines', line: { width: 2, color: c.accent }, name: 'Median' },
+                { x, y: f.q25, mode: 'lines', line: { width: 1, color: c.down }, name: '25th pct' },
+                { x, y: f.q05, mode: 'lines', line: { width: 1, color: c.down },
+                  fill: 'tonexty', fillcolor: withAlpha(c.down, 0.12), name: '5th pct' },
             ], Object.assign({
                     showlegend: true,
                     legend: { orientation: 'h', y: -0.16, x: 0.5, xanchor: 'center',
-                              font: { size: 10, color: '#c9cdd4' } },
+                              font: { size: 10, color: c.text } },
                     xaxis: Object.assign(simAxis('Time of day (ET)'), {
                         tickvals: ticks.map(t => t.val), ticktext: ticks.map(t => t.text),
                         range: [Math.min(...x), Math.max(...x)] }),
                     yaxis: Object.assign(simAxis('Spread PnL ($)'), {
-                        zeroline: true, zerolinecolor: 'rgba(255,255,255,0.18)', zerolinewidth: 1 }),
+                        zeroline: true, zerolinecolor: c.borderStrong, zerolinewidth: 1 }),
                     margin: SIM_MARGIN },
-                SIM_DARK), { responsive: true, displayModeBar: false });
+                simTheme()), { responsive: true, displayModeBar: false });
         }
 
         // Bootstrap max-DD distribution
@@ -308,12 +309,12 @@
             $('simDDSub').textContent =
                 `${length}-d curves · ruin prob ${fmt(cell.ruin_prob * 100, 2)}%`;
             Plotly.newPlot('simDD', [{
-                type: 'histogram', x: ddh.max_dd, marker: { color: '#8a6fc8' }, nbinsx: 40,
+                type: 'histogram', x: ddh.max_dd, marker: { color: c.alt }, nbinsx: 40,
                 name: 'Paths',
             }], Object.assign({ showlegend: false,
                     xaxis: simAxis(`Max drawdown ($ over ${length}d curves)`),
                     yaxis: simAxis('Count of bootstrap runs'), margin: SIM_MARGIN },
-                SIM_DARK), { responsive: true, displayModeBar: false });
+                simTheme()), { responsive: true, displayModeBar: false });
         }
     }
 
@@ -321,7 +322,8 @@
     // the same cold/hot semantics as the MTM fan's edge lines.
     function _fanColor(p) {
         const lerp = (a, b, t) => [0, 1, 2].map(i => Math.round(a[i] + (b[i] - a[i]) * t));
-        const red = [224, 108, 96], gold = [232, 193, 90], green = [63, 143, 95];
+        const c = themeColors();
+        const red = hexToRgb(c.down), gold = hexToRgb(c.accent), green = hexToRgb(c.up);
         const rgb = p === 50 ? gold : p < 50 ? lerp(red, gold, p / 50)
                                              : lerp(gold, green, (p - 50) / 45);
         return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
@@ -331,6 +333,7 @@
     // A property of the market simulation — spot dynamics ignore the sweep cell — so it is
     // rendered once per run from the result root, not per selected cell.
     function spotFanChart(meta) {
+        const c = themeColors();
         const sf = currentResult && currentResult.spx_fan;
         if (!sf || !sf.minutes || !sf.minutes.length || !sf.values || !sf.values.length) return;
         const bar_secs = _bar_seconds((meta && meta.bar_size) || '5m');
@@ -342,13 +345,13 @@
         })), Object.assign({
                 showlegend: true,
                 legend: { orientation: 'h', y: -0.18, x: 0.5, xanchor: 'center',
-                          font: { size: 9, color: '#c9cdd4' } },
+                          font: { size: 9, color: c.text } },
                 xaxis: Object.assign(simAxis('Time of day (ET)'), {
                     tickvals: ticks.map(t => t.val), ticktext: ticks.map(t => t.text),
                     range: [Math.min(...x), Math.max(...x)] }),
                 yaxis: simAxis('SPX level'),
                 margin: SIM_MARGIN },
-            SIM_DARK), { responsive: true, displayModeBar: false });
+            simTheme()), { responsive: true, displayModeBar: false });
     }
 
     function render() {
@@ -445,6 +448,7 @@
     }
 
     async function onShow() {
+        if (_simNeedsRetheme) { _simNeedsRetheme = false; render(); }
         refreshStrategies();
         if (!$('simPricingInfo').textContent) {
             try {
@@ -482,5 +486,11 @@
     }
 
     document.addEventListener('DOMContentLoaded', init);
+    let _simNeedsRetheme = false;
+    window.addEventListener('themechange', () => {
+        if (!currentResult) return;
+        if (state.activeTab === 'sim') render(); else _simNeedsRetheme = true;
+    });
+
     window.SimTab = { init, onShow };
 })();
