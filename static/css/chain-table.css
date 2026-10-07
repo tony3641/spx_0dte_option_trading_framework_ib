@@ -12,23 +12,23 @@
             align-items: center;
             justify-content: space-between;
             padding: 8px 12px;
-            background: #0f172a;
-            border-bottom: 1px solid #1e293b;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border);
             font-size: 12px;
-            color: #94a3b8;
+            color: var(--text-muted);
         }
         .chain-refresh-btn {
-            background: #1e293b;
-            color: #e2e8f0;
-            border: 1px solid #334155;
+            background: var(--bg-raised);
+            color: var(--text-strong);
+            border: 1px solid var(--border-strong);
             border-radius: 6px;
             padding: 5px 10px;
             font-size: 11px;
             cursor: pointer;
         }
         .chain-refresh-btn:hover {
-            border-color: #3b82f6;
-            color: #3b82f6;
+            border-color: var(--accent);
+            color: var(--accent);
         }
 
         .chain-table-wrap {
@@ -48,92 +48,93 @@
             z-index: 5;
         }
         .chain-table th {
-            background: #111827;
-            color: #64748b;
+            background: var(--bg-panel);
+            color: var(--text-faint);
             font-weight: 600;
             padding: 6px 4px;
             text-align: right;
-            border-bottom: 1px solid #1e293b;
+            border-bottom: 1px solid var(--border);
             font-size: 11px;
             white-space: nowrap;
         }
         .chain-table th.strike-hdr {
             text-align: center;
-            background: #1e293b;
-            color: #e2e8f0;
+            background: var(--bg-raised);
+            color: var(--text-strong);
             font-size: 12px;
             position: relative;
         }
-        .chain-table th.call-side { color: #4ade80; }
-        .chain-table th.put-side  { color: #f87171; }
+        .chain-table th.call-side { color: var(--up); }
+        .chain-table th.put-side  { color: var(--down); }
 
         .chain-table td {
             padding: 4px 5px;
             text-align: right;
-            border-bottom: 1px solid #111827;
-            color: #cbd5e1;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--font-num);
             font-variant-numeric: tabular-nums;
             white-space: nowrap;
         }
         .chain-table td.strike-col {
             text-align: center;
             font-weight: 700;
-            color: #e2e8f0;
-            background: #0f172a;
-            border-left: 1px solid #1e293b;
-            border-right: 1px solid #1e293b;
+            color: var(--accent);
+            background: var(--bg-panel);
+            border-left: 1px solid var(--border);
+            border-right: 1px solid var(--border);
         }
-        .chain-table td.strike-col.strike-sigma-1 { background: #1e3a8a; }
-        .chain-table td.strike-col.strike-sigma-2 { background: #334f85; }
-        .chain-table td.strike-col.strike-sigma-3 { background: #4b6288; }
+        .chain-table td.strike-col.strike-sigma-1 { background: var(--info-bg); }
+        .chain-table td.strike-col.strike-sigma-2 { background: color-mix(in srgb, var(--info) 24%, var(--bg-panel)); }
+        .chain-table td.strike-col.strike-sigma-3 { background: color-mix(in srgb, var(--info) 34%, var(--bg-panel)); }
 
         /* Clickable bid/ask cells */
         .chain-table td.cell-bid {
             cursor: pointer;
-            color: #f87171;
+            color: var(--down);
         }
         .chain-table td.cell-bid:hover {
-            background: #7f1d1d;
-            color: #fca5a5;
+            background: var(--down-solid);
+            color: var(--down-strong);
         }
         .chain-table td.cell-ask {
             cursor: pointer;
-            color: #4ade80;
+            color: var(--up);
         }
         .chain-table td.cell-ask:hover {
-            background: #14532d;
-            color: #86efac;
+            background: var(--up-solid);
+            color: var(--up-strong);
         }
 
         /* ITM shading (per-side) */
         .chain-table td.itm-call {
-            background: #0b3b1e;
+            background: var(--itm-call);
         }
         .chain-table td.itm-put {
-            background: #3b0b12;
+            background: var(--itm-put);
         }
 
         /* Selected leg side (clicked bid/ask) */
         .chain-table td.cell-selected-bid {
-            background: #7f1d1d !important;
-            color: #fecaca;
-            box-shadow: inset 0 0 0 1px #ef4444;
+            background: var(--down-solid) !important;
+            color: var(--down-strong);
+            box-shadow: inset 0 0 0 1px var(--down);
         }
         .chain-table td.cell-selected-ask {
-            background: #14532d !important;
-            color: #bbf7d0;
-            box-shadow: inset 0 0 0 1px #22c55e;
+            background: var(--up-solid) !important;
+            color: var(--up-strong);
+            box-shadow: inset 0 0 0 1px var(--up);
         }
 
         /* Row highlights for walls / flip / ATM */
-        .chain-table tr.row-call-wall { background: #052e1680; }
-        .chain-table tr.row-call-wall td.strike-col { border-left: 3px solid #22c55e; }
-        .chain-table tr.row-put-wall  { background: #2a0a0a80; }
-        .chain-table tr.row-put-wall td.strike-col  { border-right: 3px solid #ef4444; }
-        .chain-table tr.row-gamma-flip { background: #1a140080; }
-        .chain-table tr.row-gamma-flip td.strike-col { border-left: 3px solid #eab308; }
-        .chain-table tr.row-atm       { background: #1e293b80; }
-        .chain-table tr.row-atm td.strike-col        { border-left: 3px solid #f8fafc; border-right: 3px solid #f8fafc; font-size: 13px; }
+        .chain-table tr.row-call-wall { background: color-mix(in srgb, var(--up-bg) 50%, transparent); }
+        .chain-table tr.row-call-wall td.strike-col { border-left: 3px solid var(--up); }
+        .chain-table tr.row-put-wall  { background: color-mix(in srgb, var(--down-bg) 50%, transparent); }
+        .chain-table tr.row-put-wall td.strike-col  { border-right: 3px solid var(--down); }
+        .chain-table tr.row-gamma-flip { background: color-mix(in srgb, var(--accent-bg) 50%, transparent); }
+        .chain-table tr.row-gamma-flip td.strike-col { border-left: 3px solid var(--accent); }
+        .chain-table tr.row-atm       { background: var(--accent-bg); }
+        .chain-table tr.row-atm td.strike-col        { border-left: 3px solid var(--accent); border-right: 3px solid var(--accent); font-size: 13px; }
 
         /* Strike labels for wall/flip */
         .strike-tag {
@@ -145,9 +146,9 @@
             margin-left: 4px;
             vertical-align: middle;
         }
-        .strike-tag-cw { background: #16a34a40; color: #4ade80; }
-        .strike-tag-pw { background: #dc262640; color: #f87171; }
-        .strike-tag-gf { background: #ca8a0440; color: #facc15; }
+        .strike-tag-cw { background: color-mix(in srgb, var(--up) 25%, transparent); color: var(--up); }
+        .strike-tag-pw { background: color-mix(in srgb, var(--down) 25%, transparent); color: var(--down); }
+        .strike-tag-gf { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--accent); }
 
         /* The flash on a changed value is a Web Animation started in chain-table.js (flushChainCells). */
 
@@ -159,8 +160,8 @@
             pointer-events: auto;
             display: inline-block;
             margin-top: 4px;
-            background: #1e293b;
-            color: #94a3b8;
+            background: var(--bg-raised);
+            color: var(--text-muted);
             border-radius: 50%;
             width: 18px;
             height: 18px;
@@ -170,19 +171,19 @@
             cursor: default;
             position: relative;
         }
-        .chain-controls .help:focus { outline: 2px solid #334155; }
+        .chain-controls .help:focus { outline: 2px solid var(--border-strong); }
         .chain-controls .help .tooltip {
             display: none;
             position: absolute;
             top: 26px;
             left: 0;
-            background: #0b1220;
-            color: #e2e8f0;
+            background: var(--bg-overlay);
+            color: var(--text-strong);
             padding: 8px 10px;
             border-radius: 6px;
             font-size: 12px;
             width: 300px;
-            box-shadow: 0 6px 18px rgba(2,6,23,0.6);
+            box-shadow: var(--shadow-float);
             z-index: 40;
             text-align: left;
             line-height: 1.25;
@@ -195,7 +196,7 @@
             left: 3px;
             border-width: 6px;
             border-style: solid;
-            border-color: transparent transparent #0b1220 transparent;
+            border-color: transparent transparent var(--bg-overlay) transparent;
         }
         .chain-controls .help:hover .tooltip,
         .chain-controls .help:focus .tooltip {

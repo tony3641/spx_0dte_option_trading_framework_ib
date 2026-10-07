@@ -127,3 +127,21 @@ def test_flipping_the_theme_restyles_the_shell_live(browser_env):
         assert page.evaluate("() => getComputedStyle(document.body).backgroundColor") == "rgb(7, 9, 12)"
     finally:
         browser.close()
+
+
+def test_chain_rows_and_place_order_use_tokens(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", tab="chain")
+    try:
+        # Select the first ask on the table so the builder shows the order row.
+        page.evaluate("() => { const td = document.querySelector('#chainBody td.cell-ask'); td.click(); }")
+        page.wait_for_selector("#orderEntryRow", state="visible")
+        btn_bg = page.evaluate("() => getComputedStyle(document.getElementById('stratPlaceBtn')).backgroundColor")
+        assert btn_bg == "rgb(240, 180, 41)"                      # --accent in the dark theme
+        page.click("#themeToggle")
+        # The button has a short background transition: wait for the computed color to settle.
+        page.wait_for_function("() => getComputedStyle(document.getElementById('stratPlaceBtn')).backgroundColor === 'rgb(138, 90, 0)'",
+                               timeout=3000)                      # --accent in the light theme
+        assert page.evaluate("() => getComputedStyle(document.querySelector('#chainBody td.cell-ask')).backgroundColor") != ""
+    finally:
+        browser.close()
