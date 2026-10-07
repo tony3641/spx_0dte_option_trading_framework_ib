@@ -41,7 +41,21 @@
             }
         });
 
-        // Handle window resize - update margins for mobile/desktop transitions
+        // Size the Plotly charts from their containers: a chart is resized only while its container has
+        // a real size (never while the tab is hidden, which draws it squashed), once per frame.
+        const chartObserver = new ResizeObserver(entries => {
+            for (const e of entries) {
+                const el = e.target;
+                if (e.contentRect.width > 0 && e.contentRect.height > 0 && el._fullLayout) {
+                    scheduleRender(`resize.${el.id}`, () => {
+                        if (el.offsetWidth > 0 && el.offsetHeight > 0) Plotly.Plots.resize(el);
+                    });
+                }
+            }
+        });
+        ['gexChart', 'smileChart'].forEach(id => chartObserver.observe(document.getElementById(id)));
+
+        // Window resize only swaps the margins and font sizes for mobile/desktop transitions
         window.addEventListener('resize', () => {
             const fs = mobileAxisFontSize();
             Plotly.relayout('gexChart', {
@@ -51,8 +65,6 @@
                 'legend.font.size': fs,
             });
             Plotly.relayout('smileChart', { margin: mobileSmileMargin() });
-            Plotly.Plots.resize('gexChart');
-            Plotly.Plots.resize('smileChart');
             if (state.activeTab === 'chain') {
                 reportChainViewportCenter(true);
             }

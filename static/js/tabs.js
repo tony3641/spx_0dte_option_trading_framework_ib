@@ -28,12 +28,7 @@
         if (tab === 'dashboard') {
             dashboard.style.display = '';
             dashboard.classList.add('active');
-            // Trigger Plotly resize since charts were hidden
-            setTimeout(() => {
-                Plotly.Plots.resize('gexChart');
-                Plotly.Plots.resize('smileChart');
-            }, 50);
-            onDashboardShown();
+            onDashboardShown();            // parked chart draws land next frame; the charts' ResizeObserver sizes them
         } else if (tab === 'chain') {
             chain.classList.add('active');
             flushHiddenDirty('chain');
@@ -45,7 +40,7 @@
         } else if (tab === 'account') {
             account.classList.add('active');
             flushHiddenDirty('account');
-            renderAccountTab();
+            scheduleRender('account.tab', renderAccountTab);        // one draw: also covers whatever was parked
         } else if (tab === 'strategies') {
             strategies.classList.add('active');
             if (ws && ws.readyState === WebSocket.OPEN) ws.send('set_tab:strategies');

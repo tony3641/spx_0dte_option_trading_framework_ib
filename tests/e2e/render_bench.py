@@ -24,11 +24,31 @@ def _proactor_policy():
     return prev
 
 
-def open_page(p, base_url, tab="dashboard"):
+def open_page(p, base_url, tab="dashboard", problems=None, before_goto=None):
+    """Open the dashboard on `tab` with the bench helpers loaded.
+
+    `problems` (a list) collects page errors and console errors seen from the first byte on;
+    `before_goto(page)` runs before navigation (routes, init scripts).
+    """
     browser = p.chromium.launch()
     page = browser.new_page(viewport={"width": 1600, "height": 1000})
-    # Page exceptions (e.g. a handler throwing on an injected message) go to stderr, not the result.
-    page.on("pageerror", lambda exc: print(f"[render_bench:{tab}] page error: {exc}", file=sys.stderr))
+
+    def on_pageerror(exc):
+        # Page exceptions (e.g. a handler throwing on an injected message) go to stderr, not the result.
+        print(f"[render_bench:{tab}] page error: {exc}", file=sys.stderr)
+        if problems is not None:
+            problems.append(f"pageerror: {exc}")
+
+    def on_console(msg):
+        url = msg.location.get("url", "")
+        if msg.type == "error" and not url.endswith("favicon.ico"):
+            problems.append(f"console: {msg.text} @ {url}")
+
+    page.on("pageerror", on_pageerror)
+    if problems is not None:
+        page.on("console", on_console)
+    if before_goto is not None:
+        before_goto(page)
     page.goto(f"{base_url}/#{tab}")
     page.wait_for_function("() => typeof state !== 'undefined' && state.wsConnected === true", timeout=30000)
     page.wait_for_timeout(1500)            # let the server's own init land before we inject ours

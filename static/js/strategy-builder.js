@@ -423,8 +423,7 @@
                 state.gex = msg.data;
                 if (msg.data.spot_price > 0) state.currentSpot = msg.data.spot_price;
                 state.esDerived = msg.data.es_derived || false;
-                updateGexChart();
-                updateSmileChart();
+                requestGexRender();
                 updatePriceLevels(state.gex);
                 updateBadges();
                 break;
@@ -457,8 +456,7 @@
                     updateGexModeToggle();
                 }
                 if (state.gexMode === 'monthly') {
-                    updateGexChart();
-                    updateSmileChart();
+                    requestGexRender();
                     updateBadges();
                 }
                 break;
@@ -497,9 +495,8 @@
             state.gex = data.gex;
             if (data.gex.spot_price > 0) state.currentSpot = data.gex.spot_price;
             state.esDerived = data.es_derived || false;
-            updateGexChart();
+            requestGexRender();
             updatePriceLevels(state.gex);
-            updateSmileChart();
             // Cached GEX from server - hide loading overlays immediately
             document.getElementById('gexLoading').classList.add('hidden');
             document.getElementById('smileLoading').classList.add('hidden');
@@ -521,8 +518,7 @@
         }
         // Re-render charts with correct mode data
         if (state.gexMode === 'monthly' && state.monthlyGex) {
-            updateGexChart();
-            updateSmileChart();
+            requestGexRender();
         }
 
         // Restore option chain data for Tab 2

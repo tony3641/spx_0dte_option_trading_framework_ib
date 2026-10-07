@@ -42,8 +42,10 @@
         ws.onmessage = (event) => {
             try {
                 const msg = JSON.parse(event.data);
-                perfOnMessage(msg);
+                // Diagnostics never drop a data message, even if perf.js failed to load.
+                if (typeof perfOnMessage === 'function') perfOnMessage(msg);
                 handleMessage(msg);
+                if (typeof perfAfterHandle === 'function') perfAfterHandle();
             } catch (e) {
                 const snippet = typeof event.data === 'string' ? event.data.slice(0, 240) : '[non-string payload]';
                 console.error('Failed to parse message', e, snippet);

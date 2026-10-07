@@ -35,6 +35,9 @@
         executions: [],
         // Pending order confirmation callback
         pendingOrderPayload: null,
+        // Cancels IB has not confirmed yet: orderId -> request time (ms). Replies for these are cancel
+        // feedback, never the reply to a place_order in flight (order-entry.js).
+        pendingCancels: new Map(),
         // Tracks positions currently being liquidated (prevents duplicate orders)
         liquidatingPositions: new Set(),
         // Strategies tab state

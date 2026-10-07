@@ -14,6 +14,11 @@
         return _renderJobs.has(key);
     }
 
+    // True while any job waits for the next frame flush.
+    function hasPendingRenders() {
+        return _renderJobs.size > 0;
+    }
+
     function flushRenders() {
         _renderFrame = 0;
         const jobs = Array.from(_renderJobs.values());

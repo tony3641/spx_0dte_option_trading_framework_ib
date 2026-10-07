@@ -11,7 +11,7 @@
     // only while the Dashboard tab is visible. pending* hold what the next frame must push.
     const priceChart = {
         chart: null, candles: null, overnight: null,
-        sessionDate: null, bars: new Map(), overnightPts: [], latest: null,
+        sessionDate: null, bars: new Map(), overnightPts: new Map(), latest: null,
         pendingBars: new Map(), pendingOvernight: [],
         lastTime: null, lastOvernightTime: null,      // last time written to each series
         levels: {}, levelValues: {}, needsFit: false,
@@ -27,32 +27,41 @@
         return { time: etIsoToChartTime(b.time), open: b.open, high: b.high, low: b.low, close: b.close };
     }
 
+    // A missing library (CDN down) or a chart that fails to build leaves the price chart area with a
+    // short error text and priceChart.candles null (every render path checks it); the rest of the page
+    // starts normally, so the caller (main.js) must not see an exception from here.
     function initPriceChart() {
         const el = document.getElementById('priceChart');
-        if (typeof LightweightCharts === 'undefined') {
+        let chart = null;
+        try {
+            if (typeof LightweightCharts === 'undefined') throw new Error('LightweightCharts is not defined');
+            const LC = LightweightCharts;
+            chart = LC.createChart(el, {
+                autoSize: true,
+                layout: { background: { type: 'solid', color: CHART_BG }, textColor: TEXT_COLOR },
+                grid: { vertLines: { color: GRID_COLOR }, horzLines: { color: GRID_COLOR } },
+                timeScale: { timeVisible: true, secondsVisible: false, borderColor: GRID_COLOR },
+                rightPriceScale: { borderColor: GRID_COLOR },
+                crosshair: { mode: LC.CrosshairMode.Normal },
+            });
+            const candles = chart.addSeries(LC.CandlestickSeries, {
+                upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
+                wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+            });
+            const overnight = chart.addSeries(LC.LineSeries, {
+                color: '#facc15', lineWidth: 1, lineStyle: LC.LineStyle.Dotted,
+                priceLineVisible: false, lastValueVisible: true, title: 'ES-derived',
+            });
+            priceChart.chart = chart;                       // published together: never a half-built chart
+            priceChart.candles = candles;
+            priceChart.overnight = overnight;
+            state.priceChartReady = true;
+        } catch (e) {
+            console.error('Price chart unavailable', e);
+            try { if (chart) chart.remove(); } catch (e2) { /* nothing left to clean up */ }
             el.textContent = 'Price chart library failed to load (check the network connection).';
             el.classList.add('price-chart-error');
-            return;
         }
-        const LC = LightweightCharts;
-        const chart = LC.createChart(el, {
-            autoSize: true,
-            layout: { background: { type: 'solid', color: CHART_BG }, textColor: TEXT_COLOR },
-            grid: { vertLines: { color: GRID_COLOR }, horzLines: { color: GRID_COLOR } },
-            timeScale: { timeVisible: true, secondsVisible: false, borderColor: GRID_COLOR },
-            rightPriceScale: { borderColor: GRID_COLOR },
-            crosshair: { mode: LC.CrosshairMode.Normal },
-        });
-        priceChart.candles = chart.addSeries(LC.CandlestickSeries, {
-            upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
-            wickUpColor: '#22c55e', wickDownColor: '#ef4444',
-        });
-        priceChart.overnight = chart.addSeries(LC.LineSeries, {
-            color: '#facc15', lineWidth: 1, lineStyle: LC.LineStyle.Dotted,
-            priceLineVisible: false, lastValueVisible: true, title: 'ES-derived',
-        });
-        priceChart.chart = chart;
-        state.priceChartReady = true;
     }
 
     function handlePriceSnapshot(data) {
@@ -66,9 +75,11 @@
             priceChart.bars.set(c.time, c);
             if (!priceChart.latest || c.time >= priceChart.latest.time) priceChart.latest = c;
         }
-        priceChart.overnightPts = (data.overnight || [])
-            .map(p => ({ time: etIsoToChartTime(p.time), value: p.value }))
-            .filter(p => p.time !== null);
+        priceChart.overnightPts = new Map();                 // by time, last wins (setData and update agree)
+        for (const p of (data.overnight || [])) {
+            const t = etIsoToChartTime(p.time);
+            if (t !== null) priceChart.overnightPts.set(t, { time: t, value: p.value });
+        }
         priceChart.pendingBars.clear();
         priceChart.pendingOvernight = [];
         priceChart.needsFit = true;
@@ -80,9 +91,7 @@
         if (!priceChart.candles) return;
         const candles = Array.from(priceChart.bars.values()).sort((a, b) => a.time - b.time);
         priceChart.candles.setData(candles);
-        const seen = new Set();                              // setData needs strictly ascending, unique times
-        const pts = priceChart.overnightPts.filter(p => !seen.has(p.time) && seen.add(p.time))
-            .sort((a, b) => a.time - b.time);
+        const pts = Array.from(priceChart.overnightPts.values()).sort((a, b) => a.time - b.time);   // unique times
         priceChart.overnight.setData(pts);
         priceChart.lastTime = candles.length ? candles[candles.length - 1].time : null;
         priceChart.lastOvernightTime = pts.length ? pts[pts.length - 1].time : null;
@@ -130,7 +139,7 @@
         const t = etIsoToChartTime(p.time);
         if (t === null) return;
         const point = { time: t, value: p.value };
-        priceChart.overnightPts.push(point);
+        priceChart.overnightPts.set(t, point);
         if (state.activeTab !== 'dashboard') {
             renderWhenVisible('dashboard', 'price.snapshot', renderPriceSnapshot);
             return;

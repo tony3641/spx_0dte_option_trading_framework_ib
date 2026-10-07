@@ -4,11 +4,12 @@
     // ======================================================================
     const PERF_REPORT_MS = 10000;
     const PERF_MAX_SAMPLES = 200;
-    // Message types whose handling ends in a paint, and the tab that paints them (null = always
-    // visible). A message for a hidden tab is parked, not painted, so it records no paint span.
+    // Message types whose handling ends in a frame-flush paint, and the tab that paints them. A
+    // message for a hidden tab is parked, not painted, so it records no paint span. `status` paints
+    // only the GEX/smile spot line (the header badges are written directly), hence the Dashboard.
     const PERF_PAINT_TABS = {
         chain_tick: 'chain', chain_quotes: 'chain', account_update: 'account',
-        price_bar: 'dashboard', price_snapshot: 'dashboard', gex: 'dashboard', status: null,
+        price_bar: 'dashboard', price_snapshot: 'dashboard', gex: 'dashboard', status: 'dashboard',
     };
     const _perfSpans = {};
     let _perfPending = [];
@@ -30,6 +31,13 @@
             _perfPending.push([msg.type, performance.now()]);
             if (_perfPending.length > 500) _perfPending.shift();
         }
+    }
+
+    // Call after handleMessage: when handling scheduled no frame (an unchanged spot, a bar for another
+    // session) there is no flush to wait for, so its pending paint sample would only grow until some
+    // unrelated flush. Drop it.
+    function perfAfterHandle() {
+        if (!hasPendingRenders()) _perfPending = [];
     }
 
     function perfMarkFlush(t0, t1) {

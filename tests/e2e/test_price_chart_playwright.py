@@ -122,6 +122,31 @@ def test_init_message_carries_the_snapshot_and_the_title_keeps_its_help(page):
     assert title == {"text": "SPX Intraday — Live", "children": 0, "help": True, "tag": "chart-title"}
 
 
+def test_overnight_duplicate_and_unsorted_times_resolve_the_same_way_in_setdata_and_update(page):
+    def point(hhmm, value):
+        return {"time": f"{S}T{hhmm}:00-05:00", "value": value}
+
+    def line():
+        return page.evaluate("() => priceChart.overnight.data().map(p => [p.time, p.value])")
+
+    def t(hh, mm):
+        return _utc_seconds(2099, 1, 5, hh, mm)
+
+    snap = {"session_date": S, "mode": "historical", "bars": [_bar("09:30", 100)],
+            "overnight": [point("20:03", 1), point("20:01", 2), point("20:03", 9)]}
+    _inject(page, "price_snapshot", snap)
+    assert line() == [[t(20, 1), 2], [t(20, 3), 9]]                   # sorted, the last duplicate wins
+    _inject(page, "price_overnight", {"point": point("20:03", 10)})
+    assert line() == [[t(20, 1), 2], [t(20, 3), 10]]                  # update() replaces the same time
+    _inject(page, "price_overnight", {"point": point("20:02", 5)})
+    assert line() == [[t(20, 1), 2], [t(20, 2), 5], [t(20, 3), 10]]   # an older point rebuilds the line
+    page.evaluate("() => switchTab('chain')")
+    _inject(page, "price_overnight", {"point": point("20:03", 11)})
+    page.evaluate("() => switchTab('dashboard')")
+    page.wait_for_function("() => priceChart.overnight.data().some(p => p.value === 11)", timeout=5000)
+    assert line() == [[t(20, 1), 2], [t(20, 2), 5], [t(20, 3), 11]]   # a redraw after a hidden period agrees
+
+
 # --- frame batching ----------------------------------------------------------------------------
 
 def test_scheduled_renders_coalesce_per_key_and_survive_a_failing_job(page):
@@ -186,6 +211,75 @@ def test_chart_fits_its_bars_when_the_page_starts_on_another_tab(browser_env):
         assert view["width"] > 100                  # laid out at its real size, not at zero width
         assert view["span"] < 10                    # three bars fitted, not a squashed 0.5 px/bar view
         assert problems == []
+    finally:
+        browser.close()
+
+
+# --- the chart library is missing or broken: the rest of the page still works --------------------------
+
+LC_URL = "**/lightweight-charts*"
+LC_ERROR_TEXT = "Price chart library failed to load (check the network connection)."
+LC_STUBS = {
+    "createChart throws": "window.LightweightCharts = {CrosshairMode: {Normal: 0}, "
+                          "createChart() { throw new Error('createChart failed'); }};",
+    "addSeries throws": "window.__chartRemoved = false; window.LightweightCharts = {CrosshairMode: {Normal: 0}, "
+                        "createChart() { return {addSeries() { throw new Error('addSeries failed'); }, "
+                        "remove() { window.__chartRemoved = true; }}; }};",
+}
+
+
+def _mini_gex():
+    strikes = [6100 + 5 * i for i in range(4)]
+    return {"gex_bars": [{"strike": s, "call_gex": 1e6, "put_gex": -1e6, "net_gex": 0.0} for s in strikes],
+            "call_wall": 6110, "put_wall": 6100, "gamma_flip": 6105, "max_pain": 6105, "spot_price": 6107,
+            "total_net_gex": 0.0, "smile_data": [], "es_derived": False}
+
+
+def _assert_page_works_without_the_price_chart(pg, problems):
+    assert pg.evaluate("() => document.getElementById('priceChart').textContent") == LC_ERROR_TEXT
+    assert pg.evaluate("() => document.getElementById('priceChart').className") == "price-chart-error"
+    # the error text clears the chart title above it
+    assert pg.evaluate("() => getComputedStyle(document.getElementById('priceChart')).paddingTop") == "40px"
+    assert pg.evaluate("() => [priceChart.chart, priceChart.candles, priceChart.overnight, state.priceChartReady]")         == [None, None, None, False]
+    # the rest of the page started: GEX chart, smile chart, WebSocket
+    assert pg.evaluate("() => [state.gexChartReady, state.smileChartReady, state.wsConnected]") == [True, True, True]
+    _inject(pg, "price_snapshot", {"session_date": S, "mode": "live", "bars": [_bar("09:30", 100)],
+                                   "overnight": [{"time": f"{S}T20:00:00-05:00", "value": 100.5}]})
+    _inject(pg, "price_bar", {"session_date": S, "bar": _bar("09:31", 101)})
+    _inject(pg, "price_overnight", {"point": {"time": f"{S}T20:01:00-05:00", "value": 100.6}})
+    _inject(pg, "gex", _mini_gex())
+    assert pg.evaluate("() => document.getElementById('gexChart')._fullData[0].x.length") == 4
+    assert pg.evaluate("() => document.getElementById('spotBadge').textContent") == "101.00"
+    assert [p for p in problems if "pageerror" in p] == []
+
+
+def test_price_chart_shows_an_error_text_when_the_library_does_not_load(browser_env):
+    p, url = browser_env
+    problems = []
+    browser, pg = open_page(p, url, "dashboard", problems=problems,
+                            before_goto=lambda page: page.route(LC_URL, lambda route: route.abort()))
+    try:
+        assert pg.evaluate("() => typeof LightweightCharts") == "undefined"
+        _assert_page_works_without_the_price_chart(pg, problems)
+    finally:
+        browser.close()
+
+
+@pytest.mark.parametrize("stub", sorted(LC_STUBS))
+def test_price_chart_failing_to_build_does_not_stop_the_page_from_starting(browser_env, stub):
+    p, url = browser_env
+    problems = []
+
+    def serve_stub(page):
+        page.route(LC_URL, lambda route: route.fulfill(status=200, content_type="application/javascript",
+                                                       body=LC_STUBS[stub]))
+
+    browser, pg = open_page(p, url, "dashboard", problems=problems, before_goto=serve_stub)
+    try:
+        _assert_page_works_without_the_price_chart(pg, problems)
+        assert any("Price chart unavailable" in m for m in problems)             # the cause is logged, once
+        if stub == "addSeries throws":
+            assert pg.evaluate("() => window.__chartRemoved") is True            # no half-built chart is left behind
     finally:
         browser.close()
 

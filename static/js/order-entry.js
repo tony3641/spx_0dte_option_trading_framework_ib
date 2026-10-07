@@ -181,7 +181,68 @@
         el._timeout = setTimeout(() => { el.className = 'order-toast hidden'; }, 5000);
     }
 
+    // ----- Cancel feedback -----------------------------------------------------------------------
+    // state.pendingCancels holds the cancels IB has not confirmed. An order_status is cancel feedback
+    // when the server tagged it `action: "cancel"` (the reply to a cancel_order) or when its id has a
+    // pending cancel (IB confirming later); it is never the reply to a place_order in flight.
+    const CANCEL_PENDING_TTL_MS = 60000;      // after this a pending cancel counts as lost and can be sent again
+    const CANCEL_TERMINAL = new Set(['Cancelled', 'ApiCancelled', 'Filled', 'Inactive']);
+
+    function isCancelReply(data) {
+        if (!data) return false;
+        if (data.action === 'cancel') return true;
+        return data.orderId !== undefined && data.orderId !== null && state.pendingCancels.has(data.orderId);
+    }
+
+    function handleCancelReply(data) {
+        const oid = data.orderId;
+        const st = data.status || '';
+        if (st === 'PendingCancel') {
+            // Stays pending: the next order_status or account_update for this order resolves it. A late
+            // reply for a cancel an account_update already resolved has nothing left to say.
+            if (state.pendingCancels.has(oid)) {
+                showOrderToast(`Cancel pending for order ${oid} (IB has not confirmed yet)`, 'info');
+            }
+        } else if (st === 'Cancelled' || st === 'ApiCancelled') {
+            state.pendingCancels.delete(oid);
+            showOrderToast(`Order ${oid} cancelled`, 'ok');
+        } else if (st === 'Error') {
+            state.pendingCancels.delete(oid);
+            showOrderToast(`Cancel failed for order ${oid}: ${data.message || 'unknown'}`, 'err');
+        } else if (CANCEL_TERMINAL.has(st) || data.action === 'cancel') {
+            state.pendingCancels.delete(oid);
+            showOrderToast(`Order ${oid} is already ${st}`, 'info');
+        }
+        // Any other status on an untagged message is an unrelated update: the cancel is still pending.
+    }
+
+    // Called with every account_update that carries the open orders (state.openOrders is current).
+    function resolvePendingCancels() {
+        const now = Date.now();
+        for (const [oid, t0] of state.pendingCancels) {
+            const o = state.openOrders.find(x => x.orderId === oid);
+            if (!o) {
+                state.pendingCancels.delete(oid);
+                showOrderToast(`Order ${oid} is no longer open (cancelled or filled)`, 'ok');
+            } else if (o.status === 'Cancelled' || o.status === 'ApiCancelled') {
+                state.pendingCancels.delete(oid);
+                showOrderToast(`Order ${oid} cancelled`, 'ok');
+            } else if (CANCEL_TERMINAL.has(o.status)) {
+                state.pendingCancels.delete(oid);
+                showOrderToast(`Order ${oid} is ${o.status}; the cancel came too late`, 'info');
+            } else if (now - t0 > CANCEL_PENDING_TTL_MS) {
+                state.pendingCancels.delete(oid);
+                showOrderToast(`Cancel for order ${oid} not confirmed after ${CANCEL_PENDING_TTL_MS / 1000} s; the order is still open`, 'err');
+            }
+        }
+    }
+
     function handleOrderStatus(data) {
+        if (isCancelReply(data)) {
+            handleCancelReply(data);
+            renderWhenVisible('account', 'account.tab', renderAccountTab);
+            return;
+        }
         // Dispatch to pending callback if any
         if (state._pendingOrderCallback) {
             const cb = state._pendingOrderCallback.fn;
@@ -199,7 +260,7 @@
             }
         }
         // Refresh account data
-        if (state.activeTab === 'account') renderAccountTab();
+        renderWhenVisible('account', 'account.tab', renderAccountTab);
     }
 
     function handleIbError(data) {

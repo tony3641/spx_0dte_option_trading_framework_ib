@@ -199,6 +199,32 @@ async def test_a_cancel_sent_right_before_the_tab_closes_still_runs(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_cancel_replies_name_their_order_and_are_tagged_as_cancel_replies(monkeypatch):
+    """place_order replies share the order_status type; the browser tells a cancel reply apart by the tag,
+    including an early error that has no order id of its own."""
+    state = create_app_state()
+    release = asyncio.Event()
+
+    async def cancel(ib, st, order_id, refresh_fn=None):
+        if order_id == 79:
+            return {"type": "order_status", "data": {"status": "Error", "message": "Order 79 not found in open trades"}}
+        return {"type": "order_status", "data": {"status": "PendingCancel", "orderId": order_id, "message": "x"}}
+
+    monkeypatch.setattr(ws_mod, "handle_cancel_order", cancel)
+    sock = ScriptWS(["cancel_order:79", "cancel_order:80"], release=release)
+    task = asyncio.create_task(ws_mod.websocket_endpoint(sock, None, state, _noop))
+    for _ in range(100):
+        await asyncio.sleep(0.005)
+        if sum(m["type"] == "order_status" for m in sock.sent) >= 2:
+            break
+    release.set()
+    await task
+    replies = {m["data"]["orderId"]: m["data"] for m in sock.sent if m["type"] == "order_status"}
+    assert replies[79] == {"status": "Error", "message": "Order 79 not found in open trades", "orderId": 79, "action": "cancel"}
+    assert replies[80]["action"] == "cancel" and replies[80]["status"] == "PendingCancel"
+
+
+@pytest.mark.asyncio
 async def test_bad_cancel_order_id_gets_an_error_reply():
     state = create_app_state()
     sock = ScriptWS(["cancel_order:abc"])

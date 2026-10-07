@@ -75,8 +75,7 @@
                 marker: { color: '#facc15', size: 3 },
             },
         ], layout, {
-            responsive: true,
-            displayModeBar: false,
+            displayModeBar: false,      // resizing is the ResizeObserver's job (main.js), only while visible
         });
         state.gexChartReady = true;
     }
@@ -116,7 +115,7 @@
             { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Call Eff', line: { color: '#facc15', width: 1.5, dash: 'dot' }, xaxis: 'x', yaxis: 'y2' },
             { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Put IV', line: { color: '#f87171', width: 2 }, xaxis: 'x2', yaxis: 'y3' },
             { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Put Eff', line: { color: '#facc15', width: 1.5, dash: 'dot' }, xaxis: 'x2', yaxis: 'y4' },
-        ], layout, { responsive: true, displayModeBar: false });
+        ], layout, { displayModeBar: false });    // resized by main.js's ResizeObserver, only while visible
         state.smileChartReady = true;
     }
 
@@ -163,19 +162,14 @@
         }
     }
 
-    function updateGexChart() {
-        if (!state.gexChartReady) return;
+    // The GEX data the Dashboard charts show: 0DTE, or the cached monthly set in monthly mode.
+    function currentGexData() {
+        return state.gexMode === 'monthly' ? state.monthlyGex : state.gex;
+    }
 
-        // Pick data source based on gex mode
-        const gexData = state.gexMode === 'monthly' ? state.monthlyGex : state.gex;
-        if (!gexData || !gexData.gex_bars) return;
-
-        const bars = gexData.gex_bars;
-        const strikes = bars.map(b => b.strike);
-        const callGex = bars.map(b => b.call_gex);
-        const putGex = bars.map(b => b.put_gex);
-        const netGexPerBar = bars.map(b => b.net_gex);
-
+    // Shapes and annotations of the GEX chart: spot line, key levels, Net GEX box. A spot-only
+    // change redraws just these through Plotly.relayout (requestSpotLineRender).
+    function gexOverlays(gexData) {
         // Vertical line at current spot
         const shapes = [];
         const annotations = [];
@@ -276,6 +270,23 @@
             });
         }
 
+        return { shapes, annotations };
+    }
+
+    function updateGexChart() {
+        if (!state.gexChartReady) return;
+
+        // Pick data source based on gex mode
+        const gexData = currentGexData();
+        if (!gexData || !gexData.gex_bars) return;
+
+        const bars = gexData.gex_bars;
+        const strikes = bars.map(b => b.strike);
+        const callGex = bars.map(b => b.call_gex);
+        const putGex = bars.map(b => b.put_gex);
+        const netGexPerBar = bars.map(b => b.net_gex);
+        const { shapes, annotations } = gexOverlays(gexData);
+
         // Calculate common range from all smile data if available
         let commonRange = null;
         if (gexData && gexData.smile_data && gexData.smile_data.length > 0) {
@@ -327,11 +338,41 @@
         });
     }
 
+    // Shapes and annotations of the smile chart: the spot and level verticals on both subplots and
+    // the CALLS / PUTS subtitles.
+    function smileOverlays(gexData) {
+        // Spot + key level vertical lines for both subplots
+        const shapes = [];
+        const spotForLine = state.currentSpot > 0 ? state.currentSpot : (gexData.spot_price || 0);
+        const addVertical = (xref, val, color, dash) => {
+            if (val == null || val <= 0) return;
+            shapes.push({
+                type: 'line', xref: xref, x0: val, x1: val,
+                yref: 'paper', y0: 0, y1: 1,
+                line: { color: color, width: 1, dash: dash },
+            });
+        };
+        // Draw on both x-axes
+        for (const xr of ['x', 'x2']) {
+            addVertical(xr, spotForLine, '#f8fafc', 'dot');
+            addVertical(xr, gexData.call_wall, '#22c55e', 'dash');
+            addVertical(xr, gexData.put_wall, '#ef4444', 'dash');
+            addVertical(xr, gexData.gamma_flip, '#eab308', 'dash');
+        }
+
+        // Preserve the CALLS / PUTS subtitle annotations
+        const annotations = [
+            { text: 'CALLS', xref: 'paper', yref: 'paper', x: 0.5, y: 1.01, showarrow: false, font: { color: '#4ade80', size: 11 } },
+            { text: 'PUTS',  xref: 'paper', yref: 'paper', x: 0.5, y: 0.46, showarrow: false, font: { color: '#f87171', size: 11 } },
+        ];
+        return { shapes, annotations };
+    }
+
     function updateSmileChart() {
         if (!state.smileChartReady) return;
 
         // Pick data source based on gex mode
-        const gexData = state.gexMode === 'monthly' ? state.monthlyGex : state.gex;
+        const gexData = currentGexData();
         if (!gexData || !gexData.smile_data) return;
 
         const sd = gexData.smile_data;
@@ -375,30 +416,7 @@
             commonRange = [minSmile - range * 0.01, maxSmile + range * 0.01];
         }
 
-        // Spot + key level vertical lines for both subplots
-        const shapes = [];
-        const spotForLine = state.currentSpot > 0 ? state.currentSpot : (gexData.spot_price || 0);
-        const addVertical = (xref, val, color, dash) => {
-            if (val == null || val <= 0) return;
-            shapes.push({
-                type: 'line', xref: xref, x0: val, x1: val,
-                yref: 'paper', y0: 0, y1: 1,
-                line: { color: color, width: 1, dash: dash },
-            });
-        };
-        // Draw on both x-axes
-        for (const xr of ['x', 'x2']) {
-            addVertical(xr, spotForLine, '#f8fafc', 'dot');
-            addVertical(xr, gexData.call_wall, '#22c55e', 'dash');
-            addVertical(xr, gexData.put_wall, '#ef4444', 'dash');
-            addVertical(xr, gexData.gamma_flip, '#eab308', 'dash');
-        }
-
-        // Preserve the CALLS / PUTS subtitle annotations
-        const annotations = [
-            { text: 'CALLS', xref: 'paper', yref: 'paper', x: 0.5, y: 1.01, showarrow: false, font: { color: '#4ade80', size: 11 } },
-            { text: 'PUTS',  xref: 'paper', yref: 'paper', x: 0.5, y: 0.46, showarrow: false, font: { color: '#f87171', size: 11 } },
-        ];
+        const { shapes, annotations } = smileOverlays(gexData);
 
         const hoverCall = '<b>Strike: %{x}</b><br>Call IV: %{y:.1f}%<br>Delta: %{customdata[0]}<br>Charm: %{customdata[1]}<br>Efficiency: %{customdata[2]}<extra></extra>';
         const hoverCallEff = '<b>Strike: %{x}</b><br>Efficiency: %{y:.4f}<extra></extra>';
@@ -442,6 +460,31 @@
     }
 
     // ======================================================================
+    // Render requests: GEX and smile are drawn only while the Dashboard tab is visible (parked per
+    // tab otherwise and drawn once on show), and coalesced to one draw per frame.
+    // ======================================================================
+    function requestGexRender() {
+        renderWhenVisible('dashboard', 'gex', updateGexChart);
+        renderWhenVisible('dashboard', 'smile', updateSmileChart);
+    }
+
+    // A spot-only change moves the spot lines with a shapes-only relayout. When a full GEX draw is
+    // already queued it draws the new spot itself, so nothing more is needed.
+    function requestSpotLineRender() {
+        if (isRenderPending('gex')) return;
+        renderWhenVisible('dashboard', 'gex.spot', redrawSpotLines);
+    }
+
+    function redrawSpotLines() {
+        const g = currentGexData();
+        if (!g) return;
+        if (state.gexChartReady && g.gex_bars) Plotly.relayout('gexChart', gexOverlays(g));
+        if (state.smileChartReady && g.smile_data && g.smile_data.length) {
+            Plotly.relayout('smileChart', smileOverlays(g));
+        }
+    }
+
+    // ======================================================================
     // GEX mode toggle (0DTE ↔ Monthly)
     // ======================================================================
     function setGexMode(mode) {
@@ -457,8 +500,7 @@
         }
 
         // Re-render charts with the active data source
-        updateGexChart();
-        updateSmileChart();
+        requestGexRender();
     }
 
     function updateGexModeToggle() {

@@ -111,6 +111,13 @@ async def _cancel_and_reply(ib, state, order_id: int, out) -> None:
     except Exception as e:
         logger.error(f"cancel_order error: {e}", exc_info=True)
         resp = {"type": "order_status", "data": {"status": "Error", "orderId": order_id, "message": str(e)}}
+    data = resp.get("data")
+    if isinstance(data, dict):
+        # Every cancel reply names its order and says it is a cancel reply: place_order replies share the
+        # `order_status` type, and the browser must never take one for the other (even an early error that
+        # has no order id of its own).
+        data["action"] = "cancel"
+        data.setdefault("orderId", order_id)
     out.send_message(resp)      # a no-op once the client has gone
 
 
