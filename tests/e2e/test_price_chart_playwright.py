@@ -296,6 +296,20 @@ def test_perf_ignores_a_server_timestamp_that_is_not_plausible(page):
     assert spans == ["perf_probe_ok.recv"]
 
 
+def test_perf_job_samples_stay_bounded_when_the_job_never_runs(page):
+    out = page.evaluate("""() => {
+        for (let i = 0; i < 1000; i++) {
+            perfOnMessage({type: 'perf_probe_hidden', ts: Date.now()});
+            perfNoteJob('t.perf.never_runs');
+            perfAfterHandle();
+        }
+        const n = _perfJobSamples.get('t.perf.never_runs').length;
+        perfJobDropped('t.perf.never_runs');
+        return n;
+    }""")
+    assert out == 200
+
+
 def test_perf_report_reaches_the_server_under_accepted_names(page, browser_env):
     _, url = browser_env
     page.evaluate("""async () => {

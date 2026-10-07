@@ -65,6 +65,9 @@
     // A tick carries only the fields that changed (plus strike and right). Unknown strikes are ignored.
     function handleChainTick(data) {
         if (!data || !data.ticks) return;
+        // A tick names its expiry (the table's own comes from the last full payload): never patch another expiry's rows.
+        const tableExpiry = state.chainMeta && state.chainMeta.expiration_raw;
+        if (data.expiration_raw && tableExpiry && data.expiration_raw !== tableExpiry) return;
         state.chainLastUpdateMs = data.timestamp_iso ? Date.parse(data.timestamp_iso) : Date.now();
         const now = Date.now();
         let legTouched = false;

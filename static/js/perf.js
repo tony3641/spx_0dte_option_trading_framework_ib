@@ -1,9 +1,10 @@
     // Client perf: server ts -> receipt, receipt -> frame flush, long tasks. Sent every 10 s.
-    // Span names must match the server's ^[a-z_]+(\.[a-z_]+)*$ (see web/push.py record_client_perf):
+    // Span names must fully match the server's [a-z_]+(\.[a-z_]+)* (see web/push.py record_client_perf):
     // message types are lowercase with underscores, so `<type>.recv` / `<type>.paint` qualify.
     // ======================================================================
     const PERF_REPORT_MS = 10000;
     const PERF_MAX_SAMPLES = 200;
+    const PERF_MAX_JOB_SAMPLES = 200;         // per job key: a hidden tab never runs its rAF jobs, so cap the wait list
     // `<type>.paint` is recorded only for a message whose handling scheduled render jobs (a message for
     // a hidden tab is parked, a no-op status schedules nothing): it spans receipt to the end of the last
     // job the message scheduled, light or heavy.
@@ -31,7 +32,12 @@
         if (!_perfMsg) return;
         _perfMsg.jobs += 1;
         const waiting = _perfJobSamples.get(key);
-        if (waiting) waiting.push(_perfMsg); else _perfJobSamples.set(key, [_perfMsg]);
+        if (waiting) {
+            waiting.push(_perfMsg);
+            if (waiting.length > PERF_MAX_JOB_SAMPLES) waiting.shift();     // the oldest message's paint is not recorded
+        } else {
+            _perfJobSamples.set(key, [_perfMsg]);
+        }
     }
 
     // Call when handleMessage returns (also when it threw): later jobs belong to no message.

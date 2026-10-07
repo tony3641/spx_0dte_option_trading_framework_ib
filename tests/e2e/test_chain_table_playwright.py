@@ -128,6 +128,17 @@ def test_tick_for_an_unknown_strike_or_side_is_ignored(page):
     assert "7.70" not in page.evaluate("() => document.getElementById('chainBody').textContent")
 
 
+def test_a_tick_for_another_expiry_is_ignored_and_one_without_an_expiry_is_applied(page):
+    _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 7.7}],
+                                 "timestamp_iso": "x", "expiration_raw": "20990106"})
+    assert _text(page, "chain_6150_call_bid") == "1.00"
+    _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 2.2}],
+                                 "timestamp_iso": "x", "expiration_raw": "20990105"})
+    assert _text(page, "chain_6150_call_bid") == "2.20"
+    _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 2.3}], "timestamp_iso": "x"})
+    assert _text(page, "chain_6150_call_bid") == "2.30"
+
+
 def test_a_changed_number_flashes_and_an_unchanged_one_does_not(page):
     _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 2.0}], "timestamp_iso": "x"})
     assert page.evaluate("() => document.getElementById('chain_6150_call_bid').getAnimations().length") == 1
