@@ -250,7 +250,7 @@
             chainView.dirty.clear();
             chainView.staleState.clear();
             chainView.built = false;
-            tbody.innerHTML = '<tr><td colspan="19" style="text-align:center;color:#475569;padding:40px;">Waiting for option chain data...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="19" style="text-align:center;color:var(--text-faint);padding:40px;">Waiting for option chain data...</td></tr>';
             document.getElementById('chainRangeInfo').textContent = 'Visible range: -';
             return;
         }

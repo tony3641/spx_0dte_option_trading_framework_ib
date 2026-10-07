@@ -1,8 +1,10 @@
     // Chart setup
     // ======================================================================
-    const CHART_BG = '#111827';
-    const GRID_COLOR = '#1e293b';
-    const TEXT_COLOR = '#94a3b8';
+    // Chart colors come from the theme tokens, read at draw time (theme-colors.js).
+    function chartTheme() {
+        const c = themeColors();
+        return { bg: c.bgPanel, grid: c.border, text: c.textMuted, c };
+    }
 
     // ======================================================================
     // Responsive helpers
@@ -19,60 +21,75 @@
     }
     function mobileAxisFontSize() { return isMobile() ? 9 : 11; }
 
-    const gexLayout = {
-        paper_bgcolor: CHART_BG,
-        plot_bgcolor: CHART_BG,
-        margin: { t: 36, r: 60, b: 40, l: 60 },
-        barmode: 'relative',
-        xaxis: {
-            color: TEXT_COLOR,
-            gridcolor: GRID_COLOR,
-            title: { text: 'Strike', font: { color: TEXT_COLOR, size: 11 } },
-        },
-        yaxis: {
-            color: TEXT_COLOR,
-            gridcolor: GRID_COLOR,
-            title: { text: 'GEX ($)', font: { color: TEXT_COLOR, size: 11 } },
-        },
-        showlegend: true,
-        legend: {
-            x: 0.01, y: 0.99,
-            font: { color: TEXT_COLOR, size: 11 },
-            bgcolor: 'rgba(0,0,0,0)',
-        },
-        shapes: [],
-        annotations: [],
-    };
+    function gexLayout() {
+        const { bg, grid, text } = chartTheme();
+        return {
+            paper_bgcolor: bg,
+            plot_bgcolor: bg,
+            margin: { t: 36, r: 60, b: 40, l: 60 },
+            barmode: 'relative',
+            xaxis: { color: text, gridcolor: grid, title: { text: 'Strike', font: { color: text, size: 11 } } },
+            yaxis: { color: text, gridcolor: grid, title: { text: 'GEX ($)', font: { color: text, size: 11 } } },
+            showlegend: true,
+            legend: { x: 0.01, y: 0.99, font: { color: text, size: 11 }, bgcolor: 'rgba(0,0,0,0)' },
+            shapes: [],
+            annotations: [],
+        };
+    }
+
+    function smileLayout(range) {
+        const { bg, grid, text, c } = chartTheme();
+        const fs = mobileAxisFontSize();
+        const ax = (extra) => Object.assign({ color: text, gridcolor: grid }, extra);
+        const none = 'rgba(0,0,0,0)';
+        const rng = range ? { range } : {};
+        return {
+            paper_bgcolor: bg,
+            plot_bgcolor: bg,
+            margin: mobileSmileMargin(),
+            showlegend: true,
+            legend: { x: 0.01, y: 1.0, font: { color: text, size: fs }, bgcolor: 'rgba(0,0,0,0)', orientation: 'h' },
+            grid: { rows: 2, columns: 1, subplots: [['xy'], ['x2y3']], roworder: 'top to bottom', ygap: 0.12 },
+            xaxis:  ax(Object.assign({ showticklabels: false, matches: 'x2' }, rng)),
+            yaxis:  ax({ title: { text: 'Call IV %', font: { color: c.up, size: fs } }, side: 'left' }),
+            yaxis2: ax({ gridcolor: none, title: { text: 'Efficiency', font: { color: c.alt, size: fs } }, side: 'right', overlaying: 'y', showgrid: false }),
+            xaxis2: ax(Object.assign({ title: { text: 'Strike', font: { color: text, size: fs } } }, rng)),
+            yaxis3: ax({ title: { text: 'Put IV %', font: { color: c.down, size: fs } }, side: 'left' }),
+            yaxis4: ax({ gridcolor: none, title: { text: 'Efficiency', font: { color: c.alt, size: fs } }, side: 'right', overlaying: 'y3', showgrid: false }),
+        };
+    }
 
     function initGexChart() {
         const fs = mobileAxisFontSize();
+        const base = gexLayout();
+        const { c, text } = chartTheme();
         const layout = {
-            ...gexLayout,
+            ...base,
             margin: mobileGexMargin(),
-            xaxis: { ...gexLayout.xaxis, title: { text: 'Strike', font: { color: TEXT_COLOR, size: fs } } },
-            yaxis: { ...gexLayout.yaxis, title: { text: 'GEX ($)', font: { color: TEXT_COLOR, size: fs } } },
-            legend: { ...gexLayout.legend, font: { color: TEXT_COLOR, size: fs } },
+            xaxis: { ...base.xaxis, title: { text: 'Strike', font: { color: text, size: fs } } },
+            yaxis: { ...base.yaxis, title: { text: 'GEX ($)', font: { color: text, size: fs } } },
+            legend: { ...base.legend, font: { color: text, size: fs } },
         };
         Plotly.newPlot('gexChart', [
             {
                 x: [], y: [],
                 type: 'bar',
                 name: 'Call GEX',
-                marker: { color: '#22c55e80' },
+                marker: { color: withAlpha(c.up, 0.5) },
             },
             {
                 x: [], y: [],
                 type: 'bar',
                 name: 'Put GEX',
-                marker: { color: '#ef444480' },
+                marker: { color: withAlpha(c.down, 0.5) },
             },
             {
                 x: [], y: [],
                 type: 'scatter',
                 mode: 'lines+markers',
                 name: 'Net GEX',
-                line: { color: '#facc15', width: 1.5 },
-                marker: { color: '#facc15', size: 3 },
+                line: { color: c.alt, width: 1.5 },
+                marker: { color: c.alt, size: 3 },
             },
         ], layout, {
             displayModeBar: false,      // resizing is the ResizeObserver's job (main.js), only while visible
@@ -81,40 +98,20 @@
     }
 
     function initSmileChart() {
-        const fs = mobileAxisFontSize();
-        const m = mobileSmileMargin();
-        const layout = {
-            paper_bgcolor: CHART_BG,
-            plot_bgcolor: CHART_BG,
-            margin: m,
-            showlegend: true,
-            legend: {
-                x: 0.01, y: 1.0,
-                font: { color: TEXT_COLOR, size: fs },
-                bgcolor: 'rgba(0,0,0,0)',
-                orientation: 'h',
-            },
-            grid: { rows: 2, columns: 1, subplots: [['xy'], ['x2y3']], roworder: 'top to bottom', ygap: 0.12 },
-            // Top subplot: Calls
-            xaxis:  { color: TEXT_COLOR, gridcolor: GRID_COLOR, showticklabels: false, matches: 'x2' },
-            yaxis:  { color: TEXT_COLOR, gridcolor: GRID_COLOR, title: { text: 'Call IV %', font: { color: '#4ade80', size: fs } }, side: 'left' },
-            yaxis2: { color: TEXT_COLOR, gridcolor: 'rgba(0,0,0,0)', title: { text: 'Efficiency', font: { color: '#facc15', size: fs } }, side: 'right', overlaying: 'y', showgrid: false },
-            // Bottom subplot: Puts
-            xaxis2: { color: TEXT_COLOR, gridcolor: GRID_COLOR, title: { text: 'Strike', font: { color: TEXT_COLOR, size: fs } } },
-            yaxis3: { color: TEXT_COLOR, gridcolor: GRID_COLOR, title: { text: 'Put IV %', font: { color: '#f87171', size: fs } }, side: 'left' },
-            yaxis4: { color: TEXT_COLOR, gridcolor: 'rgba(0,0,0,0)', title: { text: 'Efficiency', font: { color: '#facc15', size: fs } }, side: 'right', overlaying: 'y3', showgrid: false },
+        const { c } = chartTheme();
+        const layout = Object.assign(smileLayout(null), {
             annotations: [
-                { text: 'CALLS', xref: 'paper', yref: 'paper', x: 0.5, y: 1.01, showarrow: false, font: { color: '#4ade80', size: 11, weight: 'bold' } },
-                { text: 'PUTS',  xref: 'paper', yref: 'paper', x: 0.5, y: 0.46, showarrow: false, font: { color: '#f87171', size: 11, weight: 'bold' } },
+                { text: 'CALLS', xref: 'paper', yref: 'paper', x: 0.5, y: 1.01, showarrow: false, font: { color: c.up, size: 11, weight: 'bold' } },
+                { text: 'PUTS',  xref: 'paper', yref: 'paper', x: 0.5, y: 0.46, showarrow: false, font: { color: c.down, size: 11, weight: 'bold' } },
             ],
             shapes: [],
-        };
+        });
         // 4 traces:  call IV, call eff, put IV, put eff
         Plotly.newPlot('smileChart', [
-            { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Call IV', line: { color: '#4ade80', width: 2 }, xaxis: 'x', yaxis: 'y' },
-            { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Call Eff', line: { color: '#facc15', width: 1.5, dash: 'dot' }, xaxis: 'x', yaxis: 'y2' },
-            { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Put IV', line: { color: '#f87171', width: 2 }, xaxis: 'x2', yaxis: 'y3' },
-            { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Put Eff', line: { color: '#facc15', width: 1.5, dash: 'dot' }, xaxis: 'x2', yaxis: 'y4' },
+            { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Call IV', line: { color: c.up, width: 2 }, xaxis: 'x', yaxis: 'y' },
+            { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Call Eff', line: { color: c.alt, width: 1.5, dash: 'dot' }, xaxis: 'x', yaxis: 'y2' },
+            { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Put IV', line: { color: c.down, width: 2 }, xaxis: 'x2', yaxis: 'y3' },
+            { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Put Eff', line: { color: c.alt, width: 1.5, dash: 'dot' }, xaxis: 'x2', yaxis: 'y4' },
         ], layout, { displayModeBar: false });    // resized by main.js's ResizeObserver, only while visible
         state.smileChartReady = true;
     }
@@ -179,6 +176,7 @@
     // Shapes and annotations of the GEX chart: spot line, key levels, Net GEX box. A spot-only
     // change redraws just these through Plotly.relayout (requestSpotLineRender).
     function gexOverlays(gexData) {
+        const c = themeColors();
         // Vertical line at current spot
         const shapes = [];
         const annotations = [];
@@ -195,23 +193,23 @@
                 type: 'line',
                 xref: 'x', x0: spotForLine, x1: spotForLine,
                 yref: 'paper', y0: 0, y1: 1,
-                line: { color: '#f8fafc', width: 2, dash: 'dot' },
+                line: { color: c.textStrong, width: 2, dash: 'dot' },
             });
             annotations.push({
                 x: spotForLine,
                 yref: 'paper', y: 1.02,
                 text: spotLabel,
                 showarrow: false,
-                font: { color: state.esDerived ? '#facc15' : '#f8fafc', size: 10 },
+                font: { color: state.esDerived ? c.accent : c.textStrong, size: 10 },
             });
         }
 
         // Mark key strikes on GEX chart
         const keyLevels = [
-            { val: gexData.call_wall, color: '#22c55e', label: 'CW' },
-            { val: gexData.put_wall, color: '#ef4444', label: 'PW' },
-            { val: gexData.gamma_flip, color: '#eab308', label: 'GF' },
-            { val: gexData.max_pain, color: '#3b82f6', label: 'MP' },
+            { val: gexData.call_wall, color: c.up, label: 'CW' },
+            { val: gexData.put_wall, color: c.down, label: 'PW' },
+            { val: gexData.gamma_flip, color: c.accent, label: 'GF' },
+            { val: gexData.max_pain, color: c.info, label: 'MP' },
         ];
 
         for (const lv of keyLevels) {
@@ -236,7 +234,7 @@
         if (netGex != null) {
             const isPositive = netGex >= 0;
             const regimeLabel = isPositive ? '- CONVERGING' : '- DIVERGING';
-            const regimeColor = isPositive ? '#4ade80' : '#f87171';
+            const regimeColor = isPositive ? c.up : c.down;
             const callOI = gexData.total_call_oi;
             const putOI = gexData.total_put_oi;
             const callOIStr = (callOI != null && callOI > 0) ? _intFmt.format(callOI) : '-';
@@ -244,35 +242,35 @@
             
             // P/C OI Ratio
             let pcRatioStr = '-';
-            let pcRatioColor = '#94a3b8';
+            let pcRatioColor = c.textMuted;
             if (callOI > 0) {
                 const pcRatio = putOI / callOI;
                 pcRatioStr = pcRatio.toFixed(2);
-                pcRatioColor = pcRatio <= 1 ? '#4ade80' : '#f87171';
+                pcRatioColor = pcRatio <= 1 ? c.up : c.down;
             }
             
             // GEX Skew %
             let gexSkewStr = '-';
-            let gexSkewColor = '#94a3b8';
+            let gexSkewColor = c.textMuted;
             const totalCallG = gexData.total_call_gex || 0;
             const totalPutG = Math.abs(gexData.total_put_gex || 0);
             const totalGross = totalCallG + totalPutG;
             if (totalGross > 0) {
                 const pct = (totalCallG / totalGross * 100);
                 gexSkewStr = pct.toFixed(0) + '%';
-                gexSkewColor = pct >= 50 ? '#4ade80' : '#f87171';
+                gexSkewColor = pct >= 50 ? c.up : c.down;
             }
             
             annotations.push({
                 xref: 'paper', x: 0.98,
                 yref: 'paper', y: 0.99,
-                text: `Net GEX: <b>${fmtGex(netGex)}</b>   <span style="color:${regimeColor}">${regimeLabel}</span><br>Call OI/Put OI: <span style="color:#4ade80"><b>${callOIStr}</b></span>/<span style="color:#f87171"><b>${putOIStr}</b></span><br>P/C OI: <span style="color:${pcRatioColor}"><b>${pcRatioStr}</b></span>   Call GEX%: <span style="color:${gexSkewColor}"><b>${gexSkewStr}</b></span>`,
+                text: `Net GEX: <b>${fmtGex(netGex)}</b>   <span style="color:${regimeColor}">${regimeLabel}</span><br>Call OI/Put OI: <span style="color:${c.up}"><b>${callOIStr}</b></span>/<span style="color:${c.down}"><b>${putOIStr}</b></span><br>P/C OI: <span style="color:${pcRatioColor}"><b>${pcRatioStr}</b></span>   Call GEX%: <span style="color:${gexSkewColor}"><b>${gexSkewStr}</b></span>`,
                 showarrow: false,
-                font: { color: '#e2e8f0', size: 12 },
+                font: { color: c.textStrong, size: 12 },
                 xanchor: 'right',
                 yanchor: 'top',
-                bgcolor: '#1a202c',
-                bordercolor: isPositive ? '#16a34a' : '#dc2626',
+                bgcolor: c.bgOverlay,
+                bordercolor: isPositive ? c.up : c.down,
                 borderwidth: 2,
                 borderpad: 8,
                 borderradius: 4,
@@ -295,6 +293,8 @@
         const putGex = bars.map(b => b.put_gex);
         const netGexPerBar = bars.map(b => b.net_gex);
         const { shapes, annotations } = gexOverlays(gexData);
+        const base = gexLayout();
+        const { c } = chartTheme();
 
         // Calculate common range from all smile data if available
         let commonRange = null;
@@ -315,7 +315,7 @@
                 y: callGex,
                 type: 'bar',
                 name: 'Call GEX',
-                marker: { color: strikes.map(() => '#22c55e80') },
+                marker: { color: strikes.map(() => withAlpha(c.up, 0.5)) },
                 customdata: bars.map(b => [fmtGex(b.call_gex), _intFmt.format(b.call_oi ?? 0), _intFmt.format(b.call_vol ?? 0)]),
                 hovertemplate: '<b>Strike: %{x}</b><br>Call GEX: %{customdata[0]}<br>Call OI: %{customdata[1]}<br>Call Vol: %{customdata[2]}<extra></extra>',
             },
@@ -324,7 +324,7 @@
                 y: putGex,
                 type: 'bar',
                 name: 'Put GEX',
-                marker: { color: strikes.map(() => '#ef444480') },
+                marker: { color: strikes.map(() => withAlpha(c.down, 0.5)) },
                 customdata: bars.map(b => [fmtGex(b.put_gex), _intFmt.format(b.put_oi ?? 0), _intFmt.format(b.put_vol ?? 0)]),
                 hovertemplate: '<b>Strike: %{x}</b><br>Put GEX: %{customdata[0]}<br>Put OI: %{customdata[1]}<br>Put Vol: %{customdata[2]}<extra></extra>',
             },
@@ -334,16 +334,16 @@
                 type: 'scatter',
                 mode: 'lines+markers',
                 name: 'Net GEX',
-                line: { color: '#facc15', width: 1.5 },
-                marker: { color: '#facc15', size: 3 },
+                line: { color: c.alt, width: 1.5 },
+                marker: { color: c.alt, size: 3 },
                 customdata: bars.map(b => [fmtGex(b.net_gex)]),
                 hovertemplate: '<b>Strike: %{x}</b><br>Net GEX: %{customdata[0]}<extra></extra>',
             },
         ], {
-            ...gexLayout,
+            ...base,
             shapes,
             annotations,
-            xaxis: { ...gexLayout.xaxis, range: commonRange },
+            xaxis: { ...base.xaxis, range: commonRange },
         });
         noteSpotDrawn('gex', gexData);
     }
@@ -351,6 +351,7 @@
     // Shapes and annotations of the smile chart: the spot and level verticals on both subplots and
     // the CALLS / PUTS subtitles.
     function smileOverlays(gexData) {
+        const c = themeColors();
         // Spot + key level vertical lines for both subplots
         const shapes = [];
         const spotForLine = spotLevel(gexData);
@@ -364,16 +365,16 @@
         };
         // Draw on both x-axes
         for (const xr of ['x', 'x2']) {
-            addVertical(xr, spotForLine, '#f8fafc', 'dot');
-            addVertical(xr, gexData.call_wall, '#22c55e', 'dash');
-            addVertical(xr, gexData.put_wall, '#ef4444', 'dash');
-            addVertical(xr, gexData.gamma_flip, '#eab308', 'dash');
+            addVertical(xr, spotForLine, c.textStrong, 'dot');
+            addVertical(xr, gexData.call_wall, c.up, 'dash');
+            addVertical(xr, gexData.put_wall, c.down, 'dash');
+            addVertical(xr, gexData.gamma_flip, c.accent, 'dash');
         }
 
         // Preserve the CALLS / PUTS subtitle annotations
         const annotations = [
-            { text: 'CALLS', xref: 'paper', yref: 'paper', x: 0.5, y: 1.01, showarrow: false, font: { color: '#4ade80', size: 11 } },
-            { text: 'PUTS',  xref: 'paper', yref: 'paper', x: 0.5, y: 0.46, showarrow: false, font: { color: '#f87171', size: 11 } },
+            { text: 'CALLS', xref: 'paper', yref: 'paper', x: 0.5, y: 1.01, showarrow: false, font: { color: c.up, size: 11 } },
+            { text: 'PUTS',  xref: 'paper', yref: 'paper', x: 0.5, y: 0.46, showarrow: false, font: { color: c.down, size: 11 } },
         ];
         return { shapes, annotations };
     }
@@ -427,6 +428,7 @@
         }
 
         const { shapes, annotations } = smileOverlays(gexData);
+        const { c } = chartTheme();
 
         const hoverCall = '<b>Strike: %{x}</b><br>Call IV: %{y:.1f}%<br>Delta: %{customdata[0]}<br>Charm: %{customdata[1]}<br>Efficiency: %{customdata[2]}<extra></extra>';
         const hoverCallEff = '<b>Strike: %{x}</b><br>Efficiency: %{y:.4f}<extra></extra>';
@@ -435,38 +437,21 @@
 
         Plotly.react('smileChart', [
             { x: callStrikes, y: callIV, type: 'scatter', mode: 'lines', name: 'Call IV',
-              line: { color: '#4ade80', width: 2 }, xaxis: 'x', yaxis: 'y',
+              line: { color: c.up, width: 2 }, xaxis: 'x', yaxis: 'y',
               customdata: callCustom, hovertemplate: hoverCall },
             { x: callStrikes, y: callEff, type: 'scatter', mode: 'lines', name: 'Call Eff',
-              line: { color: '#facc15', width: 1.5, dash: 'dot' }, xaxis: 'x', yaxis: 'y2',
+              line: { color: c.alt, width: 1.5, dash: 'dot' }, xaxis: 'x', yaxis: 'y2',
               hovertemplate: hoverCallEff },
             { x: putStrikes, y: putIV, type: 'scatter', mode: 'lines', name: 'Put IV',
-              line: { color: '#f87171', width: 2 }, xaxis: 'x2', yaxis: 'y3',
+              line: { color: c.down, width: 2 }, xaxis: 'x2', yaxis: 'y3',
               customdata: putCustom, hovertemplate: hoverPut },
             { x: putStrikes, y: putEff, type: 'scatter', mode: 'lines', name: 'Put Eff',
-              line: { color: '#facc15', width: 1.5, dash: 'dot' }, xaxis: 'x2', yaxis: 'y4',
+              line: { color: c.alt, width: 1.5, dash: 'dot' }, xaxis: 'x2', yaxis: 'y4',
               hovertemplate: hoverPutEff },
-        ], {
-            paper_bgcolor: CHART_BG,
-            plot_bgcolor: CHART_BG,
-            margin: mobileSmileMargin(),
-            showlegend: true,
-            legend: {
-                x: 0.01, y: 1.0,
-                font: { color: TEXT_COLOR, size: mobileAxisFontSize() },
-                bgcolor: 'rgba(0,0,0,0)',
-                orientation: 'h',
-            },
-            grid: { rows: 2, columns: 1, subplots: [['xy'], ['x2y3']], roworder: 'top to bottom', ygap: 0.12 },
-            xaxis:  { color: TEXT_COLOR, gridcolor: GRID_COLOR, showticklabels: false, matches: 'x2', range: commonRange },
-            yaxis:  { color: TEXT_COLOR, gridcolor: GRID_COLOR, title: { text: 'Call IV %', font: { color: '#4ade80', size: mobileAxisFontSize() } }, side: 'left' },
-            yaxis2: { color: TEXT_COLOR, gridcolor: 'rgba(0,0,0,0)', title: { text: 'Efficiency', font: { color: '#facc15', size: mobileAxisFontSize() } }, side: 'right', overlaying: 'y', showgrid: false },
-            xaxis2: { color: TEXT_COLOR, gridcolor: GRID_COLOR, title: { text: 'Strike', font: { color: TEXT_COLOR, size: mobileAxisFontSize() } }, range: commonRange },
-            yaxis3: { color: TEXT_COLOR, gridcolor: GRID_COLOR, title: { text: 'Put IV %', font: { color: '#f87171', size: mobileAxisFontSize() } }, side: 'left' },
-            yaxis4: { color: TEXT_COLOR, gridcolor: 'rgba(0,0,0,0)', title: { text: 'Efficiency', font: { color: '#facc15', size: mobileAxisFontSize() } }, side: 'right', overlaying: 'y3', showgrid: false },
+        ], Object.assign(smileLayout(commonRange), {
             shapes,
             annotations,
-        });
+        }));
         noteSpotDrawn('smile', gexData);
     }
 
@@ -479,6 +464,24 @@
         renderWhenVisible('dashboard', 'gex', updateGexChart, { heavy: true });
         renderWhenVisible('dashboard', 'smile', updateSmileChart, { heavy: true });
     }
+
+    // Theme change: recolor both Plotly charts and the price chart. Runs as a heavy job and, like every
+    // chart job, only while the Dashboard is visible (parked and run on show otherwise), so a flip made
+    // on another tab shows the new colors on return. The relayout covers a chart that has no data yet;
+    // the redraw recolors traces, overlays and axis titles.
+    function patchChartTheme() {
+        const { bg, grid, text } = chartTheme();
+        const patch = { paper_bgcolor: bg, plot_bgcolor: bg, 'xaxis.color': text, 'xaxis.gridcolor': grid,
+                        'yaxis.color': text, 'yaxis.gridcolor': grid, 'legend.font.color': text };
+        for (const id of ['gexChart', 'smileChart']) {
+            const el = document.getElementById(id);
+            if (el && el._fullLayout) Plotly.relayout(id, patch);
+        }
+        requestGexRender();
+    }
+    window.addEventListener('themechange', () => {
+        renderWhenVisible('dashboard', 'chart.theme', patchChartTheme, { heavy: true });
+    });
 
     // A spot-only change moves the spot lines with a relayout of the shapes and annotations (the
     // charts' data is not rebuilt, the user's zoom stays). Each chart has its own heavy job, so the two

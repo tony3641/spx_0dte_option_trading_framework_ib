@@ -143,7 +143,7 @@
         const emptyEl = document.getElementById('strategyEmpty');
 
         if (state.strategyLegs.length === 0) {
-            content.innerHTML = '<div class="strategy-empty" id="strategyEmpty">Click <span style="color:#4ade80">Ask</span> to buy or <span style="color:#f87171">Bid</span> to sell an option</div>';
+            content.innerHTML = '<div class="strategy-empty" id="strategyEmpty">Click <span style="color:var(--up)">Ask</span> to buy or <span style="color:var(--down)">Bid</span> to sell an option</div>';
             summary.style.display = 'none';
             countEl.textContent = '';
             const orderRow = document.getElementById('orderEntryRow');

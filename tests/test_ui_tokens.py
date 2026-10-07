@@ -10,7 +10,7 @@ TOKENS = STATIC / "css" / "tokens.css"
 COLOR_ALLOWLIST = {"tokens.css", "theme-colors.js"}      # the only files allowed to hold color literals
 
 # Lowered by every task that removes hard-coded colors; Task 8 sets it to 0.
-HARDCODED_COLOR_BUDGET = 92
+HARDCODED_COLOR_BUDGET = 2
 
 # Custom properties set from JS at runtime (never declared in a stylesheet).
 RUNTIME_VARS = {"shell-h"}

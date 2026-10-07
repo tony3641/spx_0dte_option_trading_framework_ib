@@ -168,3 +168,65 @@ def test_each_remaining_tab_renders_in_both_themes_without_errors(browser_env, t
             assert errors == []
         finally:
             browser.close()
+
+
+def _plotly_bg(page, el_id):
+    return page.evaluate("id => document.getElementById(id)._fullLayout.paper_bgcolor", el_id)
+
+
+def _price_bg(page):
+    return page.evaluate("() => priceChart.chart.options().layout.background.color")
+
+
+def test_charts_recolor_when_the_theme_flips(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.wait_for_function("() => document.getElementById('gexChart')._fullLayout && document.getElementById('smileChart')._fullLayout")
+        assert _plotly_bg(page, "gexChart") == "#0d1117"
+        assert _plotly_bg(page, "smileChart") == "#0d1117"
+        assert _price_bg(page) == "#0d1117"
+        page.click("#themeToggle")
+        page.evaluate(FRAMES)
+        page.evaluate(FRAMES)
+        page.evaluate(FRAMES)
+        assert _plotly_bg(page, "gexChart") == "#ffffff"
+        assert _plotly_bg(page, "smileChart") == "#ffffff"
+        assert _price_bg(page) == "#ffffff"
+        assert errors == []
+    finally:
+        browser.close()
+
+
+def test_a_flip_while_the_dashboard_is_hidden_shows_the_new_colors_on_return(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.evaluate("() => switchTab('chain')")
+        page.evaluate(FRAMES)
+        page.click("#themeToggle")
+        page.evaluate("() => switchTab('dashboard')")
+        for _ in range(4):
+            page.evaluate(FRAMES)
+        assert _plotly_bg(page, "gexChart") == "#ffffff"
+        assert _plotly_bg(page, "smileChart") == "#ffffff"
+        assert _price_bg(page) == "#ffffff"
+        assert errors == []
+    finally:
+        browser.close()
+
+
+def test_theme_colors_helper(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", seed=False)
+    try:
+        assert page.evaluate("() => themeColors().bgPanel") == "#0d1117"
+        assert page.evaluate("() => withAlpha('#3fb950', 0.5)") == "rgba(63,185,80,0.5)"
+        page.click("#themeToggle")
+        assert page.evaluate("() => themeColors().bgPanel") == "#ffffff"      # cache invalidated by themechange
+    finally:
+        browser.close()

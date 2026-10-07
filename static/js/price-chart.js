@@ -2,10 +2,10 @@
     // seconds, so the axis shows ET whatever the PC's time zone.
     // ======================================================================
     const PRICE_LEVELS = [
-        { key: 'call_wall', color: '#22c55e', title: 'Call Wall', dashed: false },
-        { key: 'put_wall', color: '#ef4444', title: 'Put Wall', dashed: false },
-        { key: 'gamma_flip', color: '#eab308', title: 'Gamma Flip', dashed: true },
-        { key: 'max_pain', color: '#3b82f6', title: 'Max Pain', dashed: true },
+        { key: 'call_wall', color: 'up', title: 'Call Wall', dashed: false },
+        { key: 'put_wall', color: 'down', title: 'Put Wall', dashed: false },
+        { key: 'gamma_flip', color: 'accent', title: 'Gamma Flip', dashed: true },
+        { key: 'max_pain', color: 'info', title: 'Max Pain', dashed: true },
     ];
     // The model (bars, overnightPts, latest) is always current; the series are brought up to date
     // only while the Dashboard tab is visible. pending* hold what the next frame must push.
@@ -36,20 +36,21 @@
         try {
             if (typeof LightweightCharts === 'undefined') throw new Error('LightweightCharts is not defined');
             const LC = LightweightCharts;
+            const { bg, grid, text, c } = chartTheme();
             chart = LC.createChart(el, {
                 autoSize: true,
-                layout: { background: { type: 'solid', color: CHART_BG }, textColor: TEXT_COLOR },
-                grid: { vertLines: { color: GRID_COLOR }, horzLines: { color: GRID_COLOR } },
-                timeScale: { timeVisible: true, secondsVisible: false, borderColor: GRID_COLOR },
-                rightPriceScale: { borderColor: GRID_COLOR },
+                layout: { background: { type: 'solid', color: bg }, textColor: text },
+                grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+                timeScale: { timeVisible: true, secondsVisible: false, borderColor: grid },
+                rightPriceScale: { borderColor: grid },
                 crosshair: { mode: LC.CrosshairMode.Normal },
             });
             const candles = chart.addSeries(LC.CandlestickSeries, {
-                upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
-                wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+                upColor: c.up, downColor: c.down, borderVisible: false,
+                wickUpColor: c.up, wickDownColor: c.down,
             });
             const overnight = chart.addSeries(LC.LineSeries, {
-                color: '#facc15', lineWidth: 1, lineStyle: LC.LineStyle.Dotted,
+                color: c.accent, lineWidth: 1, lineStyle: LC.LineStyle.Dotted,
                 priceLineVisible: false, lastValueVisible: true, title: 'ES-derived',
             });
             priceChart.chart = chart;                       // published together: never a half-built chart
@@ -176,13 +177,30 @@
             }
             if (priceChart.levelValues[lv.key] === val) continue;
             priceChart.levelValues[lv.key] = val;
-            const opts = { price: val, color: lv.color, lineWidth: 1, axisLabelVisible: true,
+            const opts = { price: val, color: themeColors()[lv.color], lineWidth: 1, axisLabelVisible: true,
                            lineStyle: lv.dashed ? LC.LineStyle.Dashed : LC.LineStyle.Solid,
                            title: `${lv.title} ${val}` };
             if (have) have.applyOptions(opts);
             else priceChart.levels[lv.key] = priceChart.candles.createPriceLine(opts);
         }
     }
+
+    function applyPriceChartTheme() {
+        if (!priceChart.chart) return;
+        const { bg, grid, text, c } = chartTheme();
+        priceChart.chart.applyOptions({
+            layout: { background: { type: 'solid', color: bg }, textColor: text },
+            grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+            timeScale: { borderColor: grid }, rightPriceScale: { borderColor: grid },
+        });
+        priceChart.candles.applyOptions({ upColor: c.up, downColor: c.down, wickUpColor: c.up, wickDownColor: c.down });
+        priceChart.overnight.applyOptions({ color: c.accent });
+        for (const lv of PRICE_LEVELS) {
+            const line = priceChart.levels[lv.key];
+            if (line) line.applyOptions({ color: c[lv.color] });
+        }
+    }
+    window.addEventListener('themechange', applyPriceChartTheme);      // cheap: runs immediately, shown or not
 
     function onDashboardShown() {
         flushHiddenDirty('dashboard');
