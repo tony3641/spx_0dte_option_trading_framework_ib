@@ -145,3 +145,26 @@ def test_chain_rows_and_place_order_use_tokens(browser_env):
         assert page.evaluate("() => getComputedStyle(document.querySelector('#chainBody td.cell-ask')).backgroundColor") != ""
     finally:
         browser.close()
+
+
+def test_no_css_file_holds_a_color_literal():
+    import tests.test_ui_tokens as t
+    leftovers = [(f, c) for f, c in t.hardcoded_colors() if f.endswith(".css") or f == "index.html"]
+    assert not leftovers, leftovers[:10]
+
+
+@pytest.mark.parametrize("tab", ["account", "strategies", "sim", "log"])
+def test_each_remaining_tab_renders_in_both_themes_without_errors(browser_env, tab):
+    p, url = browser_env
+    for scheme in ("dark", "light"):
+        browser, _ctx, page = _open(p, url, scheme, tab=tab)
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        try:
+            page.evaluate("t => switchTab(t)", tab)
+            page.wait_for_timeout(500)
+            color = page.evaluate("() => getComputedStyle(document.body).color")
+            assert color == ("rgb(36, 41, 47)" if scheme == "light" else "rgb(201, 209, 217)")
+            assert errors == []
+        finally:
+            browser.close()

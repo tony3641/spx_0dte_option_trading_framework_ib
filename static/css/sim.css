@@ -15,9 +15,9 @@
   background: var(--accent); color: var(--accent-fg); cursor: pointer; }
 .sim-actions button:disabled { opacity: 0.4; cursor: default; }
 .sim-progress-wrap { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
-#simProgress { height: 100%; width: 0; background: #3f8f5f; transition: width 0.2s; }
+#simProgress { height: 100%; width: 0; background: var(--up); transition: width 0.2s; }
 .sim-status { font-size: 12px; margin-top: 6px; min-height: 16px; }
-.sim-status.error { color: #e06c60; }
+.sim-status.error { color: var(--down); }
 .sim-datainfo { font-size: 11px; opacity: 0.7; margin-top: 6px; white-space: pre-line; }
 .sim-results { flex: 1; min-width: 0; }
 .sim-tiles { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -32,25 +32,25 @@
 .sim-report-head h3 { margin: 0 0 4px; font-size: 15px; }
 .sim-report-note { margin: 0 0 12px; font-size: 12px; opacity: 0.7; line-height: 1.4; }
 .sim-chart-block { margin-bottom: 10px; }
-.sim-chart-head { font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 4px; opacity: 0.92; }
-.sim-chart-sub { font-size: 11px; font-weight: 400; color: #64748b; margin-left: 6px; opacity: 0.85; }
+.sim-chart-head { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; opacity: 0.92; }
+.sim-chart-sub { font-size: 11px; font-weight: 400; color: var(--text-faint); margin-left: 6px; opacity: 0.85; }
 
 /* Inline "?" help chips + hover tooltip for the sim tiles, chart headers and run-form
    controls. Mirrors the dashboard's existing .chart-title .help pattern (charts.css). */
 .sim-tile .help, .sim-chart-head .help, .sim-panel .help, .sim-actions .help {
   pointer-events: auto; display: inline-block; margin-left: 8px; vertical-align: middle;
-  background: #1e293b; color: #94a3b8; border-radius: 50%; width: 18px; height: 18px;
+  background: var(--bg-raised); color: var(--text-muted); border-radius: 50%; width: 18px; height: 18px;
   line-height: 18px; text-align: center; font-size: 12px; cursor: default; position: relative;
 }
-.sim-tile .help:focus, .sim-chart-head .help:focus, .sim-panel .help:focus, .sim-actions .help:focus { outline: 2px solid #334155; }
+.sim-tile .help:focus, .sim-chart-head .help:focus, .sim-panel .help:focus, .sim-actions .help:focus { outline: 2px solid var(--border-strong); }
 .sim-tile .help .tooltip, .sim-chart-head .help .tooltip, .sim-panel .help .tooltip, .sim-actions .help .tooltip {
   display: none; position: absolute; top: 26px; left: 50%; transform: translateX(-50%);
-  background: #0b1220; color: #e2e8f0; padding: 8px 10px; border-radius: 6px; font-size: 12px;
+  background: var(--bg-overlay); color: var(--text-strong); padding: 8px 10px; border-radius: 6px; font-size: 12px;
   width: 300px; z-index: 40; text-align: left; line-height: 1.25; white-space: normal;
 }
 .sim-tile .help .tooltip::after, .sim-chart-head .help .tooltip::after, .sim-panel .help .tooltip::after, .sim-actions .help .tooltip::after {
   content: ''; position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
-  border-width: 6px; border-style: solid; border-color: transparent transparent #0b1220 transparent;
+  border-width: 6px; border-style: solid; border-color: transparent transparent var(--border) transparent;
 }
 .sim-tile .help:hover .tooltip, .sim-tile .help:focus .tooltip,
 .sim-chart-head .help:hover .tooltip, .sim-chart-head .help:focus .tooltip,
@@ -60,4 +60,4 @@
 .sim-sweep th, .sim-sweep td { border-bottom: 1px solid var(--border);
   padding: 5px 8px; text-align: right; }
 .sim-sweep th:first-child, .sim-sweep td:first-child { text-align: left; }
-.sim-sweep tr.selected { background: rgba(63, 143, 95, 0.15); cursor: pointer; }
+.sim-sweep tr.selected { background: var(--up-bg); cursor: pointer; }

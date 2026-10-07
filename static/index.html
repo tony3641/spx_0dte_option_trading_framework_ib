@@ -140,7 +140,7 @@
         <div class="chain-controls">
             <div>
                 <div id="chainRangeInfo">Visible range: -</div>
-                <div id="chainLastUpdateInfo" style="font-size:11px;color:#64748b;">Last update: -</div>
+                <div id="chainLastUpdateInfo" style="font-size:11px;color:var(--text-faint);">Last update: -</div>
                 <span class="help" tabindex="0" aria-label="Chain quote freshness">?
                     <span class="tooltip" role="tooltip">Strikes near spot stream live; how many depends on your market-data line budget. The rest of the chain is refreshed by a slower poller, and contract ids come from one listing per expiry. A side is dimmed when its quote is older than CHAIN_QUOTE_MAX_AGE_S (180 s by default), and the strategy engine ignores dimmed legs. Only changed fields stream; the full chain refreshes every 10 s.</span>
                 </span>
@@ -179,11 +179,11 @@
         <!-- Strategy Builder -->
         <div class="strategy-panel" id="strategyPanel">
             <div class="strategy-header">
-                <h3>Strategy Builder <span id="strategyLegCount" style="color:#64748b;font-weight:400;font-size:11px;"></span></h3>
+                <h3>Strategy Builder <span id="strategyLegCount" style="color:var(--text-faint);font-weight:400;font-size:11px;"></span></h3>
                 <button class="strategy-clear-btn" onclick="clearStrategy()">Clear All</button>
             </div>
             <div id="strategyContent">
-                <div class="strategy-empty" id="strategyEmpty">Click <span style="color:#4ade80">Ask</span> to buy or <span style="color:#f87171">Bid</span> to sell an option</div>
+                <div class="strategy-empty" id="strategyEmpty">Click <span style="color:var(--up)">Ask</span> to buy or <span style="color:var(--down)">Bid</span> to sell an option</div>
             </div>
             <div class="strategy-summary" id="strategySummary" style="display:none;">
                 <div class="summary-item">
@@ -237,7 +237,7 @@
                     oninput="updatePriceInputStep(this)"
                     onchange="this.value=_roundSpxPrice(Math.abs(this.value)).toFixed(2); updatePriceInputStep(this)">
                 <span id="outsideRthBadge" class="outside-rth-badge" style="display:none;">Extended Hours</span>
-                <span class="order-entry-label" id="orderEntryHint" style="color:#475569;font-size:11px;"></span>
+                <span class="order-entry-label" id="orderEntryHint" style="color:var(--text-faint);font-size:11px;"></span>
             </div>
         </div>
     </div>
@@ -283,7 +283,7 @@
         <!-- Positions -->
         <div class="acct-section">
             <div class="acct-section-header">
-                <span class="acct-section-title">Positions <span id="posCount" style="color:#64748b;font-size:11px;"></span></span>
+                <span class="acct-section-title">Positions <span id="posCount" style="color:var(--text-faint);font-size:11px;"></span></span>
             </div>
             <div class="acct-table-wrap">
                 <table class="acct-table" id="positionsTable">
@@ -313,7 +313,7 @@
         <!-- Open Orders -->
         <div class="acct-section">
             <div class="acct-section-header">
-                <span class="acct-section-title">Open Orders <span id="ordersCount" style="color:#64748b;font-size:11px;"></span></span>
+                <span class="acct-section-title">Open Orders <span id="ordersCount" style="color:var(--text-faint);font-size:11px;"></span></span>
             </div>
             <div class="acct-table-wrap">
                 <table class="acct-table" id="ordersTable">
@@ -344,7 +344,7 @@
         <!-- Today's Executions -->
         <div class="acct-section">
             <div class="acct-section-header">
-                <span class="acct-section-title">Today&apos;s Executions <span id="exeCount" style="color:#64748b;font-size:11px;"></span></span>
+                <span class="acct-section-title">Today&apos;s Executions <span id="exeCount" style="color:var(--text-faint);font-size:11px;"></span></span>
             </div>
             <div class="acct-table-wrap">
                 <table class="acct-table" id="executionsTable">

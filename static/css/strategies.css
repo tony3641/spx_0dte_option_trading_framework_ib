@@ -24,8 +24,8 @@
 .strat-list-pane,
 .strat-editor-pane,
 .strat-scanner-pane {
-    background: #111827;
-    border: 1px solid #1e293b;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px;
     overflow-y: auto;
@@ -36,7 +36,7 @@
 .strat-scanner-pane h3 {
     font-size: 13px;
     font-weight: 600;
-    color: #e2e8f0;
+    color: var(--text-strong);
     margin: 0 0 10px;
 }
 
@@ -45,22 +45,22 @@
     padding: 7px 10px;
     border-radius: 5px;
     cursor: pointer;
-    color: #cbd5e1;
+    color: var(--text);
     font-size: 12px;
     border: 1px solid transparent;
     margin-bottom: 4px;
 }
-.strat-item:hover { background: #1e293b; }
+.strat-item:hover { background: var(--bg-raised); }
 .strat-item.active {
-    background: #1e293b;
-    border-color: #334155;
-    color: #e2e8f0;
+    background: var(--bg-raised);
+    border-color: var(--border-strong);
+    color: var(--text-strong);
 }
 
 /* Editor form */
 .strat-editor-pane label {
     display: block;
-    color: #64748b;
+    color: var(--text-faint);
     font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
@@ -70,9 +70,9 @@
 .strat-editor-pane input[type="text"],
 .strat-editor-pane input[type="number"] {
     width: 100%;
-    background: #0f172a;
-    border: 1px solid #334155;
-    color: #e2e8f0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    color: var(--text-strong);
     border-radius: 4px;
     padding: 6px 8px;
     font-size: 12px;
@@ -83,7 +83,7 @@
     display: flex;
     align-items: center;
     text-transform: none;
-    color: #cbd5e1;
+    color: var(--text);
     font-size: 12px;
     font-weight: 400;
     margin: 12px 0 10px;
@@ -93,87 +93,87 @@
     padding-left: 20px;
 }
 .strat-editor-pane ol li {
-    color: #94a3b8;
+    color: var(--text-muted);
     font-size: 12px;
     cursor: pointer;
 }
-.strat-editor-pane ol li:hover { color: #e2e8f0; }
+.strat-editor-pane ol li:hover { color: var(--text-strong); }
 
 .strat-editor-pane button {
-    background: #1e293b;
-    border: 1px solid #334155;
-    color: #e2e8f0;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-strong);
+    color: var(--text-strong);
     border-radius: 4px;
     padding: 6px 12px;
     font-size: 12px;
     cursor: pointer;
     margin: 4px 6px 4px 0;
 }
-.strat-editor-pane button:hover { border-color: #64748b; }
+.strat-editor-pane button:hover { border-color: var(--border-strong); }
 
 /* Scanner candidate rows */
 .cand-row {
-    background: #0f172a;
-    border: 1px solid #1e293b;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 8px 10px;
     margin-bottom: 6px;
     font-size: 12px;
-    color: #cbd5e1;
+    color: var(--text);
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
 }
 .cand-row button {
-    background: #14532d;
-    border: 1px solid #22c55e;
-    color: #86efac;
+    background: var(--up-solid);
+    border: 1px solid var(--up);
+    color: var(--up-strong);
     border-radius: 4px;
     padding: 4px 10px;
     font-size: 11px;
     cursor: pointer;
     margin-left: auto;
 }
-.cand-row button:hover { background: #166534; }
+.cand-row button:hover { background: var(--up-solid); }
 
-.strat-scanner-pane p { color: #64748b; font-size: 12px; }
+.strat-scanner-pane p { color: var(--text-faint); font-size: 12px; }
 
 /* Buttons (used by the "+ New Strategy" action) */
 .btn {
     display: inline-block;
     border-radius: 4px;
-    border: 1px solid #334155;
-    background: #1e293b;
-    color: #e2e8f0;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-raised);
+    color: var(--text-strong);
     padding: 7px 14px;
     font-size: 12px;
     cursor: pointer;
 }
-.btn:hover { border-color: #64748b; }
+.btn:hover { border-color: var(--border-strong); }
 .btn-primary {
-    background: #2563eb;
-    border-color: #2563eb;
-    color: #fff;
+    background: var(--accent);
+    border-color: var(--info);
+    color: var(--accent-fg);
     margin-top: 8px;
     width: 100%;
 }
-.btn-primary:hover { background: #1d4ed8; border-color: #1d4ed8; }
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
 /* Condition editor fields */
 #conditionEditor { margin-top: 8px; }
 #conditionEditor label { margin: 6px 0 3px; }
-.cond-help { color: #64748b; font-size: 11px; margin: 2px 0 6px; }
+.cond-help { color: var(--text-faint); font-size: 11px; margin: 2px 0 6px; }
 .cond-field { margin: 6px 0; }
 .cond-field label { display: block; }
-.cond-required { color: #f87171; }
+.cond-required { color: var(--down); }
 .cond-field input[type="text"],
 .cond-field input[type="number"] {
     width: 100%;
     box-sizing: border-box;
-    background: #0f172a;
-    border: 1px solid #334155;
-    color: #e2e8f0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    color: var(--text-strong);
     border-radius: 4px;
     padding: 6px 8px;
     font-size: 12px;
@@ -181,52 +181,52 @@
 .cond-field select {
     width: 100%;
     box-sizing: border-box;
-    background: #0f172a;
-    border: 1px solid #334155;
-    color: #e2e8f0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    color: var(--text-strong);
     border-radius: 4px;
     padding: 6px 8px;
     font-size: 12px;
 }
 .cond-levels { margin-left: 4px; }
 .cond-group {
-    border: 1px solid #1e293b;
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 8px 10px;
     margin: 8px 0;
 }
-.cond-group h4 { margin: 0 0 6px; font-size: 12px; color: #e2e8f0; }
+.cond-group h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-strong); }
 
 /* Budget + excess liquidity */
-.budget-liquidity { color: #64748b; font-size: 11px; margin: 4px 0 2px; }
-.budget-liquidity span { color: #4ade80; font-weight: 600; }
+.budget-liquidity { color: var(--text-faint); font-size: 11px; margin: 4px 0 2px; }
+.budget-liquidity span { color: var(--up); font-weight: 600; }
 
 /* Validation modal preview (reuses .order-modal-* shell) */
 #stratValidateBody h4.strat-validate-h {
     margin: 12px 0 4px;
-    color: #e2e8f0;
+    color: var(--text-strong);
     font-size: 13px;
 }
 #stratValidateBody .strat-validate-list {
     margin: 0 0 6px;
     padding-left: 18px;
-    color: #cbd5e1;
+    color: var(--text);
     font-size: 12px;
 }
 #stratValidateBody .strat-validate-list li { margin: 2px 0; }
 #stratValidateBody .strat-validate-ok {
-    background: #052e16;
-    color: #4ade80;
-    border: 1px solid #16a34a;
+    background: var(--up-bg);
+    color: var(--up);
+    border: 1px solid var(--up);
     border-radius: 6px;
     padding: 8px 10px;
     font-size: 12px;
     margin-bottom: 10px;
 }
 #stratValidateBody .strat-validate-errors {
-    background: #2a0a0a;
-    color: #f87171;
-    border: 1px solid #dc2626;
+    background: var(--down-bg);
+    color: var(--down);
+    border: 1px solid var(--down);
     border-radius: 6px;
     padding: 8px 10px;
     font-size: 12px;
@@ -242,19 +242,19 @@
     flex: 1;
     padding: 6px 8px;
     font-size: 12px;
-    border: 1px solid #334155;
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
-    background: #0f172a;
-    color: #94a3b8;
+    background: var(--bg-panel);
+    color: var(--text-muted);
     cursor: pointer;
     text-align: center;
     transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.day-btn:hover { border-color: #475569; color: #e2e8f0; }
+.day-btn:hover { border-color: var(--border-strong); color: var(--text-strong); }
 .day-btn.active {
-    background: #1e3a8a;
-    color: #dbeafe;
-    border-color: #3b82f6;
+    background: var(--info-bg);
+    color: var(--accent-fg);
+    border-color: var(--info);
     font-weight: 600;
 }
 #strategyEditor label.caps + label.caps { margin-top: 4px; }
