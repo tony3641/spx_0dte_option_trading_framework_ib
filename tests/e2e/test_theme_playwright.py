@@ -230,3 +230,75 @@ def test_theme_colors_helper(browser_env):
         assert page.evaluate("() => themeColors().bgPanel") == "#ffffff"      # cache invalidated by themechange
     finally:
         browser.close()
+
+
+def _rect(page, selector):
+    return page.evaluate("s => { const r = document.querySelector(s).getBoundingClientRect(); "
+                         "return {l: r.left, t: r.top, w: r.width, h: r.height, b: r.bottom, r: r.right}; }", selector)
+
+
+@pytest.mark.parametrize("size", [(1920, 1080), (1440, 900)])
+def test_dashboard_is_a_quad_that_fits_the_screen(browser_env, size):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", viewport=size)
+    try:
+        for _ in range(3):
+            page.evaluate(FRAMES)
+        assert page.evaluate("() => document.documentElement.scrollHeight <= window.innerHeight + 1")
+        price, smile = _rect(page, ".panel-price"), _rect(page, ".panel-smile")
+        gex, pos = _rect(page, ".panel-gex"), _rect(page, ".panel-pos")
+        for r in (price, smile, gex, pos):
+            assert r["w"] > 250 and r["h"] > 150
+            assert r["b"] <= size[1] + 1 and r["r"] <= size[0] + 1
+        assert abs(price["t"] - smile["t"]) < 2 and price["l"] < smile["l"]
+        assert gex["t"] > price["t"] + 100 and abs(gex["l"] - price["l"]) < 2
+        assert abs(pos["l"] - smile["l"]) < 2 and abs(pos["t"] - gex["t"]) < 2
+        assert page.evaluate("() => document.querySelectorAll('#priceChart canvas').length") > 0
+        assert page.evaluate("() => !!document.querySelector('#gexChart .main-svg')")
+    finally:
+        browser.close()
+
+
+def test_dashboard_collapses_to_one_column_when_narrow(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", viewport=(1000, 800))
+    try:
+        cols = page.evaluate("() => getComputedStyle(document.getElementById('dashboardTab')).gridTemplateColumns")
+        assert len(cols.split(" ")) == 1
+    finally:
+        browser.close()
+
+
+def test_positions_panel_shows_the_seeded_account(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    try:
+        page.evaluate(FRAMES)
+        assert page.evaluate("() => document.getElementById('dashNetLiq').textContent") == "$100.0K"
+        assert page.evaluate("() => document.getElementById('dashUnPnl').textContent") == "$412.50"
+        assert "pos" in page.evaluate("() => document.getElementById('dashUnPnl').className")
+        assert "neg" in page.evaluate("() => document.getElementById('dashRePnl').className")
+        rows = page.evaluate("() => [...document.querySelectorAll('#dashPositionsBody tr')].map(r => r.textContent)")
+        assert len(rows) == 2 and "6100P" in rows[0]
+    finally:
+        browser.close()
+
+
+def test_positions_panel_survives_empty_and_malformed_accounts(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        inject = "m => window.__benchInject({type: 'account_update', data: m})"
+        page.evaluate(inject, {"summary": {}, "positions": [], "orders": [], "executions": []})
+        assert page.evaluate("() => document.getElementById('dashPositionsBody').textContent") == "No open positions"
+        assert page.evaluate("() => document.getElementById('dashNetLiq').textContent") == "-"
+        page.evaluate(inject, {"summary": {"NetLiquidation": None}, "orders": [], "executions": [],
+                               "positions": [None, {"position": 0, "contract": {}},
+                                             {"position": 2, "contract": None, "unrealizedPNL": None}]})
+        rows = page.evaluate("() => [...document.querySelectorAll('#dashPositionsBody tr')].map(r => r.textContent)")
+        assert len(rows) == 1 and rows[0].startswith("?")
+        assert errors == []
+    finally:
+        browser.close()

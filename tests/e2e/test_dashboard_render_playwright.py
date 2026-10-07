@@ -161,7 +161,7 @@ def test_resize_follows_the_container_and_a_hidden_chart_is_left_alone(page_on_d
     pg.evaluate("() => switchTab('dashboard')")
     pg.wait_for_function("""() => {
         const g = document.getElementById('gexChart');
-        return g.clientWidth > 1000 && Math.abs(g._fullLayout.width - g.clientWidth) <= 1;
+        return g.clientWidth > 500 && Math.abs(g._fullLayout.width - g.clientWidth) <= 1;   // two columns at 1300 px
     }""", timeout=5000)
 
 
@@ -538,7 +538,7 @@ def test_paint_spans_are_recorded_only_for_messages_that_scheduled_a_render(page
     assert _send(pg, moved) == ["status.paint"]               # the spot relayouts
     # a no-op status handled in a frame that already has other jobs queued records no paint of its own
     assert _send(pg, snapshot, moved) == ["price_snapshot.paint"]       # the spot is already 6152: a no-op
-    assert _send(pg, acct) == []                              # the Account tab is hidden: parked, not painted
+    assert _send(pg, acct) == ["account_update.paint"]       # the Dashboard's Positions panel paints it; the Account tab is parked
     pg.evaluate("() => switchTab('chain')")
     assert _send(pg, gex, {"type": "status", "data": {"connected": False, "spot_price": 6155}}) == []
     pg.evaluate("() => { window.__spans.length = 0; switchTab('account'); }")

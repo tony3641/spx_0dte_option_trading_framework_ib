@@ -1,11 +1,27 @@
         /* Charts container */
         .charts-container {
             display: grid;
-            grid-template-columns: 1fr;
-            grid-template-rows: 1fr 1fr 1fr;
-            height: calc(100vh - 134px);
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            grid-template-areas: "price smile" "gex pos";
+            height: calc(100vh - var(--shell-h, 134px));
             padding: 8px;
             gap: 8px;
+        }
+        .chart-panel { min-width: 0; min-height: 0; }
+        .panel-price { grid-area: price; }
+        .panel-smile { grid-area: smile; }
+        .panel-gex   { grid-area: gex; }
+        .panel-pos   { grid-area: pos; }
+        @media (max-width: 1100px) {
+            .charts-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: none;
+                grid-template-areas: "price" "smile" "gex" "pos";
+                grid-auto-rows: minmax(320px, 1fr);
+                height: auto;
+                overflow-y: auto;
+            }
         }
         .chart-panel {
             background: var(--bg-panel);

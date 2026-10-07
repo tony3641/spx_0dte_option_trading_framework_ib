@@ -28,6 +28,7 @@
         if (data.orders) { state.openOrders = data.orders; resolvePendingCancels(); }
         if (data.executions) state.executions = data.executions;
         renderWhenVisible('account', 'account.tab', renderAccountTab);
+        renderWhenVisible('dashboard', 'dash.positions', renderDashPositions);
         // Always update summary badges (visible on all tabs)
         renderAccountSummaryBadges();
     }

@@ -94,7 +94,7 @@
 
     <!-- Charts (Tab 1) -->
     <div class="charts-container active" id="dashboardTab">
-        <div class="chart-panel">
+        <div class="chart-panel panel-price">
             <div class="chart-title"><span id="priceChartTitle">SPX Intraday</span>
                 <span class="help" tabindex="0" aria-label="Price chart info">?
                     <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall, put wall, gamma flip and max pain are drawn as price lines. Times are ET.</span>
@@ -102,7 +102,7 @@
             </div>
             <div id="priceChart"></div>
         </div>
-        <div class="chart-panel">
+        <div class="chart-panel panel-gex">
             <div class="chart-title">
                 <span id="gexChartLabel">Gamma Exposure (GEX) by Strike</span>
                 <span class="gex-mode-toggle" id="gexModeToggle">
@@ -120,7 +120,7 @@
             </div>
             <div id="gexChart"></div>
         </div>
-        <div class="chart-panel">
+        <div class="chart-panel panel-smile">
             <div class="chart-title"><span id="smileChartLabel">IV Smile & Delta-Decay Efficiency</span>
                 <span class="help" tabindex="0" aria-label="IV Smile help">?
                     <span class="tooltip" role="tooltip">Delta-decay efficiency = |charm| - |delta|.<br>Computed from short finite-difference decay (15-minute step) of option delta; it represents the rate at which an option's delta changes relative to its current delta magnitude.<br>Higher values indicate faster delta erosion per unit delta - useful for assessing hedging sensitivity to time decay and short-term rebalancing cost.</span>
@@ -132,6 +132,24 @@
                 <div class="gex-loading-sub" id="smileLoadingSub"></div>
             </div>
             <div id="smileChart"></div>
+        </div>
+        <div class="chart-panel panel-pos" id="positionsPanel">
+            <div class="chart-title"><span>Positions &amp; P&amp;L</span>
+                <span class="help" tabindex="0" aria-label="Positions help">?
+                    <span class="tooltip" role="tooltip">Net liquidation value and unrealized / realized P&amp;L from the account feed, plus your open positions with their live marks. The Account tab has the full detail and the close buttons.</span>
+                </span>
+            </div>
+            <div class="pos-panel-body">
+                <div class="pos-kpis">
+                    <div class="kpi"><span class="kpi-label">Net Liq</span><span class="kpi-value" id="dashNetLiq">-</span></div>
+                    <div class="kpi"><span class="kpi-label">Unrealized</span><span class="kpi-value" id="dashUnPnl">-</span></div>
+                    <div class="kpi"><span class="kpi-label">Realized</span><span class="kpi-value" id="dashRePnl">-</span></div>
+                </div>
+                <table class="pos-table">
+                    <thead><tr><th>Position</th><th>Qty</th><th>Mark</th><th>Unrealized</th></tr></thead>
+                    <tbody id="dashPositionsBody"><tr><td colspan="4" class="acct-empty">No open positions</td></tr></tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -687,6 +705,7 @@
     <script src="/static/js/perf.js"></script>
     <script src="/static/js/tabs.js"></script>
     <script src="/static/js/account.js"></script>
+    <script src="/static/js/dash-positions.js"></script>
     <script src="/static/js/order-entry.js"></script>
     <script src="/static/js/chain-table.js"></script>
     <script src="/static/js/strategy-builder.js"></script>

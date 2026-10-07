@@ -101,8 +101,8 @@
         const { c } = chartTheme();
         const layout = Object.assign(smileLayout(null), {
             annotations: [
-                { text: 'CALLS', xref: 'paper', yref: 'paper', x: 0.5, y: 1.01, showarrow: false, font: { color: c.up, size: 11, weight: 'bold' } },
-                { text: 'PUTS',  xref: 'paper', yref: 'paper', x: 0.5, y: 0.46, showarrow: false, font: { color: c.down, size: 11, weight: 'bold' } },
+                { text: 'CALLS', xref: 'paper', yref: 'paper', xanchor: 'right', x: 0.99, y: 1.01, showarrow: false, font: { color: c.up, size: 11, weight: 'bold' } },
+                { text: 'PUTS',  xref: 'paper', yref: 'paper', xanchor: 'right', x: 0.99, y: 0.46, showarrow: false, font: { color: c.down, size: 11, weight: 'bold' } },
             ],
             shapes: [],
         });
@@ -373,8 +373,8 @@
 
         // Preserve the CALLS / PUTS subtitle annotations
         const annotations = [
-            { text: 'CALLS', xref: 'paper', yref: 'paper', x: 0.5, y: 1.01, showarrow: false, font: { color: c.up, size: 11 } },
-            { text: 'PUTS',  xref: 'paper', yref: 'paper', x: 0.5, y: 0.46, showarrow: false, font: { color: c.down, size: 11 } },
+            { text: 'CALLS', xref: 'paper', yref: 'paper', xanchor: 'right', x: 0.99, y: 1.01, showarrow: false, font: { color: c.up, size: 11 } },
+            { text: 'PUTS',  xref: 'paper', yref: 'paper', xanchor: 'right', x: 0.99, y: 0.46, showarrow: false, font: { color: c.down, size: 11 } },
         ];
         return { shapes, annotations };
     }
