@@ -39,7 +39,7 @@ from spx_trade_desk.ib.account import (
 )
 from spx_trade_desk.market.chain_recorder import ChainRecorder
 from spx_trade_desk.web.ws import (
-    broadcast, make_broadcast_fn, make_ib_error_handler,
+    broadcast, drain_detached_tasks, make_broadcast_fn, make_ib_error_handler,
     websocket_endpoint as ws_endpoint,
 )
 from spx_trade_desk.market.hours import market_status, get_expiration_display
@@ -124,6 +124,11 @@ async def lifespan(_app):
     logger.info("Shutting down...")
     for task in state.background_tasks:
         task.cancel()
+    await asyncio.gather(*state.background_tasks, return_exceptions=True)
+    try:
+        await drain_detached_tasks()          # cancel replies and socket closes started by connections
+    except Exception as e:
+        logger.warning(f"Error draining detached tasks: {e}")
     if discord_manager is not None:
         try:
             await discord_manager.stop()

@@ -26,6 +26,7 @@ from spx_trade_desk.ib.connection import update_vix
 from spx_trade_desk.strategy.engine import reset_strategy_runtime
 from spx_trade_desk.strategy.store import load_strategies, save_strategy, delete_strategy
 from spx_trade_desk.strategy.models import Strategy
+from spx_trade_desk.web import push
 from spx_trade_desk.web.push import ClientChannel, encode, record_client_perf, stamp
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,24 @@ _IGNORED_IB_ERROR_CODES = {101, 2104, 2106, 2107, 2108, 2119, 2158}
 # Strong references to in-flight cancel_order tasks (the loop only keeps weak ones). They outlive
 # their connection: a cancel the user clicked right before closing the tab still reaches IB.
 _CANCEL_TASKS: set = set()
+
+
+async def drain_detached_tasks(timeout: float = 2.0) -> int:
+    """Shutdown helper: wait up to ``timeout`` s for the detached cancel replies and socket closes.
+
+    Those tasks are not owned by any loop or connection, so without this the loop closes with them
+    pending ("Task was destroyed but it is pending"). Whatever is still running after the timeout is
+    cancelled and awaited. Returns how many were still running at the timeout.
+    """
+    pending = {t for t in (*_CANCEL_TASKS, *push._CLOSE_TASKS) if not t.done()}
+    if not pending:
+        return 0
+    _, still = await asyncio.wait(pending, timeout=timeout)
+    for task in still:
+        task.cancel()
+    if still:
+        await asyncio.gather(*still, return_exceptions=True)
+    return len(still)
 
 
 def _unquote_name(name: str) -> str:

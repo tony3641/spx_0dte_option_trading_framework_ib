@@ -289,3 +289,32 @@ async def test_a_new_client_asks_the_chain_stream_for_whole_rows():
     await ws_mod.websocket_endpoint(sock, None, state, _noop)
     assert state.chain_resync_requested is True
     assert sock.sent[0]["type"] == "init"
+
+
+@pytest.mark.asyncio
+async def test_drain_detached_tasks_waits_for_replies_and_closes_and_cancels_the_hung():
+    from spx_trade_desk.web import push
+    done = []
+
+    async def quick():
+        await asyncio.sleep(0.01)
+        done.append("quick")
+
+    async def hung():
+        await asyncio.Event().wait()
+
+    t_quick = asyncio.create_task(quick())
+    t_hung = asyncio.create_task(hung())
+    ws_mod._CANCEL_TASKS.add(t_quick)
+    push._CLOSE_TASKS.add(t_hung)
+    try:
+        assert await ws_mod.drain_detached_tasks(timeout=0.1) == 1     # one was still running at the timeout
+    finally:
+        ws_mod._CANCEL_TASKS.discard(t_quick)
+        push._CLOSE_TASKS.discard(t_hung)
+    assert done == ["quick"] and t_quick.done() and t_hung.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_drain_detached_tasks_is_a_no_op_without_tasks():
+    assert await ws_mod.drain_detached_tasks(timeout=0.1) == 0
