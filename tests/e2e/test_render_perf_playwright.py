@@ -5,8 +5,9 @@ the Dashboard tab and then on the Chain tab, and measures inject -> next painted
 instrumentation (tests/e2e/render_bench.js, independent of static/js/perf.js).
 
 The machine this runs on shows 2-3x run-to-run variance, so the default run asserts what does not depend on
-it: every metric was measured, the page raised no errors, and generous regression ceilings that still prove
-the improvement over the v1 baseline. The spec section 7 thresholds are asserted only with
+it: every metric was measured, the page raised no errors, and generous regression ceilings taken from the v1
+baseline. They prove no regression against v1, not an improvement: the Dashboard long-task ceiling in particular
+equals v1's count, so it has no headroom for the unchanged GEX and smile draws on a slow machine. The spec section 7 thresholds are asserted only with
 RENDER_BENCH_STRICT=1. Compare runs with `python -m tests.e2e.render_bench --protocol v2 --seconds 60`.
 """
 import json

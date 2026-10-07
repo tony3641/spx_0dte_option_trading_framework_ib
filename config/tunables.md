@@ -14,7 +14,7 @@ Source: spx_trade_desk/core/config.py
 - DASHBOARD_CHAIN_REFRESH_SECONDS = 300
 - CHAIN_TAB_FULL_REFRESH_SECONDS = 300
 - PRICE_PUSH_INTERVAL = 1.0
-- PRICE_BARS_KEEP_UP_TO_DATE = true (price chart bars come from an IB keepUpToDate request; false = one-shot backfill at boot, 09:30 and reconnect, with the forming bar aggregated from the live SPX last price)
+- PRICE_BARS_KEEP_UP_TO_DATE = true (price chart bars come from an IB keepUpToDate request; false = one-shot backfill at boot, 09:30 and reconnect, with the forming bar aggregated from the live SPX last price; after 3 failed keepUpToDate starts in a row the server switches to false for the rest of the process). A blank value (`NAME=`) of a numeric or boolean setting means its default
 - SERVER_HOST = "0.0.0.0"
 - SERVER_PORT = 8000
 - MARKET_DATA_LINES = 100 (account IB line allowance; split into fixed/order/poll/stream shares at startup)
@@ -25,8 +25,8 @@ Source: spx_trade_desk/core/config.py
 - PERF_LOG_SECONDS = 60 (one perf summary log line per interval; 0 disables; the same data is at /api/perf on localhost)
 - CHAIN_STREAM_UPDATE_INTERVAL = 0.5
 - VIEWPORT_CENTER_MIN_INTERVAL = 0.2
-- PUSH_ORDERED_BACKLOG_MAX = 1000 (unsent critical messages, such as order status, one browser may queue before it is dropped and reconnects to a fresh init; raise it only if a slow but healthy client gets dropped during order bursts)
-- PUSH_SEND_TIMEOUT_S = 5.0 (one WebSocket send slower than this drops that browser only; raise it for clients on a slow remote link, lower it to shed a stuck tab sooner)
+- PUSH_ORDERED_BACKLOG_MAX = 1000, minimum 10 (a lower value is raised to 10) (unsent critical messages, such as order status, one browser may queue before it is dropped and reconnects to a fresh init; raise it only if a slow but healthy client gets dropped during order bursts)
+- PUSH_SEND_TIMEOUT_S = 5.0, minimum 0.5 (a lower value is raised to 0.5) (one WebSocket send slower than this drops that browser only; raise it for clients on a slow remote link, lower it to shed a stuck tab sooner)
 
 ## 2) Backend hardcoded tunables (not env-wired today)
 
@@ -59,7 +59,7 @@ Source: spx_trade_desk/core/config.py
 - chain contract lookup: one shared ContractRegistry (ib/contracts.py): one bulk reqContractDetails per (expiry, trading class), single-qualification fallback in QUALIFY_BATCH_SIZE batches through the request pacer (ib/pacing.py); strikes missing from the listing are retried after CHAIN_STREAM_UNKNOWN_RETRY_SECS with one re-list
 - chain stream quote-book writes: only rows whose stream ticked since the previous pass
 - chain stream tick-log cadence: 10.0 s
-- chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py); each cycle sends one `chain_tick` with only the fields that changed per (strike, right), nothing when nothing changed (the full `chain_quotes` comes from the publisher every CHAIN_REFRESH_SECONDS)
+- chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py); each cycle sends one `chain_tick` (with its `expiration_raw`) with only the fields that changed per (strike, right), nothing when nothing changed; the first cycle after a browser connects sends every field of every streamed row (the full `chain_quotes` comes from the publisher every CHAIN_REFRESH_SECONDS)
 - monthly cache TTL: 600 s
 - monthly fetch std_dev_range: 8.0
 
@@ -131,6 +131,7 @@ Source: spx_trade_desk/core/config.py
 - IB request: 1 D, 1 min, TRADES, regular hours, keepUpToDate (PRICE_BARS_KEEP_UP_TO_DATE)
 - PRICE_BARS_STALL_S: 180 s (RTH: no IB update for this long cancels and re-requests the bars)
 - re-request backoff after an IB error or stall: 5 s, 15 s, 60 s (cap)
+- LIVE_FAILURES_BEFORE_FALLBACK: 3 failed keepUpToDate starts in a row switch the feed to the one-shot backfill for the rest of the process (cleared by a start that returns bars or by an IB update)
 - overnight (ES-derived) line: one point per minute outside RTH, at most 1440 points
 
 ### spx_trade_desk/core/rates.py
