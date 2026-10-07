@@ -111,6 +111,22 @@ async def test_error_during_initial_load_resolves_the_request_and_reports_it(cli
 
 
 @pytest.mark.asyncio
+async def test_an_error_queued_before_cancel_is_dropped(client):
+    client._loop = asyncio.get_running_loop()
+    errors = []
+    task = asyncio.create_task(client.req_historical_bars_live(
+        object(), lambda b: None, lambda c, m: errors.append(c)))
+    await asyncio.sleep(0)
+    req_id = client.calls[0][1]
+    client.historicalDataEnd(req_id, "", "")
+    await task
+    client.error(req_id, 0, 366, "No historical data query found")   # queued on the loop, not yet run
+    client.cancel_historical_bars(req_id)
+    await asyncio.sleep(0)
+    assert errors == []
+
+
+@pytest.mark.asyncio
 async def test_cancel_stops_updates_and_is_idempotent(client):
     client._loop = asyncio.get_running_loop()
     got = []

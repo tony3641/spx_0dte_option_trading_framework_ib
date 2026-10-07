@@ -305,7 +305,7 @@ class IBClient(EWrapper, EClient):
         live = self._live_bars.get(reqId)
         live_warning = live is not None and _is_warning(errorCode)
         if live is not None and not live_warning and live.on_error is not None and self._loop is not None:
-            self._loop.call_soon_threadsafe(live.on_error, errorCode, errorString)
+            self._loop.call_soon_threadsafe(self._deliver_live_error, reqId, live, errorCode, errorString)
         # Resolve any pending one-shot request so awaiting callers don't hang:
         # IB rejects some requests (e.g. error 200 contract-not-found, 321 invalid
         # contract id) with an error but no matching ...End callback, which would
@@ -613,6 +613,11 @@ class IBClient(EWrapper, EClient):
         """Loop thread: drop an update queued before its request was cancelled (or re-requested)."""
         if self._live_bars.get(req_id) is live:
             live.on_update(bar)
+
+    def _deliver_live_error(self, req_id, live, code, message):
+        """Loop thread: drop an error queued before its request was cancelled (or re-requested)."""
+        if self._live_bars.get(req_id) is live:
+            live.on_error(code, message)
 
     def historicalData(self, reqId, bar):
         req = self._requests.get(reqId)
