@@ -280,6 +280,52 @@
         return { shapes, annotations };
     }
 
+    // The strikes drawn: within state.gexWindowStrikes steps of spot (the step is the median gap between
+    // neighbouring strikes). null = no window (spot unknown, few strikes, or "All" selected).
+    function strikeWindow(strikes, spot, n) {
+        if (!(spot > 0) || !(n > 0) || strikes.length <= 2 * n + 1) return null;
+        const sorted = strikes.filter(s => s != null).sort((a, b) => a - b);
+        const gaps = [];
+        for (let i = 1; i < sorted.length; i++) { const g = sorted[i] - sorted[i - 1]; if (g > 0) gaps.push(g); }
+        if (!gaps.length) return null;
+        gaps.sort((a, b) => a - b);
+        const step = gaps[Math.floor(gaps.length / 2)];
+        const lo = spot - n * step, hi = spot + n * step;
+        return (sorted[0] >= lo && sorted[sorted.length - 1] <= hi) ? null : [lo, hi];
+    }
+
+    // items = [{strike, ...}]; a window that selects nothing (spot far outside the data) shows everything.
+    function windowItems(items, spot) {
+        if (state.gexShowAll) return items;
+        const w = strikeWindow(items.map(i => i.strike), spot, state.gexWindowStrikes);
+        if (!w) return items;
+        const out = items.filter(i => i.strike >= w[0] && i.strike <= w[1]);
+        return out.length ? out : items;
+    }
+
+    // Cheap change signature of what a full draw would paint. The spot is left out on purpose: a spot-only
+    // change is the relayout path (requestSpotLine), which keeps the user's zoom.
+    function gexSignature(g, view) {
+        let h = view.length;
+        for (const b of view) {
+            h = (Math.imul(h, 31) + Math.round((b.call_gex || 0) / 1e3) * 7 + Math.round((b.put_gex || 0) / 1e3) * 13
+                 + (b.strike | 0) + (b.call_oi | 0) * 3 + (b.put_oi | 0) * 5 + (b.call_vol | 0) * 11 + (b.put_vol | 0) * 17) | 0;
+        }
+        return [h, view.length, g.call_wall, g.put_wall, g.gamma_flip, g.max_pain, g.total_net_gex, g.total_call_oi, g.total_put_oi,
+                state.esDerived ? 1 : 0, state.gexMode, state.gexShowAll ? 1 : 0, getTheme()].join('|');
+    }
+
+    function smileSignature(g, view) {
+        let h = view.length;
+        for (const d of view) {
+            h = (Math.imul(h, 31) + (d.strike | 0) + Math.round((d.call_iv || 0) * 100) * 7 + Math.round((d.put_iv || 0) * 100) * 13
+                 + Math.round((d.call_efficiency || 0) * 1e4) * 3 + Math.round((d.put_efficiency || 0) * 1e4) * 5) | 0;
+        }
+        return [h, view.length, g.call_wall, g.put_wall, g.gamma_flip, state.gexMode, state.gexShowAll ? 1 : 0, getTheme()].join('|');
+    }
+
+    let _gexSig = '', _smileSig = '', _smileDrawnAt = 0, _smileTimer = 0, _smileForce = false;
+
     function updateGexChart() {
         if (!state.gexChartReady) return;
 
@@ -287,7 +333,9 @@
         const gexData = currentGexData();
         if (!gexData || !gexData.gex_bars) return;
 
-        const bars = gexData.gex_bars;
+        const bars = windowItems(gexData.gex_bars, spotLevel(gexData));
+        const sig = gexSignature(gexData, bars);
+        if (sig === _gexSig) { requestSpotLine('gex'); return; }       // nothing new to paint: only the spot may have moved
         const strikes = bars.map(b => b.strike);
         const callGex = bars.map(b => b.call_gex);
         const putGex = bars.map(b => b.put_gex);
@@ -299,7 +347,7 @@
         // Calculate common range from all smile data if available
         let commonRange = null;
         if (gexData && gexData.smile_data && gexData.smile_data.length > 0) {
-            const smileStrikes = gexData.smile_data.map(d => d.strike).filter(s => s != null);
+            const smileStrikes = windowItems(gexData.smile_data, spotLevel(gexData)).map(d => d.strike).filter(s => s != null);
             if (smileStrikes.length > 0) {
                 const minSmile = Math.min(...smileStrikes);
                 const maxSmile = Math.max(...smileStrikes);
@@ -345,6 +393,7 @@
             annotations,
             xaxis: { ...base.xaxis, range: commonRange },
         });
+        _gexSig = sig;
         noteSpotDrawn('gex', gexData);
     }
 
@@ -386,8 +435,24 @@
         const gexData = currentGexData();
         if (!gexData || !gexData.smile_data) return;
 
-        const sd = gexData.smile_data;
-        if (sd.length === 0) return;
+        const sdAll = gexData.smile_data;
+        if (sdAll.length === 0) return;
+        const sd = windowItems(sdAll, spotLevel(gexData));
+
+        const sig = smileSignature(gexData, sd);
+        if (sig === _smileSig) { requestSpotLine('smile'); return; }
+        const wait = _smileDrawnAt + state.smileMinIntervalMs - performance.now();
+        if (!_smileForce && _smileDrawnAt && wait > 0) {           // the smile moves slowly: coalesce its redraws
+            if (!_smileTimer) {
+                _smileTimer = setTimeout(() => {
+                    _smileTimer = 0;
+                    renderWhenVisible('dashboard', 'smile', updateSmileChart, { heavy: true });
+                }, wait);
+            }
+            requestSpotLine('smile');
+            return;
+        }
+        _smileForce = false;
 
         // Separate call and put data (filter nulls)
         const callStrikes = [], callIV = [], callEff = [], callCustom = [];
@@ -452,6 +517,8 @@
             shapes,
             annotations,
         }));
+        _smileSig = sig;
+        _smileDrawnAt = performance.now();
         noteSpotDrawn('smile', gexData);
     }
 
@@ -477,6 +544,7 @@
             const el = document.getElementById(id);
             if (el && el._fullLayout) Plotly.relayout(id, patch);
         }
+        _smileForce = true;
         requestGexRender();
     }
     window.addEventListener('themechange', () => {
@@ -544,6 +612,17 @@
         }
 
         // Re-render charts with the active data source
+        _smileForce = true;
+        requestGexRender();
+    }
+
+    function setGexRange(all) {
+        if (!!all === state.gexShowAll) return;
+        state.gexShowAll = !!all;
+        document.querySelectorAll('#gexRangeToggle .gex-mode-btn').forEach(b => {
+            b.classList.toggle('active', (b.dataset.range === 'all') === state.gexShowAll);
+        });
+        _smileForce = true;
         requestGexRender();
     }
 

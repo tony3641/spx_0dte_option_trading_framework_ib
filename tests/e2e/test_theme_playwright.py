@@ -389,3 +389,117 @@ def test_reduced_motion_disables_flash_and_cross_fade(browser_env):
     flashes, dur = _flash_count_after_a_tick(p, url, reduced=True)
     assert flashes == 0
     assert dur in ("0.001s", "1e-06s", "0s")
+
+
+COUNT_REACTS = """() => { window.__reacts = {gexChart: 0, smileChart: 0}; const orig = Plotly.react;
+                          Plotly.react = function (id, ...rest) { if (id in window.__reacts) window.__reacts[id]++; return orig.call(this, id, ...rest); }; }"""
+REACTS = "() => ({...window.__reacts})"
+GEX_X = "() => document.getElementById('gexChart').data[0].x"
+
+
+def _resend_gex(page, mutate="g => g"):
+    page.evaluate(f"""() => {{ const g = JSON.parse(JSON.stringify(state.gex)); ({mutate})(g);
+                               handleMessage({{type: 'gex', data: g}}); }}""")
+    for _ in range(3):
+        page.evaluate(FRAMES)
+
+
+def test_gex_shows_the_strikes_near_spot_and_all_on_demand(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    try:
+        for _ in range(3):
+            page.evaluate(FRAMES)
+        xs = page.evaluate(GEX_X)
+        assert 80 <= len(xs) <= 82 and min(xs) >= 5950 and max(xs) <= 6350       # spot 6150, 40 steps of 5
+        page.click("#gexRangeToggle [data-range=all]")
+        for _ in range(3):
+            page.evaluate(FRAMES)
+        assert len(page.evaluate(GEX_X)) == 120
+        page.click("#gexRangeToggle [data-range=near]")
+        for _ in range(3):
+            page.evaluate(FRAMES)
+        assert len(page.evaluate(GEX_X)) < 120
+    finally:
+        browser.close()
+
+
+@pytest.mark.parametrize("spot", [0, 9000])
+def test_the_window_falls_back_to_every_strike_without_a_usable_spot(browser_env, spot):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    try:
+        page.evaluate(f"() => {{ state.currentSpot = 0; }}")
+        _resend_gex(page, f"g => {{ g.spot_price = {spot}; }}")
+        assert len(page.evaluate(GEX_X)) == 120
+    finally:
+        browser.close()
+
+
+def test_an_unchanged_gex_is_not_redrawn_and_a_changed_one_is(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    try:
+        page.evaluate(FRAMES)
+        page.evaluate(COUNT_REACTS)
+        _resend_gex(page)                                               # same data
+        assert page.evaluate(REACTS)["gexChart"] == 0
+        _resend_gex(page, "g => { g.gex_bars[60].call_gex += 5e6; }")  # one bar changed
+        assert page.evaluate(REACTS)["gexChart"] == 1
+    finally:
+        browser.close()
+
+
+def test_the_smile_redraw_is_throttled_with_a_trailing_draw(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    try:
+        page.evaluate("() => { state.smileMinIntervalMs = 700; }")
+        page.wait_for_timeout(900)                                      # the seed's own draw is outside the window now
+        page.evaluate(COUNT_REACTS)
+        _resend_gex(page, "g => { g.smile_data[60].call_iv += 1; }")
+        assert page.evaluate(REACTS)["smileChart"] == 1                 # first change: drawn at once
+        _resend_gex(page, "g => { g.smile_data[60].call_iv += 2; }")
+        assert page.evaluate(REACTS)["smileChart"] == 1                 # second change: held inside the window
+        page.wait_for_timeout(1200)
+        assert page.evaluate(REACTS)["smileChart"] == 2                 # and drawn once, by the trailing timer
+    finally:
+        browser.close()
+
+
+def test_a_reconnect_snapshot_keeps_the_zoom_of_the_same_session(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    try:
+        for _ in range(3):
+            page.evaluate(FRAMES)
+        page.evaluate("() => priceChart.chart.timeScale().setVisibleLogicalRange({from: 60, to: 120})")
+        snap = page.evaluate("() => ({session_date: priceChart.sessionDate, mode: 'live', overnight: [], bars: []})")
+        page.evaluate("""s => { s.bars = Array.from(priceChart.bars.values()).map(c => ({
+                                  time: new Date(c.time * 1000).toISOString().slice(0, 19) + '-05:00',
+                                  time_short: '', open: c.open, high: c.high, low: c.low, close: c.close}));
+                                window.__snap = s; }""", snap)
+        page.evaluate("() => window.__benchInject({type: 'price_snapshot', data: window.__snap})")
+        rng = page.evaluate("() => priceChart.chart.timeScale().getVisibleLogicalRange()")
+        assert abs(rng["from"] - 60) < 2 and abs(rng["to"] - 120) < 2
+        page.evaluate("() => { window.__snap.session_date = '2099-01-03'; }")
+        page.evaluate("() => window.__benchInject({type: 'price_snapshot', data: window.__snap})")
+        rng = page.evaluate("() => priceChart.chart.timeScale().getVisibleLogicalRange()")
+        assert rng["to"] - rng["from"] > 150                            # a new session fits the content again
+    finally:
+        browser.close()
+
+
+def test_help_tooltips_are_not_clipped_by_their_panel(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", viewport=(1440, 900))
+    try:
+        for i in range(4):
+            page.evaluate("i => document.querySelectorAll('#dashboardTab .chart-title .help')[i].focus()", i)
+            visible = page.evaluate("""i => { const t = document.querySelectorAll('#dashboardTab .chart-title .help .tooltip')[i];
+                const r = t.getBoundingClientRect(); const el = document.elementFromPoint(r.right - 4, r.bottom - 4);
+                return {inside: t.contains(el), right: r.right, bottom: r.bottom}; }""", i)
+            assert visible["inside"], (i, visible)
+            assert visible["right"] <= 1440 and visible["bottom"] <= 900
+    finally:
+        browser.close()

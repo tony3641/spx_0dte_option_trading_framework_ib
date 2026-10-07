@@ -14,7 +14,7 @@
         sessionDate: null, bars: new Map(), overnightPts: new Map(), latest: null,
         pendingBars: new Map(), pendingOvernight: [],
         lastTime: null, lastOvernightTime: null,      // last time written to each series
-        levels: {}, levelValues: {}, needsFit: false,
+        levels: {}, levelValues: {}, needsFit: false, hadSnapshot: false,
     };
 
     function etIsoToChartTime(iso) {
@@ -67,6 +67,7 @@
 
     function handlePriceSnapshot(data) {
         if (!data) return;
+        const prevSession = priceChart.sessionDate;
         priceChart.sessionDate = data.session_date || null;
         priceChart.bars = new Map();
         priceChart.latest = null;
@@ -83,7 +84,9 @@
         }
         priceChart.pendingBars.clear();
         priceChart.pendingOvernight = [];
-        priceChart.needsFit = true;
+        // Fit only the first snapshot and a new session: a reconnect snapshot of the same session keeps the zoom.
+        priceChart.needsFit = priceChart.needsFit || !priceChart.hadSnapshot || prevSession !== priceChart.sessionDate;
+        priceChart.hadSnapshot = true;
         renderWhenVisible('dashboard', 'price.snapshot', renderPriceSnapshot);
         scheduleRender('badges.spot', updateBadges);         // the header spot badge reads priceChart.latest
     }
@@ -91,6 +94,8 @@
     function renderPriceSnapshot() {
         if (!priceChart.candles) return;
         const candles = Array.from(priceChart.bars.values()).sort((a, b) => a.time - b.time);
+        const ts = priceChart.chart.timeScale();
+        const keep = priceChart.needsFit ? null : ts.getVisibleLogicalRange();
         priceChart.candles.setData(candles);
         const pts = Array.from(priceChart.overnightPts.values()).sort((a, b) => a.time - b.time);   // unique times
         priceChart.overnight.setData(pts);
@@ -99,8 +104,10 @@
         priceChart.pendingBars.clear();
         priceChart.pendingOvernight = [];
         if (priceChart.needsFit) {
-            priceChart.chart.timeScale().fitContent();
+            ts.fitContent();
             priceChart.needsFit = false;
+        } else if (keep) {
+            ts.setVisibleLogicalRange(keep);
         }
     }
 

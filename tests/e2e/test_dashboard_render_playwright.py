@@ -202,11 +202,30 @@ def test_spot_change_in_the_frame_of_a_gex_message_is_drawn_by_the_gex_render(pa
     _inject(pg, "gex", _gex())
     _settle(pg)
     pg.evaluate(COUNT_PLOTLY)
+    pg.evaluate("() => { state.smileMinIntervalMs = 0; }")   # the smile throttle is tested on its own
+    changed = _gex(6155)
+    changed["gex_bars"][3]["call_gex"] = 2e6                 # the data really changed: the full draws paint the spot too
+    changed["smile_data"][3]["call_iv"] = 17.0
+    pg.evaluate("""g => window.__benchInject([{type: 'gex', data: g},
+                                              {type: 'status', data: {connected: false, spot_price: 6162}}])""",
+                changed)
+    _settle(pg)
+    assert pg.evaluate(CALLS)["relayout"] == 0
+    assert 6162 in _gex_shape_xs(pg)
+
+
+def test_a_gex_message_with_unchanged_data_only_moves_the_spot_line(page_on_dashboard):
+    pg = page_on_dashboard
+    _inject(pg, "gex", _gex())
+    _settle(pg)
+    pg.evaluate(COUNT_PLOTLY)
     pg.evaluate("""g => window.__benchInject([{type: 'gex', data: g},
                                               {type: 'status', data: {connected: false, spot_price: 6162}}])""",
                 _gex(6155))
     _settle(pg)
-    assert pg.evaluate(CALLS)["relayout"] == 0
+    calls = pg.evaluate(CALLS)
+    assert calls["react"] == 0                               # nothing new to paint: no full draw
+    assert calls["relayout"] == 2                            # one spot-line relayout per chart
     assert 6162 in _gex_shape_xs(pg)
 
 

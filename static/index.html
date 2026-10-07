@@ -109,8 +109,12 @@
                     <button class="gex-mode-btn active" data-mode="0dte" onclick="setGexMode('0dte')">0DTE</button>
                     <button class="gex-mode-btn" data-mode="monthly" onclick="setGexMode('monthly')">Monthly</button>
                 </span>
+                <span class="gex-mode-toggle" id="gexRangeToggle">
+                    <button class="gex-mode-btn active" data-range="near" onclick="setGexRange(false)" title="Strikes within 40 steps of spot">Near</button>
+                    <button class="gex-mode-btn" data-range="all" onclick="setGexRange(true)" title="Every strike in the data">All</button>
+                </span>
                 <span class="help" tabindex="0" aria-label="GEX chart info">?
-                    <span class="tooltip" role="tooltip">Use this chart to see where gamma exposure accumulates by strike. Peaks show levels where option dealer hedging is concentrated; net line direction indicates whether overall market makers are long (positive) or short (negative) gamma.</span>
+                    <span class="tooltip" role="tooltip">Use this chart to see where gamma exposure accumulates by strike. Peaks show levels where option dealer hedging is concentrated; net line direction indicates whether overall market makers are long (positive) or short (negative) gamma. By default the chart shows the strikes within 40 steps of spot; "All" shows every strike.</span>
                 </span>
             </div>
             <div class="gex-loading hidden" id="gexLoading">
