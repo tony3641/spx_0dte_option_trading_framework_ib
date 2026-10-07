@@ -22,6 +22,7 @@ from spx_trade_desk.market.hours import ET, is_within_rth, now_et
 logger = logging.getLogger(__name__)
 
 RETRY_BACKOFF_S = (5.0, 15.0, 60.0)
+LIVE_FAILURES_BEFORE_FALLBACK = 3
 
 
 def _as_et(dt: datetime) -> datetime:
@@ -84,6 +85,7 @@ class PriceBarFeed:
         self._last_update_mono: Optional[float] = None
         self._failed = False
         self._attempt = 0
+        self._live_failures = 0                  # consecutive failed keepUpToDate requests
         self._next_retry = 0.0
         self._was_rth: Optional[bool] = None
         self._open_reset_day = ""
@@ -107,6 +109,7 @@ class PriceBarFeed:
         self._next_retry = 0.0
         rth = self._rth()
         errored = False
+        was_keep = self._keep
         try:
             if self._keep:
                 self.req_id, bars = await self.ib.req_historical_bars_live(
@@ -124,9 +127,16 @@ class PriceBarFeed:
         target = today if rth else (rows[-1]["time"][:10] if rows else st.price_session_date)
         rows = [r for r in rows if r["time"][:10] == target]
         if self._failed or errored:
+            if was_keep:
+                self._note_live_failure()
+            if was_keep and not self._keep:      # the third failure in a row just switched the source
+                self.stop()
+                self._next_retry = 0.0
+                return await self.start()        # one-shot backfill now, no backoff wait
             return self._retry_later()           # keep the series; the failed request is cancelled
         if not rows and (not rth or (st.price_history and st.price_session_date == target)):
             return self._retry_later()           # an empty answer never wipes a series we have
+        self._live_failures = 0                  # a start that gave a usable series ends the failure streak
         st.price_history.clear()
         st.price_history.extend(rows)
         st.price_session_date = target
@@ -160,6 +170,21 @@ class PriceBarFeed:
             self._schedule_retry()
         return False
 
+    def _note_live_failure(self) -> None:
+        """Count a failed keepUpToDate start; after LIVE_FAILURES_BEFORE_FALLBACK in a row stop using it.
+
+        A failed start is a request that raised or was reported dead by IB before it returned a usable
+        series, so no bars show. The streak ends with a start that gives a series or with an IB update.
+        The fallback lasts for the process: it is the existing PRICE_BARS_KEEP_UP_TO_DATE=false path
+        (one-shot backfill, ``last`` merge).
+        """
+        self._live_failures += 1
+        if self._live_failures >= LIVE_FAILURES_BEFORE_FALLBACK:
+            self._keep = False
+            self._attempt = 0
+            logger.warning(f"Price bars: keepUpToDate failed {self._live_failures} times in a row; falling back "
+                           f"to a one-shot backfill plus the live SPX last (restart to retry keepUpToDate)")
+
     def _schedule_retry(self) -> None:
         delay = RETRY_BACKOFF_S[min(self._attempt, len(RETRY_BACKOFF_S) - 1)]
         self._attempt += 1
@@ -169,6 +194,7 @@ class PriceBarFeed:
 
     def _on_update(self, bar) -> None:
         self._attempt = 0                        # the request works: the next failure retries after 5 s again
+        self._live_failures = 0
         now = self._clock()
         if self._last_update_mono is not None:
             perf.record("price_bars.update_gap", (now - self._last_update_mono) * 1000.0)

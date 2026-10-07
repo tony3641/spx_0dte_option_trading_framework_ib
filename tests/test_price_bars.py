@@ -496,3 +496,62 @@ async def test_loop_cancel_stops_the_request_and_the_refresh(loop_env):
     n = loop_env["refresh"]
     await asyncio.sleep(0.05)
     assert loop_env["refresh"] == n                                  # the refresh task is gone too
+
+
+@pytest.mark.asyncio
+async def test_three_failed_live_starts_fall_back_to_the_one_shot_backfill(caplog):
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "10:00"), []
+
+    async def dead_live(contract, on_update, on_error=None, **kw):
+        raise RuntimeError("keepUpToDate refused")
+
+    async def one_shot(contract, end_date_time="", duration="1 D", bar_size="1 min",
+                       what_to_show="TRADES", use_rth=True, format_date=2):
+        return [_bar(DAY, "09:30", 100.0), _bar(DAY, "09:31", 101.0)]
+
+    ib.req_historical_bars_live = dead_live
+    ib.req_historical_bars = one_shot
+    feed = _feed(ib, st, clock, msgs)
+    with caplog.at_level("WARNING", logger=price_bars.logger.name):
+        assert not await feed.start()                     # 1st failure: retry after 5 s, no bars yet
+        clock.mono += 5.1
+        await feed.tick()                                 # 2nd failure: retry after 15 s
+        assert list(st.price_history) == [] and feed._keep
+        clock.mono += 15.1
+        await feed.tick()                                 # 3rd failure: falls back and loads at once
+    assert feed._keep is False
+    assert [b["close"] for b in st.price_history] == [100.0, 101.0]
+    assert any("falling back to a one-shot backfill" in r.getMessage() for r in caplog.records)
+    assert msgs[-1]["type"] == "price_snapshot" and len(msgs[-1]["data"]["bars"]) == 2
+    st.spx_stream.last = 102.0                            # ``last`` aggregation continues in the fallback
+    clock.set(DAY, "10:00", 30)
+    clock.mono += 1
+    await feed.tick()
+    assert st.price_history[-1]["time"][11:16] == "10:00" and st.price_history[-1]["close"] == 102.0
+
+
+@pytest.mark.asyncio
+async def test_a_good_start_resets_the_live_failure_streak():
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "10:00"), []
+    ib.live_bars_initial = [_bar(DAY, "09:30", 100.0)]
+    real = ib.req_historical_bars_live
+    state = {"fail": True}
+
+    async def flaky(contract, on_update, on_error=None, **kw):
+        if state["fail"]:
+            raise RuntimeError("boom")
+        return await real(contract, on_update, on_error, **kw)
+
+    ib.req_historical_bars_live = flaky
+    feed = _feed(ib, st, clock, msgs)
+    await feed.start()
+    clock.mono += 5.1
+    await feed.tick()
+    assert feed._live_failures == 2
+    state["fail"] = False
+    clock.mono += 15.1
+    await feed.tick()                                     # a good start clears the streak
+    assert feed._live_failures == 0 and feed._keep
+    state["fail"] = True
+    assert not await feed.start()
+    assert feed._live_failures == 1 and feed._keep        # a new streak starts from one, not from three

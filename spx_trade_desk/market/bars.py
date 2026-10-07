@@ -95,6 +95,11 @@ async def fetch_historical_bars(ib, state):
             "close": round(bar.close, 2),
         })
 
+    # The series' own session date: snapshots carry it and PriceBarFeed drops IB updates of another day.
+    last_dt = bars[-1].date
+    last_dt = last_dt.astimezone(ET) if last_dt.tzinfo else last_dt.replace(tzinfo=ET)
+    state.price_session_date = last_dt.date().isoformat()
+
     last_close = bars[-1].close
     state.spx_price = last_close
     state.spx_last_close = last_close
