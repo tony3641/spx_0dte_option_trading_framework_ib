@@ -60,13 +60,14 @@
         if (VALID_TABS.has(hashTab)) {
             return hashTab;
         }
-        const savedTab = localStorage.getItem(TAB_KEY);
+        let savedTab = null;
+        try { savedTab = localStorage.getItem(TAB_KEY); } catch (e) { /* storage blocked: start on the default tab */ }
         return VALID_TABS.has(savedTab) ? savedTab : 'dashboard';
     }
 
     function saveActiveTab(tab) {
         const validTab = getValidTab(tab);
-        localStorage.setItem(TAB_KEY, validTab);
+        try { localStorage.setItem(TAB_KEY, validTab); } catch (e) { /* storage blocked: the tab just is not remembered */ }
         if (history.replaceState) {
             history.replaceState(null, '', `#${validTab}`);
         } else {

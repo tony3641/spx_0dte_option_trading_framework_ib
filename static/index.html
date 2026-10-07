@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="/static/js/theme.js"></script>
     <title>SPX 0DTE Option Dashboard</title>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" integrity="sha384-7TVmlZWH60iKX5Uk7lSvQhjtcgw2tkFjuwLcXoRSR4zXTyWFJRm9aPAguMh7CIra" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js" integrity="sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="/static/css/tokens.css">
     <link rel="stylesheet" href="/static/css/theme.css">
     <link rel="stylesheet" href="/static/css/layout.css">
     <link rel="stylesheet" href="/static/css/charts.css">
@@ -40,6 +42,7 @@
                 <span class="status-label">Last GEX:</span>
                 <span class="status-value" id="lastGexUpdate">-</span>
             </div>
+            <button class="theme-toggle" id="themeToggle" onclick="toggleTheme(event)" title="Switch light/dark theme (Shift+click: follow the OS)" aria-label="Switch light/dark theme"><span class="theme-icon" aria-hidden="true"></span></button>
             <button class="settings-btn" id="settingsBtn" onclick="openSettings()" title="Settings">&#9881;</button>
         </div>
     </div>

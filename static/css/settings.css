@@ -11,6 +11,20 @@
     }
     .settings-btn:hover { color: #e2e8f0; border-color: #64748b; }
 
+    .theme-toggle {
+        background: var(--bg-raised);
+        color: var(--text-muted);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 4px 10px;
+        font-size: 14px;
+        cursor: pointer;
+        margin-left: 6px;
+    }
+    .theme-icon::before { content: "\2600"; }                         /* sun: currently dark, click for light */
+    :root[data-theme="light"] .theme-icon::before { content: "\263E"; }   /* moon: currently light, click for dark */
+    .theme-toggle:hover { color: var(--text-strong); border-color: var(--border-strong); }
+
     .settings-modal { width: 480px; max-height: 90vh; overflow-y: auto; }
 
     .settings-section {

@@ -75,6 +75,23 @@
         else data.price = { session_date: SESSION, mode: 'live', bars, overnight: [] };
         return { type: 'init', data };
     }
+    // A populated page for layout/theme tests: the v2 init plus an account with invented positions.
+    const SEED_ACCOUNT = {
+        summary: { NetLiquidation: 100000, ExcessLiquidity: 80000, FullAvailableFunds: 80000, BuyingPower: 160000,
+                   MaintMarginReq: 20000, GrossPositionValue: 5000, UnrealizedPnL: 412.5, RealizedPnL: -37.25 },
+        positions: [
+            { contract: { symbol: 'SPX', secType: 'OPT', expiry: '20990102', strike: 6100, right: 'P' }, position: -1,
+              averageCost: 150, marketPrice: 1.2, marketValue: -120, unrealizedPNL: 30, realizedPNL: 0 },
+            { contract: { symbol: 'SPX', secType: 'OPT', expiry: '20990102', strike: 6095, right: 'P' }, position: 1,
+              averageCost: 90, marketPrice: 0.8, marketValue: 80, unrealizedPNL: -10, realizedPNL: 0 },
+        ],
+        orders: [], executions: [],
+    };
+    window.__benchSeed = async function () {
+        const bars = Array.from({ length: 200 }, (_, i) => bar(i));
+        await window.__benchInject([initMessage('v2', bars), { type: 'account_update', data: SEED_ACCOUNT }]);
+    };
+
     function streamCycle(protocol) {
         const changed = [];
         for (let k = 0; k < 30; k++) {
