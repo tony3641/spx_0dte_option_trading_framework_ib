@@ -96,6 +96,7 @@
         const candles = Array.from(priceChart.bars.values()).sort((a, b) => a.time - b.time);
         const ts = priceChart.chart.timeScale();
         const keep = priceChart.needsFit ? null : ts.getVisibleLogicalRange();
+        const oldLen = priceChart.candles.data().length;
         priceChart.candles.setData(candles);
         const pts = Array.from(priceChart.overnightPts.values()).sort((a, b) => a.time - b.time);   // unique times
         priceChart.overnight.setData(pts);
@@ -107,7 +108,9 @@
             ts.fitContent();
             priceChart.needsFit = false;
         } else if (keep) {
-            ts.setVisibleLogicalRange(keep);
+            // A viewer at the live edge stays at it when the snapshot carries newer bars; a scrolled-back one keeps the range.
+            const shift = keep.to >= oldLen - 2 ? Math.max(0, candles.length - oldLen) : 0;
+            ts.setVisibleLogicalRange({ from: keep.from + shift, to: keep.to + shift });
         }
     }
 

@@ -359,7 +359,7 @@ def test_dock_stays_pinned_while_the_table_scrolls_and_clears(browser_env):
         after = _rect(page, "#strategyPanel")
         assert abs(before["t"] - after["t"]) < 1 and after["b"] <= 1001
         page.evaluate("() => clearStrategy()")
-        assert page.evaluate("() => document.getElementById('strategyDockLine').textContent") == ""
+        assert page.evaluate("() => document.getElementById('strategyDockLine').textContent") == "Click Ask to buy or Bid to sell an option"        # the empty dock says how to start
         assert not page.is_visible("#orderEntryRow")
     finally:
         browser.close()
@@ -501,5 +501,57 @@ def test_help_tooltips_are_not_clipped_by_their_panel(browser_env):
                 return {inside: t.contains(el), right: r.right, bottom: r.bottom}; }""", i)
             assert visible["inside"], (i, visible)
             assert visible["right"] <= 1440 and visible["bottom"] <= 900
+    finally:
+        browser.close()
+
+
+def test_a_reconnect_snapshot_with_new_bars_keeps_the_live_edge_in_view(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    try:
+        for _ in range(3):
+            page.evaluate(FRAMES)
+        page.evaluate("""() => {
+            const bars = Array.from(priceChart.bars.values()).sort((a, b) => a.time - b.time);
+            const last = bars[bars.length - 1];
+            const all = bars.slice();
+            for (let k = 1; k <= 15; k++) all.push({time: last.time + 60 * k, open: last.close, high: last.close + 1, low: last.close - 1, close: last.close});
+            window.__newLast = all.length - 1;
+            window.__snap = {session_date: priceChart.sessionDate, mode: 'live', overnight: [],
+                bars: all.map(c => ({time: new Date(c.time * 1000).toISOString().slice(0, 19) + '-05:00', time_short: '',
+                                     open: c.open, high: c.high, low: c.low, close: c.close}))};
+        }""")
+        page.evaluate("() => window.__benchInject({type: 'price_snapshot', data: window.__snap})")
+        rng = page.evaluate("() => priceChart.chart.timeScale().getVisibleLogicalRange()")
+        assert rng["to"] >= page.evaluate("() => window.__newLast") - 1, rng     # the newest bars are on screen
+    finally:
+        browser.close()
+
+
+def test_the_loading_overlay_is_readable_in_the_light_theme(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "light")
+    try:
+        got = page.evaluate("""() => {
+            const el = document.querySelector('.gex-loading');
+            el.classList.remove('hidden');
+            const bg = getComputedStyle(el).backgroundColor;
+            const m = bg.match(/rgba?[(]([^)]+)[)]/)[1].split(',').map(s => parseFloat(s));
+            el.classList.add('hidden');
+            return m.length === 4 ? m[3] : 1;
+        }""")
+        assert got >= 0.95, got              # a translucent scrim lets the white panel through and drops the text below AA
+    finally:
+        browser.close()
+
+
+def test_the_empty_dock_still_says_how_to_start(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", tab="chain")
+    try:
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => document.getElementById('strategyPanel').classList.contains('dock-collapsed')")
+        text = page.evaluate("() => document.getElementById('strategyDockLine').textContent")
+        assert "Ask" in text and "Bid" in text, text
     finally:
         browser.close()

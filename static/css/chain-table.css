@@ -85,8 +85,8 @@
             border-right: 1px solid var(--border);
         }
         .chain-table td.strike-col.strike-sigma-1 { background: var(--info-bg); }
-        .chain-table td.strike-col.strike-sigma-2 { background: color-mix(in srgb, var(--info) 24%, var(--bg-panel)); }
-        .chain-table td.strike-col.strike-sigma-3 { background: color-mix(in srgb, var(--info) 34%, var(--bg-panel)); }
+        .chain-table td.strike-col.strike-sigma-2 { background: var(--sigma-2-bg); color: var(--text-strong); }
+        .chain-table td.strike-col.strike-sigma-3 { background: var(--sigma-3-bg); color: var(--text-strong); }
 
         /* Clickable bid/ask cells */
         .chain-table td.cell-bid {

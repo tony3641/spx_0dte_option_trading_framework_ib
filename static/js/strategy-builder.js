@@ -65,7 +65,7 @@
         const el = document.getElementById('strategyDockLine');
         if (!el) return;
         const legs = state.strategyLegs;
-        let text = '';
+        let text = 'Click Ask to buy or Bid to sell an option';
         if (legs.length) {
             const names = legs.map(l => `${l.action === 'BUY' ? 'Buy' : 'Sell'} ${l.strike}${l.right}`).join(' / ');
             const net = (document.getElementById('comboNet') || {}).textContent || '-';

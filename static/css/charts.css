@@ -141,9 +141,8 @@
             align-items: center;
             justify-content: center;
             gap: 14px;
-            background: var(--scrim);
+            background: var(--bg-panel);           /* opaque: a translucent scrim lets the panel through and drops the text below AA */
             border-radius: 8px;
-            backdrop-filter: blur(2px);
         }
         .gex-loading.hidden { display: none; }
         .gex-loading-spinner {

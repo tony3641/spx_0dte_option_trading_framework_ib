@@ -116,3 +116,16 @@ def test_every_used_var_is_defined():
             local |= set(re.findall(r"(?<![\w-])--([a-z0-9-]+)\s*:", text))
     missing = used - defined - local - RUNTIME_VARS
     assert not missing, f"var(--x) used but never defined: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_strike_text_on_the_sigma_bands_meets_aa(theme):
+    dark, light = _blocks()
+    tokens = {k[2:]: v for k, v in {**dark, **(light if theme == "light" else {})}.items()}
+    bad = [(band, round(_ratio(tokens["text-strong"], tokens[band]), 2))
+           for band in ("sigma-2-bg", "sigma-3-bg") if _ratio(tokens["text-strong"], tokens[band]) < 4.5]
+    assert not bad, f"{theme}: {bad}"
+    css = (STATIC / "css" / "chain-table.css").read_text(encoding="utf-8")
+    for band in ("2", "3"):
+        rule = re.search(r"strike-col\.strike-sigma-%s\s*\{([^}]*)\}" % band, css).group(1)
+        assert "var(--sigma-%s-bg)" % band in rule and "color: var(--text-strong)" in rule, rule

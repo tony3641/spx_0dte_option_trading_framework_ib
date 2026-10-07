@@ -30,6 +30,8 @@
     --down-solid: #5c1d1f;
     --info: #58a6ff;
     --info-bg: rgba(88, 166, 255, .14);
+    --sigma-2-bg: #1f354f;
+    --sigma-3-bg: #264466;
     --alt: #bc8cff;
     --alt-bg: rgba(188, 140, 255, .14);
     --itm-call: rgba(63, 185, 80, .10);
@@ -84,6 +86,8 @@
     --down-solid: #ffcecb;
     --info: #0860ca;
     --info-bg: rgba(8, 96, 202, .10);
+    --sigma-2-bg: #c4d9f2;
+    --sigma-3-bg: #abc9ed;
     --alt: #7a45d6;
     --alt-bg: rgba(122, 69, 214, .10);
     --itm-call: rgba(23, 114, 47, .08);

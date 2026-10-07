@@ -164,7 +164,7 @@ Source: spx_trade_desk/core/config.py
 - Reconnect delays: 500, 1000, 2000 ms, then every 3000 ms (the attempt counter resets when a socket opens)
 
 ### static/js/main.js
-- `--shell-h` CSS variable: measured height of the header, tab bar and status bar (`syncShellHeight()`); the dashboard grid and chain container fill the rest of the viewport (CSS fallback 134px)
+- `--shell-h` CSS variable: measured height of the header, level strip and tab bar (`syncShellHeight()`, re-run on resize); the dashboard grid and chain container fill the rest of the viewport (CSS fallback 134px)
 - Chain age update interval: 1000 ms (also toggles the chain table's quote-stale marks)
 
 ### static/js/tabs.js
@@ -182,7 +182,7 @@ Source: spx_trade_desk/core/config.py
 ### static/js/price-chart.js
 - Level price lines: Call Wall, Put Wall (solid), Gamma Flip, Max Pain (dashed)
 - Candle and line colors come from `themeColors()` (tokens in static/css/tokens.css), re-applied on `themechange`
-- A reconnect snapshot of the same session keeps the visible range; only the first snapshot and a new session fit the content
+- A reconnect snapshot of the same session keeps the visible range (shifted by the number of new bars when the viewer was at the live edge); only the first snapshot and a new session fit the content
 - Times: ET wall-clock encoded as UTC seconds (Date.UTC)
 
 ### static/js/chain-table.js
