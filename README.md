@@ -8,13 +8,14 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
 |---|---|
 | Broker API | native `ibapi` → IB TWS/Gateway (port 7497) |
 | Backend | Python 3.10, FastAPI, uvicorn |
-| Real-time push | WebSocket broadcast |
-| Frontend | Vanilla JS + Plotly 2.32 |
+| Real-time push | WebSocket, one send channel per browser (changed-field chain ticks, latest-wins snapshots) |
+| Frontend | Vanilla JS, no build step: Plotly 2.32 (GEX, IV smile) and TradingView Lightweight Charts 5.2.1 (SPX price chart), both from a CDN |
 
 ## Features
 
 - **GEX dashboard with 0DTE / Monthly toggle** — switch the GEX calculation between the current 0DTE SPXW expiry and the monthly SPX expiry.
-- **Real-time option chain streaming** — live 0DTE chain with greeks, wall/flip markers, and a strike filter.
+- **SPX price chart** — today's session from the 09:30 ET open as 1-minute bars from IB with the current minute following the live SPX price; outside regular hours the last session plus a dotted ES-derived line.
+- **Real-time option chain streaming** — live 0DTE chain with greeks, wall/flip markers, and a strike filter; only changed fields stream and the table is patched in place.
 - **Account / Order Management tab** — account summary, portfolio positions, and order placement with **Stop Limit** support (also accessible as an order-entry widget on the dashboard).
 - **Strategies tab** — define automated multi-leg strategies and let the server watch the market for you:
   - Conditions (entry window, short delta, spread width, credit, trend, volatility), triggers, and a candidate scanner.
@@ -453,8 +454,12 @@ New runtime dependencies: `pandas`, `pdfplumber`, `mcp`.
 ## Charts
 
 ### 1. SPX Intraday (top)
-Candlestick chart with key GEX levels overlaid:
-- Call Wall, Put Wall, Gamma Flip, Max Pain
+Candlestick chart of 1-minute SPX bars on TradingView Lightweight Charts. Times are Eastern (ET) whatever the PC's time zone.
+- **Regular hours:** today's session from the 09:30 ET open. The completed bars come from IB, which keeps a 1-minute historical-bars request open (`keepUpToDate`). The current minute also follows the live SPX **last** price once a second (never bid or ask) until IB's own update for that minute replaces it. The server builds the series, so no minute is lost while the page sits on another tab or reconnects.
+- **Outside regular hours:** the last regular session's bars plus a dotted ES-derived SPX line, one point per minute (see Data Modes). At 09:30 ET the chart resets to the new day and the dotted line is cleared.
+- **Levels:** Call Wall, Put Wall, Gamma Flip and Max Pain are price lines, redrawn only when GEX publishes a different value.
+- **When IB fails:** an error on the bar request, or no update for 3 minutes in regular hours, cancels the request and asks again after 5 s, then 15 s, then every 60 s, with the reason on the Log tab; the chart keeps its last bars meanwhile. `PRICE_BARS_KEEP_UP_TO_DATE=false` is the fallback source: one backfill at start-up, at the open and on reconnect, with the forming bar built from the live SPX last price. The `keepUpToDate` request has not been run against a live TWS yet (see `docs/progress.md`); `python -m spx_trade_desk.ib.bars_probe` checks it on paper.
+- If the Lightweight Charts script cannot be loaded (CDN down) the chart area shows a short error text and the rest of the page keeps working.
 
 ### 2. Gamma Exposure (GEX) by Strike (middle)
 Bar chart showing Call GEX (green) and Put GEX (red) by strike with:
@@ -475,8 +480,32 @@ Two-row subplot showing:
 ### 4. Real-time Option Chain Streaming
 - Live streaming 0DTE option chain with greeks
 - Markers on Put Wall, Call Wall, and Gamma Flip location
+- Every 0.5 s (`CHAIN_STREAM_UPDATE_INTERVAL`) the server sends one `chain_tick` holding only the fields that changed for each strike and side, and nothing when nothing changed. The full chain (`chain_quotes`) goes out every `CHAIN_REFRESH_SECONDS` (10 s).
+- The table is built once and patched in place: a changed cell is rewritten and flashed once per animation frame, rows are added or removed only when the visible strike range changes, and hover, selected legs and the scroll position survive updates. One delegated click handler serves the whole table.
+- Dimming follows when each side last ticked in your browser; a full payload re-seeds it from the quote ages. A browser that connects between two full refreshes starts from the last full payload, so a contract that changed since can show a value up to 10 s old until the next full refresh.
 
 The strikes nearest spot (or nearest your scroll position in the chain tab) stream live on the chain stream's line share. Every other strike in the +-8 sigma range is polled continuously in small batches on the poller's share, so the live stream never pauses. Both feed one quote book. Every `CHAIN_REFRESH_SECONDS` it is published as GEX, the chain table and the strategy engine's chain cache. Each side carries its quote age; sides older than `CHAIN_QUOTE_MAX_AGE_S` are dimmed and are never used as a candidate leg. A streamed row ages from its stream's last tick, so a silent data farm ages out the same way. Contract ids come from one bulk listing per expiry, requests to TWS are paced, and if IB refuses a market-data line (error 101) the app shrinks its line budget to the lines IB actually granted and logs the value to set in MARKET_DATA_LINES.
+
+## Push and Rendering
+
+**Server push** (`web/push.py`). Every browser has its own send channel and writer task, so a slow tab never delays the server's loops, order feedback or another browser. `broadcast` stamps the message with the server time, serializes it once and enqueues it for each browser; it never waits on a socket.
+
+| Kind | Messages | Behaviour |
+|---|---|---|
+| critical | `init`, `order_status`, `ib_error`, `strategy_*`, replies to a browser's own messages | ordered, never dropped, sent first |
+| log | `log` lines | ordered, at most 500 unsent; on overflow the oldest are dropped and one line says how many |
+| merge | `chain_tick` | pending ticks are merged per strike and side, field by field |
+| latest | `status`, `vix_update`, `gex`, `chain_quotes`, `account_update`, `price_snapshot`, `price_bar` (per minute), `price_overnight`, monthly GEX | a newer message replaces an unsent one with the same key |
+
+A browser with more than `PUSH_ORDERED_BACKLOG_MAX` unsent critical messages, or whose send takes longer than `PUSH_SEND_TIMEOUT_S`, is dropped; the others are unaffected. The page reconnects (after 0.5 s, 1 s, 2 s, then every 3 s) and receives a fresh `init`.
+
+**Orders.** A cancel runs off the browser's receive loop: the page keeps working while IB confirms (up to 2 s) and gets the reply when it settles. An order IB reports as `PendingCancel` shows as "Cancel pending" until the next order status or account update resolves it. Placing an order is unchanged.
+
+**Rendering** (`static/js/render-loop.js`). Incoming messages update a model, and drawing happens once per animation frame:
+- Light jobs (price bars, chain cells, badges, account) run first in the frame.
+- Heavy jobs (the GEX and IV smile Plotly draws, tens of milliseconds each) run one per frame, after the light jobs, so a price bar or chain tick that arrives together with a GEX publish is painted before the chart draw starts. A heavy job that has waited behind four busy frames runs anyway.
+- The spot line on the GEX and smile charts moves with a light relayout at most once every 2 s per chart.
+- A chart is drawn only while its tab is visible and its container has a size (`ResizeObserver`); what changed while a tab was hidden is painted once when the tab is shown.
 
 ## Status Bar
 
@@ -525,7 +554,8 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/market/capture.py` | Standalone chain capture (`python -m spx_trade_desk.market.capture`): records when the dashboard is not running |
 | `spx_trade_desk/market/gex.py` | GEX computation: Call/Put Wall, Gamma Flip, Max Pain, Net GEX, MM regime |
 | `spx_trade_desk/market/hours.py` | Market-hours helpers, ET timezone, expiration, FOMC/NFP day utilities |
-| `spx_trade_desk/market/bars.py` / `core/rates.py` | Historical bars and risk-free-rate (SGOV) helpers |
+| `spx_trade_desk/market/price_bars.py` | The SPX 1-minute bar series for the price chart: IB `keepUpToDate` request, forming-bar merge from the live SPX last, ES-derived overnight line, 09:30 reset, re-request with backoff, `price_snapshot` / `price_bar` / `price_overnight` messages |
+| `spx_trade_desk/market/bars.py` / `core/rates.py` | One-shot historical bars (the chain poller's spot fallback), annualized-vol helper and risk-free-rate (SGOV) helpers |
 | `spx_trade_desk/ib/orders.py` | Order placement, take-profit close loop, stop-loss handling |
 | `spx_trade_desk/ib/account.py` | Account values, portfolio positions, executions serialization |
 | `spx_trade_desk/strategy/models.py` | Strategy/Condition/Trigger/TakeProfit/StopLoss/RuntimeState dataclasses |
@@ -555,8 +585,12 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/tradelog/report/` | Self-contained HTML monthly report builder |
 | `spx_trade_desk/mcp/` | FastMCP stdio server (11 tools) and its DataFrame→JSON adapter |
 | `reports/data/`, `reports/output/` | Seed SPX/VIX market data (committed) and generated reports (gitignored) |
-| `static/` | Browser app: `index.html`, `css/`, `js/` (charts, chain table, order entry, strategy UI, tabs, WS) |
+| `static/` | Browser app: `index.html`, `css/`, `js/` (charts, price chart, render loop, chain table, order entry, strategy UI, tabs, WS) |
+| `static/js/price-chart.js` | SPX price chart on Lightweight Charts: snapshot, per-bar updates, overnight line, level price lines, ET time axis |
+| `static/js/render-loop.js` | Frame batching: light and heavy job lanes, hidden-tab parking |
+| `static/js/perf.js` | Browser-side timings (server stamp to receipt, receipt to paint, long tasks), sent to the server as `perf_report` every 10 s |
 | `tests/` | Pytest suite + `run_tests.py` structured runner |
+| `tests/e2e/` | Playwright tier against the real server with IB pointed at a closed port (`hermetic_server.py`): price chart, chain table and dashboard render tests, and the render benchmark (`render_bench.py` / `render_bench.js`, `test_render_perf_playwright.py`) |
 
 ## Configuration
 
@@ -578,6 +612,7 @@ Settings are resolved in order: **environment variable → repo-root `.env` → 
 | `ORDER_MID_MAX_AGE_S` | `2.0` | A dynamic-fill order takes its starting mid from the chain's quote book when the quote is at most this old and two-sided; otherwise it subscribes to the contract |
 | `PERF_LOG_SECONDS` | `60` | Seconds between perf summary log lines (`0` disables). Same data: `GET /api/perf` on localhost |
 | `CHAIN_QUOTE_MAX_AGE_S` | `180` | Quotes older than this are dimmed in the chain tab and ignored by the strategy engine |
+| `PRICE_BARS_KEEP_UP_TO_DATE` | `true` | Price chart bars come from an IB `keepUpToDate` request. `false` falls back to one backfill at start-up, at the 09:30 open and on reconnect, with the forming bar built from the live SPX last price. The live `keepUpToDate` check on a paper TWS is still open (see `docs/progress.md`) |
 | `PUSH_ORDERED_BACKLOG_MAX` | `1000` | Unsent ordered messages (order status, IB errors, replies) one browser may hold before the server drops it; the page reconnects and gets a fresh `init` |
 | `PUSH_SEND_TIMEOUT_S` | `5.0` | One WebSocket send longer than this drops that browser only (the others keep streaming) |
 | `CAPTURE_CLIENT_ID` | `97` | IB client id of the standalone chain capture |
@@ -599,10 +634,12 @@ Additional tunables (chain streaming, batch sizes, viewport sync, SPXW cease/gap
 ### Measuring the IB layer
 
 - `GET /api/perf` (localhost only) shows n / p50 / p95 / max / last for connect, contract lookups, bulk listing, order place-to-ack, cancel-to-terminal, pacer wait, chain stream cycle and startup, plus the error-101 and registry counters (hit, miss, rejected non-SMART rows). The log line every `PERF_LOG_SECONDS` carries n / p50 / p95 and the counters; `max` is on `/api/perf` only.
-- The browser push shows up on `/api/perf` too: `push.broadcast` (enqueueing one message for every browser), `push.queue_wait` (time a message waited in a browser's queue) and `push.send` (one socket send). Render timings a page sends back in a `perf_report:` WebSocket message are recorded as `client.*` spans (for example `client.chain_tick.paint`), up to 50 names and 200 samples per name per report; malformed names (anything but lowercase dotted words) and samples outside 0 to 60000 ms are dropped.
+- The browser push shows up on `/api/perf` too: `push.broadcast` (enqueueing one message for every browser), `push.queue_wait` (time a message waited in a browser's queue) and `push.send` (one socket send). Render timings a page sends back in a `perf_report:` WebSocket message are recorded as `client.*` spans, up to 50 names and 200 samples per name per report: `client.<type>.recv` (server stamp to the browser's receipt, for example `client.chain_tick.recv`), `client.<type>.paint` (receipt to the end of the frame job that drew it, for example `client.price_bar.paint`) and `client.longtask` (main-thread tasks over 50 ms). Malformed names (anything but lowercase dotted words) and samples outside 0 to 60000 ms are dropped.
+- The price bar feed adds `price_bars.update` (count of IB bar updates), `price_bars.update_gap` (ms between IB updates) and `price_bars.restart` (count of requests made).
 - `python -m spx_trade_desk.ib.line_probe` finds how many market-data lines your account really has (stop the dashboard and close TWS watchlists first; it only reads market data) and prints a `MARKET_DATA_LINES` value with 10% head-room. Setting it above 100 lets the chain stream cover more strikes, up to `CHAIN_STREAM_MAX_LINES_CAP` lines (lines beyond the cap go to the poller, whose snapshot batches stay at 50 lines or fewer); keep it opt-in until you have watched the Log tab for error 101.
 - `python -m spx_trade_desk.ib.latency_probe` is the acceptance run on a **paper** account (it refuses any other): it places and cancels non-fillable orders and prints each latency target as PASS / NEAR / MISS. It refuses live ports and exits non-zero on a MISS or an unmeasured target.
 - `python -m spx_trade_desk.ib.bars_probe` checks how IB keeps SPX 1-minute bars up to date (`keepUpToDate`): it prints the initial bars and how often updates arrive over `--seconds` (default 180); it is read-only, refuses live ports (run it on paper TWS) and needs regular hours, since IB sends no updates outside them.
+- `python -m tests.e2e.render_bench --protocol v2 --seconds 60 [--out result.json]` is the render benchmark (needs Playwright and Chromium). It starts the real server with IB pointed at a closed port and feeds the page invented messages: 120 strikes, a `chain_tick` for about 30 changed contracts every 0.5 s, a price-bar update every second, a full `chain_quotes` and `gex` every 10 s, for `--seconds` on the Dashboard tab and then on the Chain tab. It prints, per tab, p50 / p95 / max of inject-to-painted-frame for the stream cycle, the price bar and the full publish, plus the long tasks over 50 ms. `--protocol v1` replays the old message mix and is valid only on commit `577db68`. Timings vary by 2 to 3 times between runs on a laptop, so compare runs made on the same machine in the same power state. `python -m pytest tests/e2e/test_render_perf_playwright.py` checks the run for errors and against generous ceilings (`RENDER_BENCH_SECONDS=12` for a smoke run); `RENDER_BENCH_STRICT=1` also asserts the design targets (stream cycle p95 at most 50 ms, price bar p95 at most 20 ms, no long tasks). Results are in `docs/progress.md`.
 
 ## Discord Bot
 
@@ -649,6 +686,8 @@ connection badge is display-only now.
 
 ## Data Modes
 
-- **LIVE** — SPX streaming quote from IB during RTH (09:30–16:15 ET).
-- **ES-DERIVED** — Off-hours SPX price inferred from ES front-month futures movement relative to the last SPX close.
-- **HISTORICAL** — Last available historical bars when markets are closed and ES is unavailable.
+- **LIVE** — SPX streaming quote from IB during RTH (09:30–16:15 ET). The price chart shows today's session from 09:30 with live 1-minute bars.
+- **ES-DERIVED** — Off-hours SPX price inferred from ES front-month futures movement relative to the last SPX close. The price chart shows the last regular session's bars and adds a dotted line with one derived SPX point per minute; at 09:30 ET the line is cleared and the chart switches to today's session.
+- **HISTORICAL** — Last available historical bars when markets are closed and ES is unavailable. The price chart shows the last regular session and no dotted line.
+
+**Trend conditions and the bar series.** A strategy's trend condition (RSI, percent change) reads the same 1-minute series as the price chart. In regular hours that series holds only today's bars from 09:30; a server that was running across the open no longer keeps the previous session's bars in front of them. Until enough bars exist (about 15 for RSI(14), the number of minutes plus 1 for percent change) the condition cannot be evaluated: it counts as not met and blocks the entry rather than passing on missing data. Expect trend-gated strategies to wait for roughly the first quarter hour after the open.

@@ -93,7 +93,7 @@
         <div class="chart-panel">
             <div class="chart-title"><span id="priceChartTitle">SPX Intraday</span>
                 <span class="help" tabindex="0" aria-label="Price chart info">?
-                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars kept up to date by IB; the forming bar also follows the live SPX last price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. Times are ET.</span>
+                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. Call wall, put wall, gamma flip and max pain are drawn as price lines. Times are ET.</span>
                 </span>
             </div>
             <div id="priceChart"></div>
@@ -138,7 +138,7 @@
                 <div id="chainRangeInfo">Visible range: -</div>
                 <div id="chainLastUpdateInfo" style="font-size:11px;color:#64748b;">Last update: -</div>
                 <span class="help" tabindex="0" aria-label="Chain quote freshness">?
-                    <span class="tooltip" role="tooltip">Strikes near spot stream live; how many depends on your market-data line budget. The rest of the chain is refreshed by a slower poller, and contract ids come from one listing per expiry. A side is dimmed when its quote is older than CHAIN_QUOTE_MAX_AGE_S (180 s by default), and the strategy engine ignores dimmed legs.</span>
+                    <span class="tooltip" role="tooltip">Strikes near spot stream live; how many depends on your market-data line budget. The rest of the chain is refreshed by a slower poller, and contract ids come from one listing per expiry. A side is dimmed when its quote is older than CHAIN_QUOTE_MAX_AGE_S (180 s by default), and the strategy engine ignores dimmed legs. Only changed fields stream; the full chain refreshes every 10 s.</span>
                 </span>
             </div>
             <button class="chain-refresh-btn" onclick="manualRefreshChain()">Manual Update</button>

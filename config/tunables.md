@@ -35,6 +35,7 @@ Source: spx_trade_desk/core/config.py
 
 ### spx_trade_desk/core/app_state.py
 - price_history maxlen: 28800
+- price_overnight maxlen: 1440 (ES-derived SPX points, one per minute outside RTH)
 - annual_vol default: 0.20
 - risk_free_rate default: 0.043
 
@@ -154,14 +155,27 @@ Source: spx_trade_desk/core/config.py
 
 ### static/js/ws.js
 - Initial viewport report delay after open: 120 ms
-- Reconnect delay: 3000 ms
+- Reconnect delays: 500, 1000, 2000 ms, then every 3000 ms (the attempt counter resets when a socket opens)
 
 ### static/js/main.js
-- Chain age update interval: 1000 ms
+- Chain age update interval: 1000 ms (also toggles the chain table's quote-stale marks)
 
 ### static/js/tabs.js
-- Dashboard resize delay after switch: 50 ms
+- (the 50 ms Dashboard resize timer is gone: a ResizeObserver in main.js sizes the GEX and smile charts)
 - Chain viewport recenter delay after switch: 80 ms
+
+### static/js/render-loop.js
+- Frame batching: one requestAnimationFrame flush per frame for light jobs
+- HEAVY_MAX_WAIT_FLUSHES: 4 (a heavy job, such as a GEX or smile Plotly draw, runs one per frame after the light jobs; after waiting behind this many busy flushes it runs in a frame that also has light jobs)
+
+### static/js/perf.js
+- PERF_REPORT_MS: 10000 (browser perf_report interval)
+- PERF_MAX_SAMPLES: 200 (per span name and report; the server keeps at most 50 names and 200 samples per name, and drops samples outside 0..60000 ms)
+
+### static/js/price-chart.js
+- Level price lines: Call Wall, Put Wall (solid), Gamma Flip, Max Pain (dashed)
+- Candle colours #22c55e / #ef4444; ES-derived line #facc15, dotted, 1 px
+- Times: ET wall-clock encoded as UTC seconds (Date.UTC)
 
 ### static/js/chain-table.js
 - Visible strike window: +/-5 sigma plus +/-60 points
@@ -169,6 +183,7 @@ Source: spx_trade_desk/core/config.py
 
 ### static/js/charts.js
 - Mobile breakpoint: 600 px
+- state.spotLineMinIntervalMs: 2000 (at most one spot-line relayout per GEX / smile chart in this window; set in state.js)
 - Theme colors:
   - CHART_BG = #111827
   - GRID_COLOR = #1e293b
@@ -182,6 +197,7 @@ Source: spx_trade_desk/core/config.py
 
 ### static/js/order-entry.js
 - Toast auto-hide timeout: 5000 ms
+- CANCEL_PENDING_TTL_MS: 60000 (a cancel IB has not confirmed after this long is reported as lost; a second click inside it sends nothing)
 
 ### static/js/strategy-builder.js
 - SPX tick rule: >2 uses 0.10, otherwise 0.05
