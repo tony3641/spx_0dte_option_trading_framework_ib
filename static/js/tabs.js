@@ -30,16 +30,18 @@
             dashboard.classList.add('active');
             // Trigger Plotly resize since charts were hidden
             setTimeout(() => {
-                Plotly.Plots.resize('priceChart');
                 Plotly.Plots.resize('gexChart');
                 Plotly.Plots.resize('smileChart');
             }, 50);
+            onDashboardShown();
         } else if (tab === 'chain') {
             chain.classList.add('active');
+            flushHiddenDirty('chain');
             scrollToATM();
             setTimeout(() => { reportChainViewportCenter(true); }, 80);
         } else if (tab === 'account') {
             account.classList.add('active');
+            flushHiddenDirty('account');
             renderAccountTab();
         } else if (tab === 'strategies') {
             strategies.classList.add('active');

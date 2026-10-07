@@ -9,9 +9,6 @@
     // ======================================================================
     function isMobile() { return window.innerWidth < 600; }
 
-    function mobilePriceMargin() {
-        return isMobile() ? { t: 28, r: 50, b: 32, l: 40 } : { t: 36, r: 80, b: 40, l: 60 };
-    }
     function mobileGexMargin() {
         return isMobile() ? { t: 28, r: 30, b: 32, l: 40 } : { t: 36, r: 60, b: 40, l: 60 };
     }
@@ -21,28 +18,6 @@
             : { t: 28, r: 60, b: 30, l: 60 };
     }
     function mobileAxisFontSize() { return isMobile() ? 9 : 11; }
-
-    const priceLayout = {
-        paper_bgcolor: CHART_BG,
-        plot_bgcolor: CHART_BG,
-        margin: { t: 36, r: 80, b: 40, l: 60 },
-        xaxis: {
-            color: TEXT_COLOR,
-            gridcolor: GRID_COLOR,
-            tickformat: '%H:%M',
-            type: 'date',
-            rangeslider: { visible: false },
-        },
-        yaxis: {
-            color: TEXT_COLOR,
-            gridcolor: GRID_COLOR,
-            side: 'right',
-            tickformat: ',.2f',
-        },
-        showlegend: false,
-        shapes: [],
-        annotations: [],
-    };
 
     const gexLayout = {
         paper_bgcolor: CHART_BG,
@@ -68,24 +43,6 @@
         shapes: [],
         annotations: [],
     };
-
-    function initPriceChart() {
-        Plotly.newPlot('priceChart', [{
-            x: [],
-            open: [],
-            high: [],
-            low: [],
-            close: [],
-            type: 'candlestick',
-            name: 'SPX',
-            increasing: { line: { color: '#22c55e' }, fillcolor: '#22c55e' },
-            decreasing: { line: { color: '#ef4444' }, fillcolor: '#ef4444' },
-        }], { ...priceLayout, margin: mobilePriceMargin() }, {
-            responsive: true,
-            displayModeBar: false,
-        });
-        state.priceChartReady = true;
-    }
 
     function initGexChart() {
         const fs = mobileAxisFontSize();
@@ -166,120 +123,6 @@
     // ======================================================================
     // Chart update functions
     // ======================================================================
-    function updatePriceChart() {
-        if (!state.priceChartReady || state.bars.length === 0) return;
-
-        const times  = state.bars.map(b => b.time);
-        const opens  = state.bars.map(b => b.open);
-        const highs  = state.bars.map(b => b.high);
-        const lows   = state.bars.map(b => b.low);
-        const closes = state.bars.map(b => b.close);
-
-        // Detect session boundary: first bar of the most-recent calendar date
-        let sessionStartTime = null;
-        if (state.bars.length > 1) {
-            const lastDate = state.bars[state.bars.length - 1].time.substring(0, 10);
-            for (let i = 0; i < state.bars.length; i++) {
-                if (state.bars[i].time.substring(0, 10) === lastDate) {
-                    // Only draw the line when there are prev-day bars
-                    if (i > 0) sessionStartTime = state.bars[i].time;
-                    break;
-                }
-            }
-        }
-
-        // Build horizontal level lines
-        const shapes = [];
-        const annotations = [];
-
-        // Session-boundary vertical line
-        if (sessionStartTime) {
-            const sessionDate = sessionStartTime.substring(0, 10);
-            shapes.push({
-                type: 'line',
-                xref: 'x', x0: sessionStartTime, x1: sessionStartTime,
-                yref: 'paper', y0: 0, y1: 1,
-                line: { color: '#475569', width: 1.5, dash: 'dashdot' },
-            });
-            annotations.push({
-                xref: 'x', x: sessionStartTime,
-                yref: 'paper', y: 0.99,
-                text: `- ${sessionDate}`,
-                showarrow: false,
-                font: { color: '#94a3b8', size: 10 },
-                xanchor: 'left',
-                bgcolor: 'rgba(17,24,39,0.85)',
-                borderpad: 3,
-            });
-        }
-
-        if (state.gex) {
-            const levels = [
-                { val: state.gex.call_wall, color: '#22c55e', label: 'Call Wall', dash: 'solid' },
-                { val: state.gex.put_wall, color: '#ef4444', label: 'Put Wall', dash: 'solid' },
-                { val: state.gex.gamma_flip, color: '#eab308', label: 'Gamma Flip', dash: 'dash' },
-                { val: state.gex.max_pain, color: '#3b82f6', label: 'Max Pain', dash: 'dash' },
-            ];
-
-            for (const lv of levels) {
-                if (lv.val == null) continue;
-                shapes.push({
-                    type: 'line',
-                    xref: 'paper', x0: 0, x1: 1,
-                    yref: 'y', y0: lv.val, y1: lv.val,
-                    line: { color: lv.color, width: 1.5, dash: lv.dash },
-                });
-                annotations.push({
-                    xref: 'paper', x: 1.01,
-                    yref: 'y', y: lv.val,
-                    text: `${lv.label} ${lv.val}`,
-                    showarrow: false,
-                    font: { color: lv.color, size: 10 },
-                    xanchor: 'left',
-                });
-            }
-        }
-
-        Plotly.react('priceChart', [{
-            x: times,
-            open: opens,
-            high: highs,
-            low: lows,
-            close: closes,
-            type: 'candlestick',
-            name: 'SPX',
-            increasing: { line: { color: '#22c55e' }, fillcolor: '#22c55e' },
-            decreasing: { line: { color: '#ef4444' }, fillcolor: '#ef4444' },
-        }], {
-            ...priceLayout,
-            shapes,
-            annotations,
-        });
-    }
-
-    function appendBar(bar) {
-        state.bars.push(bar);
-        if (state.bars.length > 7200) {
-            state.bars = state.bars.slice(-7200);
-        }
-        updatePriceChart();
-    }
-
-    function updateLastBar(bar) {
-        if (state.bars.length === 0) {
-            state.bars.push(bar);
-        } else {
-            // Replace the last bar (same minute)
-            const last = state.bars[state.bars.length - 1];
-            if (last.time === bar.time) {
-                state.bars[state.bars.length - 1] = bar;
-            } else {
-                state.bars.push(bar);
-            }
-        }
-        updatePriceChart();
-    }
-
     function handleChainProgress(data) {
         const gexOverlay  = document.getElementById('gexLoading');
         const gexTextEl   = document.getElementById('gexLoadingText');

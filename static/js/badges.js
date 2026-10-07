@@ -12,7 +12,7 @@
     }
 
     function updateBadges() {
-        const spot = state.bars.length > 0 ? state.bars[state.bars.length - 1].close : null;
+        const spot = priceChart.latest ? priceChart.latest.close : null;   // latest bar of the shown series
         document.getElementById('spotBadge').textContent = spot ? spot.toFixed(2) : '-';
 
         if (state.gex) {

@@ -1,7 +1,6 @@
     // State
     // ======================================================================
     const state = {
-        bars: [],          // [{time, open, high, low, close}]
         gex: null,         // latest gex data
         wsConnected: false,
         ibConnected: false,

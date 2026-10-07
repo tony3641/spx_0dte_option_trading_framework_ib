@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPX 0DTE Option Dashboard</title>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
     <link rel="stylesheet" href="/static/css/theme.css">
     <link rel="stylesheet" href="/static/css/layout.css">
     <link rel="stylesheet" href="/static/css/charts.css">
@@ -90,7 +91,11 @@
     <!-- Charts (Tab 1) -->
     <div class="charts-container active" id="dashboardTab">
         <div class="chart-panel">
-            <div class="chart-title" id="priceChartTitle">SPX Intraday</div>
+            <div class="chart-title"><span id="priceChartTitle">SPX Intraday</span>
+                <span class="help" tabindex="0" aria-label="Price chart info">?
+                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars kept up to date by IB; the forming bar also follows the live SPX last price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. Times are ET.</span>
+                </span>
+            </div>
             <div id="priceChart"></div>
         </div>
         <div class="chart-panel">
@@ -669,9 +674,12 @@
     </div>
 
     <script src="/static/js/state.js"></script>
+    <script src="/static/js/render-loop.js"></script>
     <script src="/static/js/charts.js"></script>
+    <script src="/static/js/price-chart.js"></script>
     <script src="/static/js/badges.js"></script>
     <script src="/static/js/ws.js"></script>
+    <script src="/static/js/perf.js"></script>
     <script src="/static/js/tabs.js"></script>
     <script src="/static/js/account.js"></script>
     <script src="/static/js/order-entry.js"></script>

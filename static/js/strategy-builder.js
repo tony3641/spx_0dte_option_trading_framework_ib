@@ -385,13 +385,14 @@
             case 'init':
                 handleInit(msg.data);
                 break;
-            case 'bar':
-                appendBar(msg.data);
-                updateBadges();
+            case 'price_snapshot':
+                handlePriceSnapshot(msg.data);
                 break;
-            case 'bar_update':
-                updateLastBar(msg.data);
-                updateBadges();
+            case 'price_bar':
+                handlePriceBar(msg.data);
+                break;
+            case 'price_overnight':
+                handlePriceOvernight(msg.data);
                 break;
             case 'chain_progress':
                 handleChainProgress(msg.data);
@@ -402,7 +403,7 @@
                 state.esDerived = msg.data.es_derived || false;
                 updateGexChart();
                 updateSmileChart();
-                updatePriceChart();
+                updatePriceLevels(state.gex);
                 updateBadges();
                 break;
             case 'chain_quotes':
@@ -436,7 +437,6 @@
                 if (state.gexMode === 'monthly') {
                     updateGexChart();
                     updateSmileChart();
-                    updatePriceChart();
                     updateBadges();
                 }
                 break;
@@ -467,11 +467,8 @@
         if (data.spot_price > 0) state.currentSpot = data.spot_price;
         state.esDerived = data.es_derived || false;
 
-        // Restore bar history (OHLC)
-        if (data.price_history && data.price_history.length > 0) {
-            state.bars = data.price_history;
-            updatePriceChart();
-        }
+        // Restore the price chart (bars and overnight line)
+        if (data.price) handlePriceSnapshot(data.price);
 
         // Restore GEX
         if (data.gex) {
@@ -479,7 +476,7 @@
             if (data.gex.spot_price > 0) state.currentSpot = data.gex.spot_price;
             state.esDerived = data.es_derived || false;
             updateGexChart();
-            updatePriceChart();
+            updatePriceLevels(state.gex);
             updateSmileChart();
             // Cached GEX from server - hide loading overlays immediately
             document.getElementById('gexLoading').classList.add('hidden');

@@ -44,7 +44,6 @@
         // Handle window resize - update margins for mobile/desktop transitions
         window.addEventListener('resize', () => {
             const fs = mobileAxisFontSize();
-            Plotly.relayout('priceChart', { margin: mobilePriceMargin() });
             Plotly.relayout('gexChart', {
                 margin: mobileGexMargin(),
                 'xaxis.title.font.size': fs,
@@ -52,7 +51,6 @@
                 'legend.font.size': fs,
             });
             Plotly.relayout('smileChart', { margin: mobileSmileMargin() });
-            Plotly.Plots.resize('priceChart');
             Plotly.Plots.resize('gexChart');
             Plotly.Plots.resize('smileChart');
             if (state.activeTab === 'chain') {
