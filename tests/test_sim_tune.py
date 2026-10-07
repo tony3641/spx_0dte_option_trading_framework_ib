@@ -193,3 +193,15 @@ def test_main_cli_smoke_end_to_end(tmp_path, monkeypatch):
     data = json.loads((tmp_path / "out" / "results.json").read_text(encoding="utf-8"))
     assert data["meta"]["smoke"] is True
     assert data["meta"]["run"]["n_paths"] == 100   # explicit --n-paths beats smoke default
+
+
+def test_removed_stress_keys_are_dropped_with_a_warning(capsys):
+    spec = tune.validate_spec(_spec(stress={"vol_beta": 0.75, "skew_t_gamma": 0.4,
+                                            "skew_beta": 1.0}))
+    assert spec["stress"] == {"skew_beta": 1.0}
+    err = capsys.readouterr().err
+    assert "vol_beta" in err and "skew_t_gamma" in err
+
+
+def test_pricing_tier_is_a_stress_key():
+    assert tune.validate_spec(_spec(stress={"pricing_tier": "cold"}))["stress"] == {"pricing_tier": "cold"}

@@ -1,17 +1,18 @@
 # tests/test_sim_family.py
 import numpy as np
 
-from spx_trade_desk.sim.calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
+from spx_trade_desk.sim.calibrate import CalibratedModel, GarchParams
 from spx_trade_desk.sim.config import SimRunConfig
 from spx_trade_desk.sim.engine import TrialResult, run_family, trigger_minutes
 from spx_trade_desk.sim.paths import SimPaths
+from spx_trade_desk.sim.pricing_tables import load_cold
 from spx_trade_desk.strategy.models import (Condition, ExitRules, StopLoss, Strategy, TriggerSpec)
 
 
 def _model():
     return CalibratedModel(
-        garch=GarchParams(omega=2e-10, alpha=0.05, gamma=0.10, beta=0.85, nu=6.0, converged=True),
-        ushape=np.ones(390), sigma0=0.0005, smile=DEFAULT_SMILE, vix0=15.0, source="test")
+        garch=GarchParams(omega=1.25e-8, alpha=0.05, gamma=0.10, beta=0.85, nu=6.0, converged=True),
+        ushape=np.ones(390), sigma0=0.0005, pricing=load_cold(), vix0=15.0, source="test")
 
 
 def _parent(mult: float = 6.0):

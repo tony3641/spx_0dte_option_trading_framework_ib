@@ -487,30 +487,24 @@ async def api_sim_cancel(job_id: str):
     return {"cancelled": jobs.cancel(job_id)}
 
 
-@app.get("/api/sim/smile")
-async def api_sim_smile():
-    from spx_trade_desk.sim.calibrate import load_smile_snapshot
-    smile, src = load_smile_snapshot()
-    return {"smile": smile.to_dict(), "source": src}
+@app.get("/api/sim/pricing")
+async def api_sim_pricing(tier: str = "auto"):
+    from spx_trade_desk.sim import library as sim_library
+    try:
+        return await asyncio.to_thread(sim_library.pricing_summary, tier)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
 
 
-@app.post("/api/sim/smile/capture")
-async def api_sim_smile_capture():
-    rows = getattr(state, "chain_quotes_cache", {}) or {}
-    strikes = rows.get("strikes") or []
-    # The IVs were computed against the snapshot's own spot; map moneyness with that same
-    # spot so m and IV describe the same instant (the live state.spx_price has moved on).
-    spot = float(rows.get("spot_price") or getattr(state, "spx_price", 0) or 0)
-    from spx_trade_desk.sim.calibrate import (DEFAULT_SMILE, fit_smile, save_smile_snapshot,
-                               smile_capture_points)
-    pts_m, pts_iv = smile_capture_points(strikes, spot)
-    if len(pts_m) < 5:
-        return JSONResponse(status_code=409, content={"detail": "live chain not available"})
-    smile, warnings = fit_smile(pts_m, pts_iv, DEFAULT_SMILE)
-    if warnings:
-        return JSONResponse(status_code=409, content={"detail": warnings[0]})
-    save_smile_snapshot(smile)
-    return {"smile": smile.to_dict(), "source": "captured", "points": len(pts_m)}
+@app.post("/api/sim/pricing/rebuild")
+async def api_sim_pricing_rebuild():
+    from spx_trade_desk.sim import library as sim_library
+    try:
+        await asyncio.to_thread(sim_library.build_and_write)
+    except Exception as e:
+        logger.exception("Pricing library rebuild failed")
+        return JSONResponse(status_code=500, content={"detail": f"rebuild failed: {e}"})
+    return await asyncio.to_thread(sim_library.pricing_summary)
 
 
 # ---------------------------------------------------------------------------

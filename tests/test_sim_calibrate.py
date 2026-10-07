@@ -1,6 +1,4 @@
 # tests/test_sim_calibrate.py
-import json
-
 import numpy as np
 import pytest
 
@@ -44,8 +42,7 @@ def test_fit_degenerate_returns_preset():
     assert p.alpha > 0 and p.beta < 1.0    # preset values, variance-targeted omega
 
 
-from spx_trade_desk.sim.calibrate import (CalibratedModel, DEFAULT_SMILE, SmileParams,
-                           calibrate, fit_smile, fit_ushape, load_smile_snapshot)
+from spx_trade_desk.sim.calibrate import calibrate, fit_ushape
 
 
 def _make_bars(n_days=6, bars=390, seed=11):
@@ -74,76 +71,6 @@ def test_fit_ushape_peaks_at_open_and_close():
     assert abs(u.mean() - 1.0) < 0.2
     assert u[:30].mean() > u[150:250].mean()   # open busier than midday
     assert u[-30:].mean() > u[150:250].mean()  # close busier than midday
-
-
-def test_fit_smile_svi_recovers_skew():
-    # exactly in-family SVI data: the fit should recover a sane, bounded smile.
-    m = np.linspace(-0.06, 0.01, 12)
-    iv_true = DEFAULT_SMILE.iv(m)
-    smile, warnings = fit_smile(m, iv_true, DEFAULT_SMILE)
-    assert not warnings
-    assert 0.10 < smile.iv(0.0) < 0.30                 # ATM IV sane
-    far = smile.iv(-0.15)
-    assert np.isfinite(far) and 0.0 < far < 1.0        # far-OTM bounded (the core fix)
-    assert far > smile.iv(0.0)                          # put skew present
-
-
-def test_fit_smile_insufficient_points_falls_back():
-    smile, warnings = fit_smile(np.array([-0.01]), np.array([0.22]), DEFAULT_SMILE)
-    assert warnings and smile == DEFAULT_SMILE
-
-
-def test_snapshot_round_trip(tmp_path, monkeypatch):
-    from spx_trade_desk.sim import calibrate as sc
-    monkeypatch.setattr(sc, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
-    monkeypatch.setattr(sc, "SMILE_DEFAULT_PATH", str(tmp_path / "sim_smile_default.json"))
-    sc.save_smile_snapshot(SmileParams(a=0.05, b=2.0, rho=-0.60, m0=0.02, sigma=0.07,
-                                       half_spread_atm=0.06))
-    smile, src = sc.load_smile_snapshot()
-    assert src == "captured"
-    assert abs(smile.rho + 0.60) < 1e-9 and abs(smile.sigma - 0.07) < 1e-9
-    assert smile.half_spread_atm == 0.06
-    (tmp_path / "sim_smile.json").unlink()
-    smile2, src2 = sc.load_smile_snapshot()
-    assert src2 == "builtin" and smile2 == sc.DEFAULT_SMILE
-
-
-def test_legacy_quadratic_snapshot_is_skipped(tmp_path, monkeypatch):
-    from spx_trade_desk.sim import calibrate as sc
-    with pytest.raises(ValueError):
-        sc.SmileParams.from_dict({"a": 0.2, "b": -0.35, "c": 1.2, "half_spread_atm": 0.05})
-    monkeypatch.setattr(sc, "SMILE_CAPTURE_PATH", str(tmp_path / "sim_smile.json"))
-    (tmp_path / "sim_smile.json").write_text(
-        json.dumps({"a": 0.2, "b": -0.35, "c": 1.2, "half_spread_atm": 0.05}), encoding="utf-8")
-    smile, src = sc.load_smile_snapshot()
-    assert src != "captured" and smile == sc.DEFAULT_SMILE
-
-
-def test_skewed_chain_bounded_far_otm():
-    # Observed put IVs reach only ~5-6% OTM (the live-chain limit); the fit must
-    # extrapolate to the sim's +/-15% ladder without exploding or dipping.
-    m = np.linspace(-0.06, 0.01, 12)
-    iv = DEFAULT_SMILE.iv(m)                       # put-skewed chain (~35% at -6% OTM)
-    smile, warnings = fit_smile(m, iv, DEFAULT_SMILE)
-    assert not warnings
-    far = smile.iv(-0.15)
-    assert np.isfinite(far) and 0.0 < far < 1.0    # bounded at the ladder edge
-    assert smile.iv(-0.15) >= smile.iv(-0.06)      # wing keeps rising, no dip
-
-
-def test_degenerate_stray_outlier_falls_back():
-    m = np.linspace(-0.06, 0.01, 12)
-    iv = DEFAULT_SMILE.iv(m)
-    iv[0] = 1.8                                    # wild far-OTM put IV outlier
-    smile, warnings = fit_smile(m, iv, DEFAULT_SMILE)
-    assert warnings and smile == DEFAULT_SMILE
-
-
-def test_default_smile_bounded():
-    iv = DEFAULT_SMILE.iv(np.array([-0.15, 0.0, 0.15]))
-    assert np.isfinite(iv).all() and (iv > 0).all()
-    assert iv[0] < 1.0
-    assert abs(DEFAULT_SMILE.iv(0.0) - 0.20) < 0.02
 
 
 def _two_day_series_with_overnight_gap():
@@ -183,70 +110,9 @@ def test_calibrate_end_to_end():
     assert model.source == "csv"
     ann = model.sigma_annual(SimRunConfig(strategy_name="Main"))
     assert 0.02 < ann < 5.0
-
-
-def test_build_dynamics_neutral_fields():
-    from spx_trade_desk.sim.calibrate import build_dynamics
-    from spx_trade_desk.sim.config import SimRunConfig
-    bars = _make_bars()
-    cfg = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
-    model = calibrate(bars, cfg)
-    dyn = build_dynamics(model, cfg)
-    assert dyn.sigma0 == model.sigma0
-    assert dyn.vol_beta == cfg.vol_beta == 0.75
-    assert dyn.flat_iv is False
-    assert dyn.iv0 == float(model.smile.iv(0.0))
-    assert dyn.skew_beta == 0.0
-    assert dyn.skew_t_gamma == 0.0
-    assert dyn.atm_budget is False
-    assert dyn.a_tab is None and dyn.b_tab is None
-    assert dyn.t_scale.shape == (cfg.steps_per_day(),)
-    assert np.array_equal(dyn.t_scale, np.ones(cfg.steps_per_day()))
-
-
-def test_build_dynamics_t_scale_table():
-    from spx_trade_desk.sim.calibrate import build_dynamics
-    from spx_trade_desk.sim.config import SimRunConfig
-    model = calibrate(_make_bars(), SimRunConfig(strategy_name="T", source="csv",
-                                                 bar_size="1m"))
-    cfg0 = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
-    assert np.array_equal(build_dynamics(model, cfg0).t_scale, np.ones(390))
-    cfg4 = SimRunConfig(strategy_name="T", source="csv", bar_size="1m",
-                        skew_t_gamma=0.4)
-    ts = build_dynamics(model, cfg4).t_scale
-    assert ts.shape == (390,)
-    assert ts[0] == 1.0                                  # anchored at the first bar
-    assert np.all(np.diff(ts) > 0.0)                     # grows monotonically to expiry
-    assert ts[-1] == pytest.approx(389 / 0.5)  # T_floor = half a 1-min bar (raw; gamma applied at eval)
-
-
-def _budget_cfg(**kw):
-    from spx_trade_desk.sim.config import SimRunConfig
-    return SimRunConfig(strategy_name="T", source="csv", bar_size="1m",
-                        atm_budget=True, **kw)
-
-
-def test_budget_tables_match_direct_summation():
-    from spx_trade_desk.sim.calibrate import build_dynamics
-    bars = _make_bars()
-    cfg = _budget_cfg()
-    model = calibrate(bars, cfg)
-    dyn = build_dynamics(model, cfg)
-    steps = 390
-    barf = 60 / (252 * 6.5 * 3600.0)
-    u2 = np.asarray(model.ushape, dtype=float)[:steps] ** 2 * barf
-    p_eff = (model.garch.alpha + model.garch.gamma * cfg.gamma_mult / 2.0
-             + model.garch.beta)
-    v_bar = model.garch.omega / (1.0 - p_eff)
-    for t in (0, 1, 39, 76):
-        ks = np.arange(t + 1, steps)
-        s_direct = float(np.sum(u2[t + 1:]))
-        p_direct = float(np.sum(p_eff ** (ks - t) * u2[ks]))
-        assert dyn.a_tab[t] + dyn.b_tab[t] * v_bar == pytest.approx(v_bar * s_direct,
-                                                                    rel=1e-12)
-        assert dyn.b_tab[t] == pytest.approx(p_direct, rel=1e-12)
-    assert dyn.v0 == pytest.approx(v_bar * float(np.sum(u2[1:])), rel=1e-12)
-    assert dyn.v_bar == pytest.approx(v_bar, rel=1e-15)
+    assert model.pricing_info["tier"] == "cold" and model.vix1d_prev is None
+    assert model.pricing.f.shape == (7, 37)
+    assert any(w.startswith("pricing: tier cold") for w in model.warnings)
 
 
 def test_conditional_expectation_closed_form():
@@ -265,43 +131,11 @@ def test_conditional_expectation_closed_form():
                                    rel=1e-12)
 
 
-def test_fit_smile_steep_0dte_skew_stays_bounded():
-    """A real 0DTE put skew is far steeper than the synthetic fixtures: IV ~36% at -2%
-    moneyness falling to ~12% ATM. The unconstrained SVI optimum then sits on the b
-    bound with sigma -> 0, whose wings blow past SVI_WING_CAP at the +/-15% ladder edge,
-    so every seed used to be rejected and the capture 409'd. The fit must instead return
-    the best BOUNDED smile, not the fallback.
-    """
-    # live SPX 0DTE slice, 2026-09-09 12:05 ET, spot 7638.21 (informative quotes only)
-    pairs = [(7490, 36.01), (7500, 33.82), (7520, 30.13), (7540, 26.85),
-             (7560, 22.62), (7580, 19.65), (7600, 16.56), (7620, 14.11),
-             (7635, 12.77), (7640, 12.44), (7650, 12.05)]
-    m = np.log(np.array([k for k, _ in pairs], float) / 7638.21)
-    iv = np.array([v for _, v in pairs]) / 100.0
-    smile, warnings = fit_smile(m, iv, DEFAULT_SMILE)
-    assert not warnings
-    # the cap is the active constraint here, so the fit sits ON it (float slack only)
-    assert 0.0 < smile.iv(-0.15) <= 1.0 + 1e-6 and 0.0 < smile.iv(0.15) <= 1.0 + 1e-6
-    assert smile.iv(-0.15) > smile.iv(0.0)              # put skew present
-    assert 0.08 < smile.iv(0.0) < 0.25                  # ATM IV near the observed 12-14%
-    rmse = float(np.sqrt(np.mean((smile.iv(m) - iv) ** 2)))
-    flat_rmse = float(np.sqrt(np.mean((iv - iv.mean()) ** 2)))
-    assert rmse < flat_rmse                             # beats a flat line
-
-
-def test_fit_smile_flat_degenerate_is_rejected():
-    """A constant IV cloud has no skew for the SVI to find. Returning a flat smile would
-    silently feed the sim an information-free curve; the fit must fall back instead."""
-    m = np.linspace(-0.03, 0.005, 15)
-    iv = np.full(m.shape, 0.18)
-    smile, warnings = fit_smile(m, iv, DEFAULT_SMILE)
-    assert warnings and smile == DEFAULT_SMILE
-
-
-def test_budget_off_leaves_tables_empty():
-    from spx_trade_desk.sim.calibrate import build_dynamics
+def test_calibrate_warns_about_a_leftover_smile_snapshot(tmp_path, monkeypatch):
+    from spx_trade_desk.sim import calibrate as sc
     from spx_trade_desk.sim.config import SimRunConfig
-    cfg = SimRunConfig(strategy_name="T", source="csv", bar_size="1m")
-    model = calibrate(_make_bars(), cfg)
-    dyn = build_dynamics(model, cfg)
-    assert dyn.a_tab is None and dyn.b_tab is None and dyn.v0 == 0.0
+    legacy = tmp_path / "sim_smile.json"
+    legacy.write_text("{}")
+    monkeypatch.setattr(sc, "LEGACY_SMILE_PATH", legacy)
+    model = sc.calibrate(_make_bars(), SimRunConfig(strategy_name="Main"))
+    assert any("sim_smile.json is no longer used" in w for w in model.warnings)

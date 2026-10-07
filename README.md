@@ -23,7 +23,7 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
   - **Take-profit** (idempotent close loop, per-leg limit prices) and **stop-loss** as a single credit multiplier.
   - One-shot eval loop with re-entry guards, margin checks, and a kill switch.
   - **Subsequent strategies** — trigger children off a parent trade's state (parent close / time window), with acyclic tree validation.
-- **Simulation tab** — intraday Monte Carlo stress-testing for 0DTE strategies: GJR-GARCH + Student-t paths with U-shape volatility, BSM smile marking, tick-rule fills, family re-entry, SL/strike sweeps and stress dials (ν, γ, λ, ATM-IV anchor), PnL/CVaR/max-DD/ruin analytics.
+- **Simulation tab** — intraday Monte Carlo stress-testing for 0DTE strategies: GJR-GARCH + Student-t paths with U-shape volatility, option marks from a z-model fitted to recorded 0DTE chains, tick-rule fills, family re-entry, SL/strike sweeps and stress dials (ν, γ, ATM-IV anchor, pricing tier), PnL/CVaR/max-DD/ruin analytics.
 - **Logging tab** — server-side framework log streamed to the browser.
 
 ## Quick Start
@@ -145,50 +145,88 @@ threads: the exit scan is a per-path Python loop, which the GIL would serialize.
   with cores, but a single huge sweep still takes minutes.
 - **Sweep cells use independent RNG streams** (no common random numbers), so cross-cell
   differences include sampling noise — an experiment-quality tradeoff, not a paired A/B.
-- **Bars and the fitted model are cached per `(source, csv_path, bar size, lookback)`** —
-  *not* per file content. If you replace a CSV's contents on disk, restart the server or
-  the sim keeps simulating the previously loaded bars.
-- **Implied vs realized vol are not tied together.** Options are priced at the smile
-  snapshot (ATM IV 20% by default) while the underlying moves at the *data's* realized
-  vol; see "Reading results: win-rate sanity" below before trusting absolute win rates.
+- **Implied vs realized vol are tied only through the ATM level.** Options are priced
+  from the chain-library tables at an opening ATM level (the ATM IV % dial, else the
+  VIX1D prior close x the library's ATM/VIX1D ratio, else the GARCH level), and the
+  level follows the path's GJR state from there. The underlying still moves at the
+  data's realized vol; see "Reading results: win-rate sanity" below.
+- **Bars are cached per `(source, csv_path, bar size, lookback)`; the fitted model also
+  per pricing tier, pricing-model file and session date** — not per CSV content. If you
+  replace a CSV's contents on disk, restart the server.
 
-### How the pricer marks options
+### How the pricer marks options (z-model)
 
-- Every contract is a **0DTE put** expiring at the 16:00 close; time-to-expiry decays bar
-  by bar (`bar_seconds / (252 × 6.5h)` per bar).
-- **IV** = SVI smile in log-moneyness, loaded from the captured smile snapshot
-  (`config/sim_smile.json`; else `sim_smile_default.json`, ATM IV ~20%), plus a small
-  vol-level link term. The SVI shape keeps far-OTM put IV bounded (the legacy
-  quadratic fit exploded to >100% IV and produced arbitrage-invalid credits).
-- **Spread mark** = Black-Scholes put mid difference; the **entry fill** is the
-  tick-floored conservative side (never better than the natural); **expiry settles at
-  intrinsic value**. Stops trigger at mark ≥ multiplier × collected credit (+ slippage).
+- Every contract is a **0DTE put** expiring at the session close (13:00 ET on half
+  days). Two clocks meet in one place (`sim/clock.py`): stored IVs (IB quotes, VIX1D,
+  the chain library) are calendar-time; the simulated path runs on trading time
+  (252 x 6.5 h). Total variance is the same on both, so BSM gets
+  `sigma_sim = IV_cal x 0.43242` and the rate scaled the same way; the price equals the
+  calendar-clock price exactly.
+- **IV** = `ATM(t) x f(z, tau)`, with `z = ln(K/S) / (ATM x sqrt(T_cal))`.
+  - `f` is a table over z (-6..+3, step 0.25) and seven time-to-close buckets
+    (>300, 300-180, 180-120, 120-60, 60-30, 30-15, <15 min). It is fitted from the
+    recorded chain (`data/chain_library/`, SP1).
+  - Outside the quoted z range, `f` extrapolates linearly in total variance, with the wing
+    capped at Lee's moment bound.
+- **ATM(t)** = `ATM_open x g(tau) x L(t)`.
+  - `g` is the library's intraday ATM curve, normalized at 09:45.
+  - `L` links the level to the path's GJR state: `L = 1` at the unconditional variance,
+    clipped to [0.5, 3]. `budget_beta` scales its sensitivity.
+  - `skew_beta > 0` also steepens the wing as `L` rises, by at most 1.25x the table's skew
+    (a larger tilt makes wing put prices fall with strike). The tilt is applied before
+    the Lee cap.
+  - `ATM_open` is the ATM IV % dial if set, else the VIX1D prior close x the library's
+    ATM/VIX1D ratio, else the GARCH level.
+- **Half-spread** comes from a table by bucket and put mid, floored at half a tick. The
+  entry fill is the tick-floored conservative side (never better than the natural).
+  Expiry settles at intrinsic value. Stops trigger at mark >= multiplier x collected
+  credit (+ slippage).
+- **Flat IV** prices every strike at the ATM level (no smile), as a sanity check.
 
-### Intraday smile dynamics (sim)
+### Pricing tables, tiers and the library
 
-Each phase is independently validated over the constant-level/constant-tilt gates and
-a pinned bit-identical regression chain before the next is stacked; all dials default
-to legacy (bit-identical), so `skew_beta=skew_t_gamma=0` and `atm_budget=false`
-reproduce prior behavior exactly (fan-vs-market methodology, spec §3).
+- **Tiers** (`pricing_tier`, default `auto`):
+  - `library`: the run's VIX1D-prior-close regime (<12, 12-18, 18-25, >=25) has 5+ captured
+    days and the library 10+.
+  - `thin`: pooled tables from the days you have.
+  - `cold`: the tracked default `config/sim_pricing_default.json`.
+  - A time bucket with fewer than 20 chain sweeps falls back one tier.
+  - The run's warnings (and `meta.pricing`) show the tier, the fallen-back buckets, the
+    library age (stale after 10 trading days without a capture) and the last harness
+    score, with its day count and an in-sample flag (e.g. "harness 4/4 buckets on 1 day
+    (in-sample)").
+  - With no VIX1D prior close (yfinance down or no history), the run warns "no VIX1D prior
+    close; regime tiers unavailable" (plus "ATM anchor = GARCH level" if no ATM IV % dial
+    is set). Such a calibration is not cached, so the next run retries the lookup.
+- **Building:**
+  - The standalone capture rebuilds `data/chain_library/pricing_model.json` after
+    each session.
+  - The Sim tab's **Rebuild pricing library** button does it on demand
+    (`POST /api/sim/pricing/rebuild`; `GET /api/sim/pricing` returns the tier summary).
+  - Or from the command line: `python -m spx_trade_desk.sim.library build` (add
+    `--vix1d-prev YYYYMMDD=VALUE` for a day yfinance has no VIX1D close for, and
+    `--write-default` to regenerate the Cold default).
+- **Validation harness:**
 
-The simulated smile now responds to the path's own volatility state. With
-`skew_beta = 0` (default) behavior is unchanged. `skew_beta > 0` tilts the IV curve
-when a path's GARCH sigma deviates from its calibrated mean: put wings get richer,
-call wings cheaper, ATM unchanged (`iv_t(m) += -skew_beta * clamp(sigma_t/sigma0 - 1,
--1, +3) * (T0/T)^gamma * m`). The response is closed-form — the SVI is never refit at runtime.
-`skew_t_gamma` (0..1, literature anchor ~0.4) scales this tilt by `(T0/T)^gamma`, steepening wings toward expiry.
+  ```bash
+  python -m spx_trade_desk.sim.validate data/chain_library/YYYYMMDD.jsonl.gz --tier auto --store
+  ```
 
-`atm_budget = true` replaces the flat ATM level with a variance-budget anchor:
-ATM IV is re-anchored each bar to the model's annualized remaining expected variance
-(closed-form GJR conditional expectation weighted by the intraday U-shape), normalized
-so the first bar matches the captured snapshot exactly. Quiet paths now show the
-model's intraday IV profile — early burn-off and progressive firm-up into the close
-(the trough's depth/timing follows the close-bucket weight) — instead of a flat level.
-Note the anchor's state sensitivity is materially stronger than the legacy linear
-`vol_beta` link (it is the theory value: remaining variance scales with the persistent
-GARCH state); treat `budget_beta` as the A/B dial for that channel. The variance-risk-
-premium burn-off that makes real quiet-day late IV lower than the model's expectation
-is an accepted residual (spec §7).
+  For each recorded snapshot it prices the chain the way a sim run would (opening
+  anchor, never the real ATM). It then compares the 10-wide bull-put credit at
+  5/10/15/20 delta, the short strike the sim's delta picks, and the half-spread.
+  - Bar: median credit error within ±25% before 15:00 (±40% after); short strike
+    within 5 points in 80% of pairs.
+  - Tier tables are built leave-one-out (except the Cold default: a day it was built
+    from scores in-sample, and the harness says so).
+  - `--store` saves the score under each tier the scored days resolved to, with the day
+    count and an in-sample flag; a run that scored nothing stores nothing.
+  - A second column reprices with the snapshot's real ATM (shape error only).
+  - Reports go to `reports/output/`.
+- **Tuning results from before this pricer** (SVI smile, `vol_beta`) are not comparable:
+  re-run them. Old configs and tuning specs that still carry `vol_beta`, `skew_t_gamma`
+  or `atm_budget` load with a warning (unless the value already matches the new behaviour:
+  `skew_t_gamma` 0, `atm_budget` true), and the key is ignored.
 
 ### Reading results: win-rate sanity
 
@@ -197,10 +235,11 @@ tests, but absolute win rates can still mislead:
 
 - **Stale calibration** (above) silently simulates old data after a file change — restart
   the server when in doubt.
-- **A calm CSV + a high smile** makes far-OTM strikes unreachable: a 0.03-delta short put
-  sits ~2–2.5% OTM at 20% IV, but data moving only ~0.4%/day rarely gets there, producing
-  near-100% win rates that reflect the vol-world mismatch, not strategy edge.
-- Mitigations: **capture a live smile** (matches the IV level you actually trade), use
+- **A calm CSV + a market-level IV** makes far-OTM strikes unreachable: the short put sits
+  where the recorded chain's delta puts it, but data moving only ~0.4%/day rarely gets
+  there, producing near-100% win rates that reflect the vol-world mismatch, not strategy
+  edge.
+- Mitigations: **keep the chain library current** (the capture rebuilds it; check the tier and staleness in the run warnings), use
   data whose realized vol is realistic, and compare sweep rows *relatively* rather than
   trusting absolute levels.
 - **Set the ATM IV % dial** to anchor the SPX fan to the market's current implied vol.
@@ -208,7 +247,9 @@ tests, but absolute win rates can still mislead:
   (`α + γ/2 + β ≈ 0.99`), which lets a small subset of simulated paths ratchet up to
   5–10× the fitted vol — a 1-day fan that closes p0 at −25% or worse. The ATM IV anchor
   caps each per-bar move so the median session still resembles your data while the tails
-  match what the options market prices.
+  match what the options market prices. The dial takes the calendar-unit annual IV (the
+  IB / VIX-style number); the cap is `vol_cap_mult x ATM IV x sqrt(390/525600)` per RTH
+  day, spread over the day's bars.
 
 ### Stress dials & experiments reference
 
@@ -216,10 +257,9 @@ tests, but absolute win rates can still mislead:
 | --- | --- |
 | ν override | Student-t dof for per-bar shocks (blank = fitted; lower = fatter tails; must be > 2) |
 | γ × | GJR leverage multiplier — extra vol after *negative* returns (1.0 = as fitted) |
-| λ (vol-beta) | IV↔path-vol link; currently a subtle nudge — the smile *level* comes from the snapshot |
-| Flat IV | Sanity mode: price everything at ATM IV, ignoring skew |
-| ATM IV % | Anchor the SPX path vol to today's at-the-money IV (annual %). Blank = the GARCH level fitted from your data, which can diverge from the live market — see below |
-| Vol-cap × | Per-bar sigma cap as a multiple of the IV-implied per-bar vol (default 2). Effective only when ATM IV is set |
+| Flat IV | Sanity mode: price every strike at the ATM level, ignoring the smile shape |
+| ATM IV % | Anchor the SPX path vol to today's at-the-money IV, as a calendar-unit annual % (the IB / VIX-style number). Blank = the GARCH level fitted from your data, which can diverge from the live market — see below |
+| Vol-cap × | Per-bar sigma cap as a multiple of the IV-implied per-bar vol (default 2; the IV-implied daily vol is ATM IV x sqrt(390/525600) per RTH day). Effective only when ATM IV is set |
 | SL multipliers | Sweep stop-loss = mult × credit, one table row per value; `inf` holds past the stop |
 | Strike mode | `engine` = strategy's delta/width/credit gates; `dynamic_k` = short strike at k·σ below spot |
 | k values | Short-strike distance in daily σ (`dynamic_k` mode only) |
@@ -239,7 +279,7 @@ guidance.
   report automatically, so a re-run can never mix with the previous result.
 - **Export report** — downloads `sim_report.json`, a self-contained, AI-agent-readable
   snapshot of everything the page shows: the exact run config, run meta (source, bar
-  size, GARCH fit + warnings, smile, dials), all per-cell stats and plotted series
+  size, GARCH fit + warnings, pricing tier, dials), all per-cell stats and plotted series
   (histograms, MTM fan, bootstrap DDs, SPX fan), and a glossary reusing the UI's "?"
   explanations.
 
@@ -261,7 +301,7 @@ python -m spx_trade_desk.sim.tune --strategy MyStrategy --spec docs/experiments/
 python -m spx_trade_desk.sim.tune --spec docs/experiments/<slug>/variants.json --seeds 42,43,44                 # robustness gate
 ```
 
-### Chain library (input for the sim smile)
+### Chain library (input for the sim pricing tables)
 
 While the dashboard runs, the merged 0DTE chain is appended every 60 s (09:31-10:00 and the last hour) or 120 s (otherwise) to `data/chain_library/YYYYMMDD.jsonl.gz`. Each line is one snapshot: spot, VIX, VIX1D, and per strike and side bid/ask/last/IV (IB's raw calendar-clock decimal)/delta/gamma/OI/volume, plus the quote's age and source. The folder is local market data, gitignored and blocked by the pre-commit hook.
 
@@ -489,9 +529,14 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/resources.py` | Repository-relative path anchors (`config/`, `static/`, `.env`, `docs/experiments`) |
 | `spx_trade_desk/sim/config.py` | Simulation run config: validation, JSON round-trip, sweep cells |
 | `spx_trade_desk/sim/data.py` | Layered intraday bar loaders: CSV → yfinance → IB |
-| `spx_trade_desk/sim/calibrate.py` | GJR-GARCH(1,1)-t MLE, U-shape profile, smile snapshot, VIX mapping |
+| `spx_trade_desk/sim/calibrate.py` | GJR-GARCH(1,1)-t MLE, U-shape profile, pricing tables by tier, VIX mapping |
 | `spx_trade_desk/sim/paths.py` | Chunked vectorized path generation (stress dials: ν, γ×; ATM-IV anchored per-bar sigma cap) |
-| `spx_trade_desk/sim/pricing.py` | Vectorized BSM, vol-linked smile, spreads, tick fill rules |
+| `spx_trade_desk/sim/pricing.py` | Vectorized BSM, strike ladder, tick fill rules |
+| `spx_trade_desk/sim/clock.py` | The one calendar-to-sim clock conversion (IV and rate), minutes to the close |
+| `spx_trade_desk/sim/library.py` | Chain-library reader, per-day extraction cache, pricing-model builder CLI, run tier resolution |
+| `spx_trade_desk/sim/pricing_tables.py` | z-model tables (f, g, spreads), builder, tier selection, Cold default loader |
+| `spx_trade_desk/sim/pricing_model.py` | Per-run pricer: table lookups, extrapolation, GJR level link, opening anchor |
+| `spx_trade_desk/sim/validate.py` | Pricing validation harness against recorded chains (`python -m spx_trade_desk.sim.validate`) |
 | `spx_trade_desk/sim/engine.py` | Entry/exit scans, single + family simulation, experiment modes |
 | `spx_trade_desk/sim/risk.py` | CVaR/exit breakdown/max-DD/bootstrap ruin metrics, SPX path fan |
 | `spx_trade_desk/sim/jobs.py` | Background job registry, progress, cancel, memoized calibration |

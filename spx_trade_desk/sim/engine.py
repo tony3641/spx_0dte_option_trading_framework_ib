@@ -11,10 +11,10 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from spx_trade_desk.sim.calibrate import CalibratedModel, SmileDynamics, build_dynamics
+from spx_trade_desk.sim.calibrate import CalibratedModel
 from spx_trade_desk.sim.config import SimRunConfig
-from spx_trade_desk.sim.pricing import (RISK_FREE_RATE, bar_year_frac, bsm_put, bsm_put_delta,
-                         build_ladder, combo_fill_credit, half_spread, smile_iv, tick_floor)
+from spx_trade_desk.sim.pricing import bar_year_frac, bsm_put, bsm_put_delta, combo_fill_credit
+from spx_trade_desk.sim.pricing_model import PricingModel, build_pricing_model
 from spx_trade_desk.strategy.models import Condition, Strategy
 
 RTH_START_MIN = 570          # 09:30
@@ -129,16 +129,16 @@ def _qty_for(budget, margin: np.ndarray) -> np.ndarray:
     return np.maximum(np.floor(float(budget) / np.maximum(margin, 1.0)), 0).astype(np.int32)
 
 
-def _ensure_dyn(model: CalibratedModel, cfg: SimRunConfig,
-                dyn: Optional[SmileDynamics]) -> SmileDynamics:
-    return dyn if dyn is not None else build_dynamics(model, cfg)
+def _ensure_pricer(model: CalibratedModel, cfg: SimRunConfig,
+                   pricer: Optional[PricingModel]) -> PricingModel:
+    return pricer if pricer is not None else build_pricing_model(model, cfg)
 
 
 def run_entry(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
               paths, ladder: np.ndarray, per_path_start=None, k: Optional[float] = None,
-              dyn: Optional[SmileDynamics] = None) -> EntryState:
+              pricer: Optional[PricingModel] = None) -> EntryState:
     n, steps = paths.spots.shape
-    dyn = _ensure_dyn(model, cfg, dyn)
+    pricer = _ensure_pricer(model, cfg, pricer)
     bar_secs = BAR_SECONDS_GET(cfg)
     w0, w1 = window_minutes(strategy, steps, bar_secs)
     starts = np.broadcast_to(
@@ -174,9 +174,9 @@ def run_entry(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
         l_idx = np.clip(s_idx - int(round(w_pts / step)), 0, len(ladder) - 1)
         ok = active & (s_idx > l_idx)
         m = np.log(ladder / s_entry[:, None])                      # (n, M) log-moneyness
-        iv_t = smile_iv(m, model.smile, paths.sigmas[:, t:t + 1], dyn, t)
-        put = bsm_put(paths.spots[:, t:t + 1], ladder[None, :], T_left[t], RISK_FREE_RATE, iv_t)
-        hs = half_spread(m, model.smile.half_spread_atm)
+        iv_t = pricer.iv_sim(m, t, paths.sigmas[:, t:t + 1])
+        put = bsm_put(paths.spots[:, t:t + 1], ladder[None, :], T_left[t], pricer.rate, iv_t)
+        hs = pricer.half_spread(put, t)
         rows = np.arange(n)
         cm = put[rows, s_idx] - put[rows, l_idx]              # mid
         cc = (put[rows, s_idx] - hs[rows, s_idx]) - (put[rows, l_idx] + hs[rows, l_idx])
@@ -203,11 +203,11 @@ def run_entry(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
         if not todo.any():
             continue
         m = np.log(ladder / paths.spots[:, t:t + 1])               # (n, M) log-moneyness
-        iv_t = smile_iv(m, model.smile, paths.sigmas[:, t:t + 1], dyn, t)
-        put = bsm_put(paths.spots[:, t:t + 1], ladder[None, :], T_left[t], RISK_FREE_RATE, iv_t)
-        hs = half_spread(m, model.smile.half_spread_atm)
+        iv_t = pricer.iv_sim(m, t, paths.sigmas[:, t:t + 1])
+        put = bsm_put(paths.spots[:, t:t + 1], ladder[None, :], T_left[t], pricer.rate, iv_t)
+        hs = pricer.half_spread(put, t)
         bid, ask = put - hs, put + hs
-        delta = bsm_put_delta(paths.spots[:, t:t + 1], ladder[None, :], T_left[t], RISK_FREE_RATE, iv_t)
+        delta = bsm_put_delta(paths.spots[:, t:t + 1], ladder[None, :], T_left[t], pricer.rate, iv_t)
         adelta = np.abs(delta)
         short_ok = (adelta >= cond["dmin"]) & (adelta <= cond["dmax"])
         if cond["vix"] is not None:
@@ -287,9 +287,9 @@ class TrialResult:
 def run_exits(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
               paths, ladder: np.ndarray, entry: EntryState,
               sl_multiplier: Optional[float] = None,
-              dyn: Optional[SmileDynamics] = None) -> List[TrialResult]:
+              pricer: Optional[PricingModel] = None) -> List[TrialResult]:
     n, steps = paths.spots.shape
-    dyn = _ensure_dyn(model, cfg, dyn)
+    pricer = _ensure_pricer(model, cfg, pricer)
     bar_secs = BAR_SECONDS_GET(cfg)
     if sl_multiplier is None:
         sl = strategy.exit_rules.stop_loss
@@ -319,9 +319,8 @@ def run_exits(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
         for t in range(t0, steps):
             T = (steps - 1 - t) * bar_year_frac(bar_secs)
             m = np.log(ladder / paths.spots[p, t])
-            iv_t = smile_iv(m, model.smile, np.array([[paths.sigmas[p, t]]]), dyn, t)[0]
-            put = bsm_put(paths.spots[p, t], ladder, T, RISK_FREE_RATE, iv_t)
-            hs = half_spread(m, model.smile.half_spread_atm)
+            iv_t = pricer.iv_sim(m, t, paths.sigmas[p, t])
+            put = bsm_put(paths.spots[p, t], ladder, T, pricer.rate, iv_t)
             mark = float(put[si] - put[li])                    # mid mark of the spread
             mtm[t] = (fc - mark) * qty * 100.0
             if t == t0:
@@ -352,10 +351,10 @@ def run_exits(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
 def run_cell(model: CalibratedModel, cfg: SimRunConfig, strategy: Strategy,
              paths, ladder: np.ndarray, sl_multiplier: Optional[float] = None,
              k: Optional[float] = None,
-             dyn: Optional[SmileDynamics] = None) -> List[TrialResult]:
-    entry = run_entry(model, cfg, strategy, paths, ladder, k=k, dyn=dyn)
+             pricer: Optional[PricingModel] = None) -> List[TrialResult]:
+    entry = run_entry(model, cfg, strategy, paths, ladder, k=k, pricer=pricer)
     return run_exits(model, cfg, strategy, paths, ladder, entry,
-                     sl_multiplier=sl_multiplier, dyn=dyn)
+                     sl_multiplier=sl_multiplier, pricer=pricer)
 
 
 def _parse_hhmm_to_bar(hm: str, bar_seconds: int) -> int:
@@ -415,10 +414,10 @@ def trigger_minutes(parent_results: List[TrialResult], child: Strategy,
 
 def run_family(model: CalibratedModel, cfg: SimRunConfig, root: Strategy,
                children: List[Strategy], paths, ladder: np.ndarray,
-               dyn: Optional[SmileDynamics] = None):
+               pricer: Optional[PricingModel] = None):
     """Root cell (its own stop multiplier — SL/k sweeps are rejected in family mode);
     children re-enter per their own triggers/rules."""
-    root_results = run_cell(model, cfg, root, paths, ladder, dyn=dyn)
+    root_results = run_cell(model, cfg, root, paths, ladder, pricer=pricer)
     results = {root.name: root_results}
     total = np.array([r.pnl for r in root_results])
     bar_secs = BAR_SECONDS_GET(cfg)
@@ -430,8 +429,8 @@ def run_family(model: CalibratedModel, cfg: SimRunConfig, root: Strategy,
         starts_c = np.where(eligible, starts, paths.spots.shape[1])   # never-eligible -> out of range
         child_results = run_exits(
             model, cfg, child, paths, ladder,
-            run_entry(model, cfg, child, paths, ladder, per_path_start=starts_c, dyn=dyn),
-            sl_multiplier=None, dyn=dyn)                               # child keeps its own stop
+            run_entry(model, cfg, child, paths, ladder, per_path_start=starts_c, pricer=pricer),
+            sl_multiplier=None, pricer=pricer)                  # child keeps its own stop
         results[child.name] = child_results
         total = total + np.array([r.pnl if r.entered else 0.0 for r in child_results])
     return results, total

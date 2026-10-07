@@ -94,19 +94,27 @@ def test_positive_skew_beta_accepted():
     _cfg(skew_beta=1.0).validate()   # must not raise
 
 
-def test_t_gamma_default_is_neutral():
-    assert _cfg().skew_t_gamma == 0.0
+def test_budget_beta_default_is_theory():
+    assert _cfg().budget_beta == 1.0
 
 
-def test_t_gamma_out_of_range_rejected():
-    with pytest.raises(ValueError, match="skew_t_gamma"):
-        _cfg(skew_t_gamma=1.5).validate()
+def test_removed_keys_load_with_warnings():
+    cfg = SimRunConfig.from_dict({"strategy_name": "T", "vol_beta": 0.75, "skew_t_gamma": 0.4,
+                                  "atm_budget": False})
+    assert len(cfg.load_warnings) == 3
+    assert all(w.startswith("config: ") for w in cfg.load_warnings)
+    assert not hasattr(cfg, "vol_beta") and "load_warnings" not in cfg.to_dict()
+    quiet = SimRunConfig.from_dict({"strategy_name": "T", "skew_t_gamma": 0.0, "atm_budget": True})
+    assert quiet.load_warnings == []
+    assert quiet == SimRunConfig(strategy_name="T")          # warnings never affect equality
 
 
-def test_budget_dials_default_neutral():
-    c = _cfg()
-    assert c.atm_budget is False
-    assert c.budget_beta == 1.0
+def test_pricing_tier_default_and_validation():
+    assert _cfg().pricing_tier == "auto"
+    for tier in ("auto", "cold", "thin", "library"):
+        _cfg(pricing_tier=tier).validate()
+    with pytest.raises(ValueError, match="pricing_tier"):
+        _cfg(pricing_tier="regime").validate()
 
 
 def test_negative_budget_beta_rejected():

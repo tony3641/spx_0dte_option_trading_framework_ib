@@ -1,5 +1,10 @@
 # SPX 0DTE Intraday Monte Carlo Simulator: Technical Report
 
+> **Note (October 2026):** the option-pricing sections describe the pre-SP2 SVI smile.
+> The simulator now prices from the z-model tables; see the README section
+> "How the pricer marks options (z-model)". The fan-cap formula in the path section also
+> changed to calendar units (`atm_iv x sqrt(390/525600)` per RTH day).
+
 > What the simulator does, why each model was chosen, and how the smile and VIX
 > respond *path-by-path* to the simulated market. Every figure below comes from
 > the simulator's own model code, calibrated on the committed 1-minute SPX

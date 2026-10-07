@@ -11,9 +11,9 @@ from your local `config/strategies.json` at experiment time.
 
 | Knob (dotted path) | Live value | Mechanism | Expected effect of moving it | Traps |
 |---|---|---|---|---|
-| `short_delta.min` / `.max` | see config | short leg's |abs delta| band; candidates must fit | Wider band (esp. higher max) = closer-to-money shorts = richer credit but more stop-outs and worse tails; lower max = farther OTM = safer, thinner credit, more `never` | Band edges beyond ~0.50 delta change put geometry; deltas come from the sim's own smile, not the live chain |
+| `short_delta.min` / `.max` | see config | short leg's |abs delta| band; candidates must fit | Wider band (esp. higher max) = closer-to-money shorts = richer credit but more stop-outs and worse tails; lower max = farther OTM = safer, thinner credit, more `never` | Band edges beyond ~0.50 delta change put geometry; deltas come from the sim's z-model pricing tables (fitted from recorded chains), not the live chain |
 | `spread_width.min` / `.max` | see config | width band in points; long leg = short − width | Narrower = less max loss per spread, more affordable qty for a budget, thinner credit; wider = fatter credit, uglier tails | Widths SNAP to the 5-pt ladder step (values inside a step are no-ops — identical stats are the tell) |
-| `credit.min` / `.max` | see config | collected-credit band on the spread mid | Higher min = demands richer fills = fewer, better-priced entries; higher max is usually inert (mids rarely exceed it) | Credit is the sim's conservative tick-floored natural, never better than mid — a min above what the smile offers yields `never` |
+| `credit.min` / `.max` | see config | collected-credit band on the spread mid | Higher min = demands richer fills = fewer, better-priced entries; higher max is usually inert (mids rarely exceed it) | Credit is the sim's conservative tick-floored natural, never better than mid — a min above what the pricing tables offer yields `never` |
 | `entry_window.start` / `.end` | see config | bar-index window when entry scanning is active | Earlier start catches morning vol (richer credit, more trend risk); later end = less afternoon time-in-trade; shrinking the window trades opportunity for focus | Quantized to bars (5m → 5-min resolution; 10:45→bar 15). Off-RTH values clamp silently |
 | `volatility.vix_enabled` | see config | VIX-regime gate: `VIX_t = vix0 * sigma/sigma0`, bucket-tested per bar | Requiring calm (below ~15) skips stressed bars; requiring stress (above) trades only scared tape | Set `vix_enabled`, `vix_op` (`above`/`below`/`range`), `vix_value` TOGETHER; the VIX here is model-implied, not the real index |
 | `exit.stop_multiplier` | see config | stop when spread mark ≥ credit × mult (debit = trigger + 0.10) | Smaller mult = tighter stop = smaller losers, more whipsaw stops; larger/`inf`-like = ride to expiry | The stop level scales with entry credit, so richer fills tolerate wider stops; `stop_extra` (+0.10) is fixed slippage |
@@ -33,20 +33,23 @@ Two classes, and the difference matters for reading results:
 
 - **Path dials** (change the spot/vol paths themselves ⇒ break common random
   numbers vs the baseline): `nu_override` (Student-t dof), `gamma_mult`
-  (GJR leverage term), `atm_iv` (fan anchor), `vol_cap_mult` (per-bar sigma
+  (GJR leverage term), `atm_iv` (fan anchor; a calendar-unit annual IV, the IB / VIX-style number), `vol_cap_mult` (per-bar sigma
   cap). Use ONLY as whole-new-baseline comparisons in the robustness gate.
 - **Pricing dials** (same paths, different option marks): `flat_iv`,
-  `vol_beta`, `skew_beta`, `skew_t_gamma`, `atm_budget`, `budget_beta`, and
+  `skew_beta`, `budget_beta`, `pricing_tier`, and
   fill knobs `stop_extra` / `tick_size` / `ladder_range_pct`. CRN-safe across
   variants, but keep them neutral while tuning strategy knobs — they answer
-  model questions, not strategy questions.
+  model questions, not strategy questions. Results tuned under the pre-z-model
+  pricer (SVI smile) are not comparable; re-run them.
 
 ## Cost planning
 
 The exit engine is a per-path × per-bar Python loop with a full-ladder BSM per
 bar: ~minutes at `n_paths=10000` on 5m bars, ~seconds at 400 (`--smoke`).
-Calibration is cached in-process per (source, path, bar_size, lookback); bars
-load once per invocation. A 6-variant round ≈ 6 × one run.
+Calibration is cached in-process per (source, csv path, bar size, lookback, pricing
+tier, pricing-model file hash, ET session date, after-close flag; see runner.md). A
+calibration made without a VIX1D prior close is never cached, so such runs recalibrate
+each time. Bars load once per invocation. A 6-variant round ≈ 6 × one run.
 
 ## Family-mode extension (future — do not implement ad hoc)
 

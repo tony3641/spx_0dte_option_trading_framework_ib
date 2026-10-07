@@ -1,5 +1,10 @@
 # SPX 0DTE 日内蒙特卡洛模拟器技术报告
 
+> **Note (October 2026):** the option-pricing sections describe the pre-SP2 SVI smile.
+> The simulator now prices from the z-model tables; see the README section
+> "How the pricer marks options (z-model)". The fan-cap formula in the path section also
+> changed to calendar units (`atm_iv x sqrt(390/525600)` per RTH day).
+
 > 本文说明这套模拟器做什么、为什么选这几个模型，以及 smile（波动率微笑）和 VIX 怎样逐条路径地影响模拟行情。所有图都由模拟器自身的模型代码生成，标定数据是仓库自带的 1 分钟 SPX 数据（`tests/fixtures/SPX_1min_10d.csv`），图注里的数字取自实际输出。
 
 ---

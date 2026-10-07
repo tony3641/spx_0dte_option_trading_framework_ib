@@ -176,6 +176,19 @@ Source: spx_trade_desk/core/config.py
 - Payoff scan step: 0.5
 - Unlimited PnL threshold sentinel: 1e8
 
+### spx_trade_desk/sim/pricing_tables.py, pricing_model.py, validate.py
+- z grid: -6..+3, step 0.25 (37 nodes)
+- tau bucket edges (minutes to the close): 300, 180, 120, 60, 30, 15
+- put-mid spread bucket edges: 0.5, 1, 2, 3, 5, 10, 20
+- node validity: >= 3 points from >= 2 records; spread cell: >= 5 points
+- extrapolation slope cap |d(r^2)/dz|: 2.0; IV/ATM floor: 0.3; Lee cap applies from |z| >= 1
+- tiers: library needs >= 5 days in the VIX1D regime and >= 10 days in total; a bucket falls back below 20 sweeps
+- VIX1D regimes (prior close): < 12, 12-18, 18-25, >= 25
+- stale after 10 trading days without a capture
+- level link L clip: [0.5, 3]; sim sigma clip: [1e-4, 5]
+- spread floor: 0.025 below a $3 mid, 0.05 at or above
+- harness: deltas 0.05/0.10/0.15/0.20, width 10, real credit >= 0.15, delta tolerance 0.03, credit bar 25% before 15:00 and 40% after, strike within 5 points in >= 80% of pairs, >= 5 pairs per bucket
+
 ## 4) Duplicate/overlap notes
 
 - There are existing env keys in spx_trade_desk/core/config.py that appear to be legacy/unused in current runtime path:

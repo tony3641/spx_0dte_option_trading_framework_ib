@@ -8,8 +8,8 @@ results are reassembled by index, never by completion order.
 
 Processes (not threads): the hot loop in ``sim_engine.run_exits`` is per-path
 Python, which the GIL serializes. Workers must be spawned (Windows default),
-so the task payload is pickled — the model, config, strategy and ladder are
-plain dataclasses/arrays; the paths are regenerated inside the worker rather
+so the task payload is pickled — the model, config, strategy, ladder and run pricer
+are plain dataclasses/arrays; the paths are regenerated inside the worker rather
 than shipped.
 """
 import multiprocessing as mp
@@ -19,10 +19,11 @@ from typing import List
 import numpy as np
 
 from spx_trade_desk.core import config
-from spx_trade_desk.sim.calibrate import CalibratedModel, SmileDynamics
+from spx_trade_desk.sim.calibrate import CalibratedModel
 from spx_trade_desk.sim.config import SimRunConfig
 from spx_trade_desk.sim.engine import TrialResult, run_cell, run_family
 from spx_trade_desk.sim.paths import simulate_chunk
+from spx_trade_desk.sim.pricing_model import PricingModel
 from spx_trade_desk.strategy.models import Strategy
 
 
@@ -71,33 +72,33 @@ def compute_chunk(payload: tuple) -> dict:
     trial list plus this chunk's market paths for the first cell (the SPX fan
     is strategy-agnostic, so only one cell needs to ship them back).
     """
-    (cfg, model, strategy, children, ladder, dyn, cell,
+    (cfg, model, strategy, children, ladder, pricer, cell,
      ci, ch, n_here, spot0) = payload
     seed_seq = np.random.SeedSequence(entropy=cfg.seed, spawn_key=(ci, ch))
     paths = simulate_chunk(model, cfg, spot0, n_here, seed_seq)
     if cfg.mode == "family" and children:
-        _, total = run_family(model, cfg, strategy, children, paths, ladder, dyn=dyn)
+        _, total = run_family(model, cfg, strategy, children, paths, ladder, pricer=pricer)
         trials = [TrialResult(entered=True, entry_minute=-1, exit_minute=-1,
                               exit_reason="expired", short_strike=0, long_strike=0,
                               width=0, qty=1, fill_credit=0, exit_debit=0,
                               pnl=float(total[p])) for p in range(n_here)]
     else:
         trials = run_cell(model, cfg, strategy, paths, ladder,
-                          sl_multiplier=cell["sl_multiplier"], k=cell["k"], dyn=dyn)
+                          sl_multiplier=cell["sl_multiplier"], k=cell["k"], pricer=pricer)
     return dict(ci=ci, ch=ch, trials=trials,
                 spots=paths.spots if ci == 0 else None)
 
 
 def chunk_payloads(cfg: SimRunConfig, model: CalibratedModel, strategy: Strategy,
                    children: List[Strategy], ladder: np.ndarray,
-                   dyn: SmileDynamics, cells: List[dict], n_chunks: int,
+                   pricer: PricingModel, cells: List[dict], n_chunks: int,
                    spot0: float) -> List[tuple]:
     """Cartesian (cell, chunk) task list in the serial execution order."""
     out = []
     for ci, cell in enumerate(cells):
         for ch in range(n_chunks):
             n_here = min(cfg.chunk_size, cfg.n_paths - ch * cfg.chunk_size)
-            out.append((cfg, model, strategy, children, ladder, dyn, cell,
+            out.append((cfg, model, strategy, children, ladder, pricer, cell,
                         ci, ch, n_here, spot0))
     return out
 

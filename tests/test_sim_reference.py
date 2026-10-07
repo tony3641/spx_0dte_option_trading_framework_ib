@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import numpy as np
 
 from spx_trade_desk.strategy.conditions import combo_credit
-from spx_trade_desk.sim.calibrate import CalibratedModel, DEFAULT_SMILE, GarchParams
 from spx_trade_desk.sim.config import SimRunConfig
 from spx_trade_desk.sim.engine import run_entry
 from spx_trade_desk.sim.paths import SimPaths
@@ -36,7 +35,9 @@ def test_vectorized_entry_matches_generate_candidates():
     ladder = np.arange(5100.0, 6900.0 + 2.5, 5.0)
     es = run_entry(model, cfg, strat, paths, ladder)
 
-    from spx_trade_desk.sim.pricing import bsm_put, bsm_put_delta, bar_year_frac, half_spread
+    from spx_trade_desk.sim.pricing import bar_year_frac, bsm_put, bsm_put_delta
+    from spx_trade_desk.sim.pricing_model import build_pricing_model
+    pricer = build_pricing_model(model, cfg)
     checked = 0
     for p in range(n):
         if not es.entered[p]:
@@ -45,11 +46,11 @@ def test_vectorized_entry_matches_generate_candidates():
         spot = float(spots[p, t])
         m = np.log(ladder / spot)
         T = (steps - 1 - t) * bar_year_frac(60)
-        # same smile as the engine; vol-link term is 0 because path sigma == sigma0 here
-        iv = DEFAULT_SMILE.iv(m)
-        put_mid = bsm_put(spot, ladder, T, 0.043, iv)
-        put_delta = bsm_put_delta(spot, ladder, T, 0.043, iv)
-        hs = half_spread(m, model.smile.half_spread_atm)
+        # same pricer as the engine; path sigma == the unconditional state here, so L == 1
+        iv = pricer.iv_sim(m, t, 0.0005)
+        put_mid = bsm_put(spot, ladder, T, pricer.rate, iv)
+        put_delta = bsm_put_delta(spot, ladder, T, pricer.rate, iv)
+        hs = pricer.half_spread(put_mid, t)
         rows = _synthetic_rows(ladder, put_mid, hs, put_delta)
         state = SimpleNamespace(chain_quotes_cache={"strikes": rows}, spx_price=spot,
                                 vix=20.0, account_summary={"ExcessLiquidity": 1e9},

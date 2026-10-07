@@ -92,6 +92,17 @@ async def capture_session(ib, state, recorder: ChainRecorder, dashboard_heartbea
         await sleep(STEP_S)
 
 
+def rebuild_pricing_library() -> None:
+    """Rebuild the sim pricing model from the library once the session is over. Never
+    raises: a failed rebuild leaves the previous model in place."""
+    try:
+        from spx_trade_desk.sim import library as sim_library   # sim stays off the capture path
+        summary = sim_library.build_and_write()
+        logger.info(f"Pricing library rebuilt from {summary['days']} days")
+    except Exception as e:
+        logger.warning(f"Pricing library rebuild failed: {e}")
+
+
 async def main(port: Optional[int] = None) -> None:
     ib = IBClient(line_shares=split_lines(MARKET_DATA_LINES, stream_cap=0))
     state = create_app_state()
@@ -112,6 +123,7 @@ async def main(port: Optional[int] = None) -> None:
         dashboard_hb = ChainRecorder(CHAIN_LIBRARY_DIR, source="dashboard").heartbeat
         n = await capture_session(ib, state, recorder, dashboard_hb)
         logger.info(f"Session over: {n} records written to {CHAIN_LIBRARY_DIR}")
+        await asyncio.to_thread(rebuild_pricing_library)
     finally:
         ib.disconnect()
 

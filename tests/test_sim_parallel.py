@@ -195,9 +195,9 @@ def test_compute_chunk_is_deterministic():
     from spx_trade_desk.strategy.models import Strategy
     strat = jobs._STRATEGY_CACHE["T"]
     ladder = jobs.build_ladder(SPOT0, cfg.ladder_range_pct)
-    dyn = jobs.build_dynamics(model, cfg)
+    pricer = jobs.build_pricing_model(model, cfg)
     cell = {"sl_multiplier": None, "k": None}
-    a = parallel.compute_chunk((cfg, model, strat, [], ladder, dyn, cell, 0, 0, 20, SPOT0))
-    b = parallel.compute_chunk((cfg, model, strat, [], ladder, dyn, cell, 0, 0, 20, SPOT0))
+    a = parallel.compute_chunk((cfg, model, strat, [], ladder, pricer, cell, 0, 0, 20, SPOT0))
+    b = parallel.compute_chunk((cfg, model, strat, [], ladder, pricer, cell, 0, 0, 20, SPOT0))
     assert [t.pnl for t in a["trials"]] == [t.pnl for t in b["trials"]]
     assert (a["spots"] == b["spots"]).all()
