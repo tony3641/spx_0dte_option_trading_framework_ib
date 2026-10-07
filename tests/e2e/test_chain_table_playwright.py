@@ -13,6 +13,9 @@ from tests.e2e.render_bench import _proactor_policy, open_page    # noqa: E402
 
 STRIKES = [5850 + 5 * i for i in range(120)]            # 5850 .. 6445
 FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+FLASHES = """id => document.getAnimations().filter(a => a.effect && a.effect.target === document.getElementById(id)
+                                                    && a.effect.pseudoElement === '::after').length"""
+NON_CSS_ANIMATIONS = "() => document.getAnimations().filter(a => !(a instanceof CSSAnimation)).length"
 
 
 def _row(s, bid=1.0):
@@ -141,14 +144,33 @@ def test_a_tick_for_another_expiry_is_ignored_and_one_without_an_expiry_is_appli
 
 def test_a_changed_number_flashes_and_an_unchanged_one_does_not(page):
     _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 2.0}], "timestamp_iso": "x"})
-    assert page.evaluate("() => document.getElementById('chain_6150_call_bid').getAnimations().length") == 1
+    assert page.evaluate(FLASHES, "chain_6150_call_bid") == 1
     _inject(page, "chain_tick", {"ticks": [{"strike": 6155, "right": "C", "bid": 1.0}], "timestamp_iso": "x"})
-    assert page.evaluate("() => document.getElementById('chain_6155_call_bid').getAnimations().length") == 0
+    assert page.evaluate(FLASHES, "chain_6155_call_bid") == 0
 
 
-def test_flash_uses_animations_not_classes(page):
-    _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 2.0}], "timestamp_iso": "x"})
+def test_flash_fades_an_overlay_with_opacity_and_cleans_up_after_itself(page):
+    _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 3.0}], "timestamp_iso": "x"})
+    info = page.evaluate("""() => { const a = document.getAnimations().find(a => a.effect.pseudoElement === '::after');
+                                    return a ? Object.keys(a.effect.getKeyframes()[0]).filter(k => !['offset','easing','composite','computedOffset'].includes(k)) : null; }""")
+    assert info == ["opacity"]                                  # opacity only: no background-color paint per frame
+    assert page.evaluate("() => document.getElementById('chain_6150_call_bid').classList.contains('fl-up')")
+    page.wait_for_timeout(900)
+    assert not page.evaluate("() => document.getElementById('chain_6150_call_bid').classList.contains('fl-up')")
     assert page.evaluate("() => document.querySelectorAll('.flash-up, .flash-down').length") == 0
+
+
+def test_flashes_are_capped_per_flush_and_can_be_disabled(page):
+    page.evaluate("() => switchTab('chain')")
+    ticks = [{"strike": 5850 + 5 * k, "right": "C", "bid": 9.0 + k} for k in range(100)]
+    _inject(page, "chain_tick", {"ticks": ticks, "timestamp_iso": "x"})
+    started = page.evaluate("() => document.getAnimations().filter(a => a.effect.pseudoElement === '::after').length")
+    assert 0 < started <= 40
+    page.wait_for_timeout(900)
+    page.evaluate("() => { state.chainFlashMax = 0; }")
+    _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 4.0}], "timestamp_iso": "x"})
+    assert page.evaluate(FLASHES, "chain_6150_call_bid") == 0
+    page.evaluate("() => { state.chainFlashMax = 40; }")
 
 
 # --- full payloads keep row identity -----------------------------------------------------------
@@ -359,6 +381,7 @@ def test_full_payload_age_reseeds_the_stale_state(page):
 
 def test_leg_prices_update_in_place_and_keep_the_quantity_input_focused(page):
     page.click("#chain_6150_call_ask")
+    page.evaluate("() => toggleStrategyDock(true)")        # the legs table is hidden while the dock is collapsed
     assert page.evaluate("() => document.querySelector('.leg-delta').className") == "leg-delta summary-credit"
     page.evaluate("() => { window.__qty = document.querySelector('.leg-qty'); window.__qty.focus(); }")
     _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 2.0, "ask": 2.2, "delta": -0.1}],
@@ -501,9 +524,9 @@ def test_no_flash_storm_when_the_tab_is_shown_after_hidden_ticks(page):
     page.evaluate("() => switchTab('chain')")
     page.wait_for_timeout(150)
     assert _text(page, "chain_6000_call_bid") == "2.00" and _text(page, "chain_6145_call_ask") == "2.10"
-    assert page.evaluate("() => document.getAnimations().length") == 0
+    assert page.evaluate(NON_CSS_ANIMATIONS) == 0                 # the tab cross-fade is a CSS animation
     _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 3.0}], "timestamp_iso": "x"})
-    assert page.evaluate("() => document.getElementById('chain_6150_call_bid').getAnimations().length") == 1
+    assert page.evaluate(FLASHES, "chain_6150_call_bid") == 1
 
 
 def test_stale_dimming_is_current_the_moment_the_tab_is_shown(page):

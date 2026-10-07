@@ -161,7 +161,7 @@ def test_resize_follows_the_container_and_a_hidden_chart_is_left_alone(page_on_d
     pg.evaluate("() => switchTab('dashboard')")
     pg.wait_for_function("""() => {
         const g = document.getElementById('gexChart');
-        return g.clientWidth > 1000 && Math.abs(g._fullLayout.width - g.clientWidth) <= 1;
+        return g.clientWidth > 500 && Math.abs(g._fullLayout.width - g.clientWidth) <= 1;   // two columns at 1300 px
     }""", timeout=5000)
 
 
@@ -202,11 +202,30 @@ def test_spot_change_in_the_frame_of_a_gex_message_is_drawn_by_the_gex_render(pa
     _inject(pg, "gex", _gex())
     _settle(pg)
     pg.evaluate(COUNT_PLOTLY)
+    pg.evaluate("() => { state.smileMinIntervalMs = 0; }")   # the smile throttle is tested on its own
+    changed = _gex(6155)
+    changed["gex_bars"][3]["call_gex"] = 2e6                 # the data really changed: the full draws paint the spot too
+    changed["smile_data"][3]["call_iv"] = 17.0
+    pg.evaluate("""g => window.__benchInject([{type: 'gex', data: g},
+                                              {type: 'status', data: {connected: false, spot_price: 6162}}])""",
+                changed)
+    _settle(pg)
+    assert pg.evaluate(CALLS)["relayout"] == 0
+    assert 6162 in _gex_shape_xs(pg)
+
+
+def test_a_gex_message_with_unchanged_data_only_moves_the_spot_line(page_on_dashboard):
+    pg = page_on_dashboard
+    _inject(pg, "gex", _gex())
+    _settle(pg)
+    pg.evaluate(COUNT_PLOTLY)
     pg.evaluate("""g => window.__benchInject([{type: 'gex', data: g},
                                               {type: 'status', data: {connected: false, spot_price: 6162}}])""",
                 _gex(6155))
     _settle(pg)
-    assert pg.evaluate(CALLS)["relayout"] == 0
+    calls = pg.evaluate(CALLS)
+    assert calls["react"] == 0                               # nothing new to paint: no full draw
+    assert calls["relayout"] == 2                            # one spot-line relayout per chart
     assert 6162 in _gex_shape_xs(pg)
 
 
@@ -538,7 +557,7 @@ def test_paint_spans_are_recorded_only_for_messages_that_scheduled_a_render(page
     assert _send(pg, moved) == ["status.paint"]               # the spot relayouts
     # a no-op status handled in a frame that already has other jobs queued records no paint of its own
     assert _send(pg, snapshot, moved) == ["price_snapshot.paint"]       # the spot is already 6152: a no-op
-    assert _send(pg, acct) == []                              # the Account tab is hidden: parked, not painted
+    assert _send(pg, acct) == ["account_update.paint"]       # the Dashboard's Positions panel paints it; the Account tab is parked
     pg.evaluate("() => switchTab('chain')")
     assert _send(pg, gex, {"type": "status", "data": {"connected": False, "spot_price": 6155}}) == []
     pg.evaluate("() => { window.__spans.length = 0; switchTab('account'); }")

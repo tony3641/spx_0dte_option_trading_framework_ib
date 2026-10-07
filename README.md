@@ -26,6 +26,7 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
   - **Subsequent strategies** — trigger children off a parent trade's state (parent close / time window), with acyclic tree validation.
 - **Simulation tab** — intraday Monte Carlo stress-testing for 0DTE strategies: GJR-GARCH + Student-t paths with U-shape volatility, option marks from a z-model fitted to recorded 0DTE chains, tick-rule fills, family re-entry, SL/strike sweeps and stress dials (ν, γ, ATM-IV anchor, pricing tier), PnL/CVaR/max-DD/ruin analytics.
 - **Logging tab** — server-side framework log streamed to the browser.
+- **Light and dark themes** — a terminal-style dense layout with an amber accent and tabular monospace numerals; see Themes below.
 
 ## Quick Start
 
@@ -91,8 +92,8 @@ The exact URLs are printed to the console when the server starts. You can overri
 
 ## Dashboard Tabs
 
-- **Dashboard** — intraday chart, GEX bars, IV smile, level badges, status bar.
-- **Option Chain** — full streaming chain table with greeks and order entry.
+- **Dashboard** — a four-panel overview: SPX intraday chart, IV smile, GEX bars and Positions & P&L, plus level badges and the status bar. The panels fill the window below the header and stack into one column at 1100 px and below.
+- **Option Chain** — full streaming chain table with greeks and order entry. The Strategy Builder is a collapsible order dock at the bottom: collapsed (the default) it shows one line (legs, net price, max loss) and the order row; the arrow button expands the legs table and the combo numbers.
 - **Account** — account summary, positions, executions, order placement.
 - **Strategies** — strategy list/editor, live candidates, triggers, and arm/disarm controls.
 - **Simulation** — run intraday MC stress tests, sweep stop-loss multipliers and dynamic strike distances, A/B stress dials, read the report (SPX percentile fan + per-cell charts), force-clear it between runs, and export a full AI-readable JSON report.
@@ -463,15 +464,16 @@ Candlestick chart of 1-minute SPX bars on TradingView Lightweight Charts. Times 
 
 ### 2. Gamma Exposure (GEX) by Strike (middle)
 Bar chart showing Call GEX (green) and Put GEX (red) by strike with:
-- **Net GEX line** (yellow) — cumulative gamma exposure
-- **Spot price indicator** (white dotted line)
+- **Net GEX line** (violet, the theme's `alt` color) — cumulative gamma exposure
+- **Spot price indicator** (dotted line in the text color)
+- **Near / All toggle** — by default the chart draws the strikes within 40 steps of spot (`state.gexWindowStrikes`); "All" draws every strike. The IV smile follows the same toggle.
 - **Key level markers** — visual anchors for walls and flip points
 - **Annotation box** — Net GEX value, MM regime (CONVERGING/DIVERGING), Call OI, Put OI, P/C OI Ratio, Call GEX % skew
 
 ### 3. IV Smile & Delta-Decay Efficiency (bottom)
 Two-row subplot showing:
-- **Top (Calls):** Call IV curve (green) + Call efficiency (yellow, dotted)
-- **Bottom (Puts):** Put IV curve (red) + Put efficiency (yellow, dotted)
+- **Top (Calls):** Call IV curve (green) + Call efficiency (violet, dotted)
+- **Bottom (Puts):** Put IV curve (red) + Put efficiency (violet, dotted)
 - All subplots share synchronized x-axes (strike ranges aligned)
 - Hover displays: Strike, IV %, Delta, Charm (delta decay rate), Efficiency metric
 
@@ -506,6 +508,14 @@ A browser with more than `PUSH_ORDERED_BACKLOG_MAX` unsent critical messages, or
 - Heavy jobs (the GEX and IV smile Plotly draws, tens of milliseconds each) run one per frame, after the light jobs, so a price bar or chain tick that arrives together with a GEX publish is painted before the chart draw starts. A heavy job that has waited behind four busy frames runs anyway.
 - The spot line on the GEX and smile charts moves with a light relayout at most once every 2 s per chart.
 - A chart is drawn only while its tab is visible and its container has a size (`ResizeObserver`); what changed while a tab was hidden is painted once when the tab is shown.
+
+## Themes
+
+The page has a dark and a light theme. It follows the OS (`prefers-color-scheme`) until you choose: the sun/moon button in the header flips the theme and remembers it in the browser (`localStorage` key `spx-theme`); Shift+click on it goes back to following the OS. The Plotly charts and the price chart re-theme in place when it changes, with no reload.
+
+Every color lives in `static/css/tokens.css` (dark in `:root`, light in `:root[data-theme="light"]`), together with the radius, spacing, shadow and motion tokens; CSS reads them as `var(--name)`. JavaScript that has to hand a color to Plotly or Lightweight Charts (they cannot parse `var()` or `color-mix()`) calls `themeColors()` from `static/js/theme-colors.js`. `tests/test_ui_tokens.py` checks that both themes define the same tokens, that text and background pairs meet WCAG AA, that no `var(--x)` is undefined, and that no color literal appears outside those two files, so a new color goes into `tokens.css`.
+
+Motion is short and quiet: tabs cross-fade, loading states are shimmer bars, and the chain's tick flash is an opacity fade on a cell overlay, capped at 40 cells per update (`state.chainFlashMax`). With `prefers-reduced-motion: reduce` the animations and the flash are off.
 
 ## Status Bar
 
@@ -586,6 +596,11 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/mcp/` | FastMCP stdio server (11 tools) and its DataFrame→JSON adapter |
 | `reports/data/`, `reports/output/` | Seed SPX/VIX market data (committed) and generated reports (gitignored) |
 | `static/` | Browser app: `index.html`, `css/`, `js/` (charts, price chart, render loop, chain table, order entry, strategy UI, tabs, WS) |
+| `static/css/tokens.css` | Design tokens: every color (dark and light), radius, spacing, shadow and motion value; the only CSS file with color literals |
+| `static/css/components.css` | Shared pieces: `.num` tabular numerals, chips, KPI blocks, the Positions & P&L panel |
+| `static/js/theme.js` | Blocking script in `<head>`: sets `data-theme` from `spx-theme` or the OS before first paint, `getTheme` / `setTheme` / `toggleTheme`, fires `themechange` |
+| `static/js/theme-colors.js` | `themeColors()` (token values for Plotly and Lightweight Charts, cached until `themechange`), `withAlpha()` |
+| `static/js/dash-positions.js` | The Dashboard's Positions & P&L panel, drawn from `account_update` |
 | `static/js/price-chart.js` | SPX price chart on Lightweight Charts: snapshot, per-bar updates, overnight line, level price lines, ET time axis |
 | `static/js/render-loop.js` | Frame batching: light and heavy job lanes, hidden-tab parking |
 | `static/js/perf.js` | Browser-side timings (server stamp to receipt, receipt to paint, long tasks), sent to the server as `perf_report` every 10 s |
@@ -639,7 +654,7 @@ Additional tunables (chain streaming, batch sizes, viewport sync, SPXW cease/gap
 - `python -m spx_trade_desk.ib.line_probe` finds how many market-data lines your account really has (stop the dashboard and close TWS watchlists first; it only reads market data) and prints a `MARKET_DATA_LINES` value with 10% head-room. Setting it above 100 lets the chain stream cover more strikes, up to `CHAIN_STREAM_MAX_LINES_CAP` lines (lines beyond the cap go to the poller, whose snapshot batches stay at 50 lines or fewer); keep it opt-in until you have watched the Log tab for error 101.
 - `python -m spx_trade_desk.ib.latency_probe` is the acceptance run on a **paper** account (it refuses any other): it places and cancels non-fillable orders and prints each latency target as PASS / NEAR / MISS. It refuses live ports and exits non-zero on a MISS or an unmeasured target.
 - `python -m spx_trade_desk.ib.bars_probe` checks how IB keeps SPX 1-minute bars up to date (`keepUpToDate`): it prints the initial bars and how often updates arrive over `--seconds` (default 180); it is read-only, refuses live ports (run it on paper TWS) and needs regular hours, since IB sends no updates outside them.
-- `python -m tests.e2e.render_bench --protocol v2 --seconds 60 [--out result.json]` is the render benchmark (needs Playwright and Chromium). It starts the real server with IB pointed at a closed port and feeds the page invented messages: 120 strikes, a `chain_tick` for about 30 changed contracts every 0.5 s, a price-bar update every second, a full `chain_quotes` and `gex` every 10 s, for `--seconds` on the Dashboard tab and then on the Chain tab. It prints, per tab, p50 / p95 / max of inject-to-painted-frame for the stream cycle, the price bar and the full publish, plus the long tasks over 50 ms. `--protocol v1` replays the old message mix and is valid only on commit `577db68`. Timings vary by 2 to 3 times between runs on a laptop, so compare runs made on the same machine in the same power state. `python -m pytest tests/e2e/test_render_perf_playwright.py` checks the run for errors and against generous ceilings (`RENDER_BENCH_SECONDS=12` for a smoke run); `RENDER_BENCH_STRICT=1` also asserts the design targets (stream cycle p95 at most 50 ms, price bar p95 at most 20 ms, no long tasks). Results are in `docs/progress.md`.
+- `python -m tests.e2e.render_bench --protocol v2 --seconds 60 [--out result.json]` is the render benchmark (needs Playwright and Chromium). It starts the real server with IB pointed at a closed port and feeds the page invented messages: 120 strikes, a `chain_tick` for about 30 changed contracts every 0.5 s, a price-bar update every second, a full `chain_quotes` and `gex` every 10 s, for `--seconds` on the Dashboard tab and then on the Chain tab. It prints, per tab, p50 / p95 / max of inject-to-painted-frame for the stream cycle, the price bar and the full publish, plus the long tasks over 50 ms. `--protocol v1` replays the old message mix and is valid only on commit `577db68`. Timings vary by 2 to 3 times between runs on a laptop, so compare runs made on the same machine in the same power state. `--no-flash` turns the chain's tick flash off (`state.chainFlashMax = 0`) so its cost can be read on its own; in a headless software-rendered Chromium it was about 15 to 20 ms per chain update. `python -m pytest tests/e2e/test_render_perf_playwright.py` checks the run for errors and against generous ceilings (`RENDER_BENCH_SECONDS=12` for a smoke run); `RENDER_BENCH_STRICT=1` also asserts the design targets (stream cycle p95 at most 50 ms, price bar p95 at most 20 ms, no long tasks). Results are in `docs/progress.md`.
 
 ## Discord Bot
 

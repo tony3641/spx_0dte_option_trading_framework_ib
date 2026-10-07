@@ -104,14 +104,14 @@
         legDescs.forEach(d => {
             bodyHtml += `<div class="modal-row"><span>Leg</span><span>${d}</span></div>`;
         });
-        bodyHtml += `<div class="modal-row"><span>Limit Price</span><span style="color:#93c5fd">$${rawLmt.toFixed(2)}</span></div>`;
+        bodyHtml += `<div class="modal-row"><span>Limit Price</span><span style="color:var(--info)">$${rawLmt.toFixed(2)}</span></div>`;
         if (hasStopLoss) {
-            bodyHtml += `<div class="modal-row"><span>Stop Loss</span><span style="color:#f87171">STP LMT stop $${slStop.toFixed(2)} / limit $${slLimit.toFixed(2)}</span></div>`;
+            bodyHtml += `<div class="modal-row"><span>Stop Loss</span><span style="color:var(--down)">STP LMT stop $${slStop.toFixed(2)} / limit $${slLimit.toFixed(2)}</span></div>`;
         }
         if (isOutsideRth) {
-            bodyHtml += `<div class="modal-row"><span>Session</span><span style="color:#eab308">Extended hours (outsideRTH)</span></div>`;
+            bodyHtml += `<div class="modal-row"><span>Session</span><span style="color:var(--accent)">Extended hours (outsideRTH)</span></div>`;
         }
-        bodyHtml += `<div class="modal-row" style="margin-top:10px; padding-top:10px; border-top:1px solid #1e293b"><span style="color:#f87171">This order will be submitted to IB. Verify details carefully.</span><span></span></div>`;
+        bodyHtml += `<div class="modal-row" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border)"><span style="color:var(--down)">This order will be submitted to IB. Verify details carefully.</span><span></span></div>`;
 
         document.getElementById('orderModalTitle').textContent =
             legs.length === 1 ? 'Confirm Order' : `Confirm ${legs.length}-Leg Combo`;

@@ -1,6 +1,23 @@
     // Init
     // ======================================================================
+    // The tab containers fill the viewport below the header, the levels strip and the tab bar. Their
+    // heights are not constants (the strip wraps, fonts differ), so measure them.
+    function syncShellHeight() {
+        let h = 0;
+        for (const sel of ['.header', '#levelsStrip', '.tab-bar']) {
+            const el = document.querySelector(sel);
+            if (el) h += el.getBoundingClientRect().height;
+        }
+        document.documentElement.style.setProperty('--shell-h', Math.ceil(h) + 'px');
+    }
+    window.addEventListener('resize', syncShellHeight);
+    if (window.ResizeObserver) {
+        const ro = new ResizeObserver(syncShellHeight);
+        for (const sel of ['.header', '#levelsStrip', '.tab-bar']) { const el = document.querySelector(sel); if (el) ro.observe(el); }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
+        syncShellHeight();
         initPriceChart();
         initGexChart();
         initSmileChart();

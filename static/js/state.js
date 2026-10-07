@@ -27,6 +27,10 @@
         // GEX mode toggle (dashboard)
         gexMode: '0dte',        // '0dte' | 'monthly'
         spotLineMinIntervalMs: 2000,   // at most one spot-line relayout per GEX / smile chart in this window
+        chainFlashMax: 40,             // most tick flashes started per chain flush; 0 turns the flash off
+        gexWindowStrikes: 40,          // the GEX / smile charts draw this many strike steps each side of spot
+        gexShowAll: false,             // true: draw every strike (the "All" toggle)
+        smileMinIntervalMs: 5000,      // a changed smile redraws at most this often (trailing draw)
         monthlyGex: null,       // cached monthly GEX data
         monthlyExpiration: '',  // display string for monthly expiration
         // Account tab state
@@ -60,13 +64,14 @@
         if (VALID_TABS.has(hashTab)) {
             return hashTab;
         }
-        const savedTab = localStorage.getItem(TAB_KEY);
+        let savedTab = null;
+        try { savedTab = localStorage.getItem(TAB_KEY); } catch (e) { /* storage blocked: start on the default tab */ }
         return VALID_TABS.has(savedTab) ? savedTab : 'dashboard';
     }
 
     function saveActiveTab(tab) {
         const validTab = getValidTab(tab);
-        localStorage.setItem(TAB_KEY, validTab);
+        try { localStorage.setItem(TAB_KEY, validTab); } catch (e) { /* storage blocked: the tab just is not remembered */ }
         if (history.replaceState) {
             history.replaceState(null, '', `#${validTab}`);
         } else {

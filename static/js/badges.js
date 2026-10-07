@@ -66,9 +66,9 @@
         const ms = document.getElementById('marketStatus');
         const msVal = data.market_status || '-';
         ms.textContent = msVal;
-        if (msVal === 'RTH') ms.style.color = '#22c55e';
-        else if (msVal === 'GTH' || msVal === 'CURB') ms.style.color = '#eab308';
-        else ms.style.color = '#94a3b8';
+        if (msVal === 'RTH') ms.style.color = 'var(--up)';
+        else if (msVal === 'GTH' || msVal === 'CURB') ms.style.color = 'var(--accent)';
+        else ms.style.color = 'var(--text-muted)';
 
         // Show/hide Extended Hours badge in order entry row
         const rthBadge = document.getElementById('outsideRthBadge');

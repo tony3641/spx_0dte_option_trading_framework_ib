@@ -96,8 +96,23 @@
     // Write the dirty cells from the model. A null value is a real change and shows the empty text.
     // Ticks parked while the tab was hidden pile up first-change values for the whole hidden period, so
     // the first flush after it writes the text without flashing (hundreds of animations at once).
+    const _reducedMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+
+    // Tick flash: a transient class picks the tint, an opacity animation on the cell's ::after overlay
+    // fades it out. Opacity on an overlay stays off the layout and paint path (the old per-cell
+    // background-color animation repainted every frame). The class is removed when the animation ends.
+    function flashCell(td, up) {
+        if (td._flash) td._flash.cancel();
+        td.classList.remove('fl-up', 'fl-dn');
+        td.classList.add(up ? 'fl-up' : 'fl-dn');
+        const anim = td.animate({ opacity: [1, 0] }, { duration: 600, easing: 'ease-out', pseudoElement: '::after' });
+        td._flash = anim;
+        anim.onfinish = () => { td.classList.remove('fl-up', 'fl-dn'); td._flash = null; };
+    }
+
     function flushChainCells() {
-        const flash = !chainView.noFlash;
+        const flash = !chainView.noFlash && !_reducedMotion.matches;
+        let flashed = 0;
         chainView.noFlash = false;
         for (const [ck, oldVal] of chainView.dirty) {
             const bar = ck.indexOf('|');
@@ -110,9 +125,10 @@
             const val = row ? row[key] : null;
             const txt = formatChainVal(key.slice(key.indexOf('_') + 1), val);
             if (td.textContent !== txt) td.textContent = txt;
-            if (flash && typeof val === 'number' && typeof oldVal === 'number' && val !== oldVal && td.animate) {
-                td.animate([{ backgroundColor: val > oldVal ? 'rgba(22,163,74,0.38)' : 'rgba(220,38,38,0.38)' },
-                            { backgroundColor: 'transparent' }], { duration: 600, easing: 'ease-out' });
+            if (flash && flashed < state.chainFlashMax && typeof val === 'number' && typeof oldVal === 'number'
+                    && val !== oldVal && td.animate) {
+                flashCell(td, val > oldVal);
+                flashed++;
             }
         }
         chainView.dirty.clear();
@@ -250,7 +266,7 @@
             chainView.dirty.clear();
             chainView.staleState.clear();
             chainView.built = false;
-            tbody.innerHTML = '<tr><td colspan="19" style="text-align:center;color:#475569;padding:40px;">Waiting for option chain data...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="19" style="text-align:center;color:var(--text-faint);padding:40px;">Waiting for option chain data...</td></tr>';
             document.getElementById('chainRangeInfo').textContent = 'Visible range: -';
             return;
         }
