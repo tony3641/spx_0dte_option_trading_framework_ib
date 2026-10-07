@@ -195,10 +195,14 @@
         </div>
 
         <!-- Strategy Builder -->
-        <div class="strategy-panel" id="strategyPanel">
+        <div class="strategy-panel dock-collapsed" id="strategyPanel">
             <div class="strategy-header">
                 <h3>Strategy Builder <span id="strategyLegCount" style="color:var(--text-faint);font-weight:400;font-size:11px;"></span></h3>
-                <button class="strategy-clear-btn" onclick="clearStrategy()">Clear All</button>
+                <span class="dock-line num" id="strategyDockLine"></span>
+                <span class="strategy-header-actions">
+                    <button class="strategy-clear-btn" onclick="clearStrategy()">Clear All</button>
+                    <button class="dock-toggle" id="strategyDockToggle" onclick="toggleStrategyDock()" aria-expanded="false" aria-controls="strategyContent" title="Show or hide the legs and combo details">&#9650;</button>
+                </span>
             </div>
             <div id="strategyContent">
                 <div class="strategy-empty" id="strategyEmpty">Click <span style="color:var(--up)">Ask</span> to buy or <span style="color:var(--down)">Bid</span> to sell an option</div>

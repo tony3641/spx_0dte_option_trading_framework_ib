@@ -302,3 +302,64 @@ def test_positions_panel_survives_empty_and_malformed_accounts(browser_env):
         assert errors == []
     finally:
         browser.close()
+
+
+def _add_ask_leg(page):
+    page.evaluate("() => document.querySelector('#chainBody td.cell-ask').click()")
+    page.wait_for_selector("#orderEntryRow", state="visible")
+
+
+def test_dock_is_collapsed_by_default_and_expands(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", tab="chain")
+    try:
+        _add_ask_leg(page)
+        assert page.evaluate("() => document.getElementById('strategyPanel').classList.contains('dock-collapsed')")
+        assert not page.is_visible("#strategyContent")
+        line = page.evaluate("() => document.getElementById('strategyDockLine').textContent")
+        assert line.startswith("Buy ") and "Max loss" in line
+        page.click("#strategyDockToggle")
+        assert page.is_visible("#strategyContent") and page.is_visible("#strategySummary")
+        assert page.get_attribute("#strategyDockToggle", "aria-expanded") == "true"
+        page.click("#strategyDockToggle")
+        assert not page.is_visible("#strategyContent")
+        assert page.get_attribute("#strategyDockToggle", "aria-expanded") == "false"
+    finally:
+        browser.close()
+
+
+def test_collapsed_dock_keeps_stop_loss_and_place_order_usable(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", tab="chain")
+    try:
+        _add_ask_leg(page)
+        page.check("#stopLossEnabled")
+        assert page.is_visible("#stopLossStop") and page.is_enabled("#stopLossStop")
+        page.fill("#stopLossStop", "2.50")
+        page.fill("#stopLossLimit", "2.80")
+        page.click("#strategyDockToggle")
+        page.click("#strategyDockToggle")
+        assert page.input_value("#stopLossStop") == "2.50" and page.input_value("#stopLossLimit") == "2.80"
+        assert page.is_visible("#stratPlaceBtn") and page.is_visible("#stopLossStop")
+        page.uncheck("#stopLossEnabled")                 # a plain order: the stop-loss rules are not under test here
+        page.click("#stratPlaceBtn")
+        page.wait_for_function("() => !document.getElementById('orderModalBackdrop').classList.contains('hidden')")
+    finally:
+        browser.close()                                  # the confirm modal was never confirmed: nothing was sent
+
+
+def test_dock_stays_pinned_while_the_table_scrolls_and_clears(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", tab="chain")
+    try:
+        _add_ask_leg(page)
+        before = _rect(page, "#strategyPanel")
+        page.evaluate("() => { document.getElementById('chainTableWrap').scrollTop = 600; }")
+        page.evaluate(FRAMES)
+        after = _rect(page, "#strategyPanel")
+        assert abs(before["t"] - after["t"]) < 1 and after["b"] <= 1001
+        page.evaluate("() => clearStrategy()")
+        assert page.evaluate("() => document.getElementById('strategyDockLine').textContent") == ""
+        assert not page.is_visible("#orderEntryRow")
+    finally:
+        browser.close()

@@ -113,5 +113,12 @@
             font-size: 12px;
         }
 
-
-
+.strategy-panel { border-top: 1px solid var(--border-strong); box-shadow: 0 -6px 16px var(--scrim); }
+.strategy-header { gap: var(--s-3); }
+.strategy-header h3 { white-space: nowrap; }
+.dock-line { flex: 1; min-width: 0; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strategy-header-actions { display: flex; gap: var(--s-2); align-items: center; }
+.dock-toggle { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border-strong); border-radius: var(--r-sm); padding: 3px 10px; font-size: 11px; cursor: pointer; }
+.dock-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.strategy-panel.dock-collapsed #strategyContent,
+.strategy-panel.dock-collapsed #strategySummary { display: none; }

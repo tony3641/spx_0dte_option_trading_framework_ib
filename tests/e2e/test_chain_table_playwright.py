@@ -359,6 +359,7 @@ def test_full_payload_age_reseeds_the_stale_state(page):
 
 def test_leg_prices_update_in_place_and_keep_the_quantity_input_focused(page):
     page.click("#chain_6150_call_ask")
+    page.evaluate("() => toggleStrategyDock(true)")        # the legs table is hidden while the dock is collapsed
     assert page.evaluate("() => document.querySelector('.leg-delta').className") == "leg-delta summary-credit"
     page.evaluate("() => { window.__qty = document.querySelector('.leg-qty'); window.__qty.focus(); }")
     _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 2.0, "ask": 2.2, "delta": -0.1}],

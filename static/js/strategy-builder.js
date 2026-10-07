@@ -42,6 +42,39 @@
         renderStrategy();
     }
 
+    // ---- Order dock. Collapsed (default): the header line (legs, net, max loss) and the order row.
+    // Expanded: the legs table and the combo numbers too. The order row is never hidden: an armed
+    // stop-loss or the Place Order button must not disappear behind a toggle.
+    let _dockExpanded = false;
+
+    function applyStrategyDock() {
+        const panel = document.getElementById('strategyPanel');
+        const btn = document.getElementById('strategyDockToggle');
+        if (!panel || !btn) return;
+        panel.classList.toggle('dock-collapsed', !_dockExpanded);
+        btn.setAttribute('aria-expanded', String(_dockExpanded));
+        btn.innerHTML = _dockExpanded ? '&#9660;' : '&#9650;';
+    }
+
+    function toggleStrategyDock(force) {
+        _dockExpanded = typeof force === 'boolean' ? force : !_dockExpanded;
+        applyStrategyDock();
+    }
+
+    function updateStrategyDockLine() {
+        const el = document.getElementById('strategyDockLine');
+        if (!el) return;
+        const legs = state.strategyLegs;
+        let text = '';
+        if (legs.length) {
+            const names = legs.map(l => `${l.action === 'BUY' ? 'Buy' : 'Sell'} ${l.strike}${l.right}`).join(' / ');
+            const net = (document.getElementById('comboNet') || {}).textContent || '-';
+            const maxLoss = net === '-' ? '-' : ((document.getElementById('comboMaxLoss') || {}).textContent || '-');
+            text = `${names}  |  ${net}  |  Max loss ${maxLoss}`;
+        }
+        if (el.textContent !== text) el.textContent = text;
+    }
+
     function clearStrategy() {
         state.strategyLegs = [];
         const lmtInput = document.getElementById('stratLmtPrice');
@@ -148,6 +181,7 @@
             countEl.textContent = '';
             const orderRow = document.getElementById('orderEntryRow');
             if (orderRow) orderRow.style.display = 'none';
+            updateStrategyDockLine();
             refreshSelectionHighlights();
             return;
         }
@@ -326,6 +360,7 @@
             // Max profit / loss / breakeven
             computePayoff(mid);
         }
+        updateStrategyDockLine();
     }
 
     function computePayoff(premium) {
