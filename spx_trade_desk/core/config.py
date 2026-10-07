@@ -117,6 +117,9 @@ CHAIN_REFRESH_SECONDS = _get_setting("CHAIN_REFRESH_SECONDS", 10, int)
 DASHBOARD_CHAIN_REFRESH_SECONDS = _get_setting("DASHBOARD_CHAIN_REFRESH_SECONDS", 300, int)
 CHAIN_TAB_FULL_REFRESH_SECONDS = _get_setting("CHAIN_TAB_FULL_REFRESH_SECONDS", 300, int)
 PRICE_PUSH_INTERVAL = _get_setting("PRICE_PUSH_INTERVAL", 1.0, float)
+# Price chart bars (market/price_bars.py): False = one-shot backfill + live aggregation from SPX last.
+PRICE_BARS_KEEP_UP_TO_DATE = _get_setting("PRICE_BARS_KEEP_UP_TO_DATE", True, _as_bool)
+PRICE_BARS_STALL_S = 180.0      # RTH: no IB update for this long re-requests the bars
 
 # ---------------------------------------------------------------------------
 # Server

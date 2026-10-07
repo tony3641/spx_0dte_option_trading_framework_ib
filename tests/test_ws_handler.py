@@ -227,6 +227,20 @@ async def test_endpoint_registers_and_removes_its_channel():
 
 
 @pytest.mark.asyncio
+async def test_init_carries_the_price_snapshot_instead_of_price_history():
+    state = create_app_state()
+    state.price_session_date = "2099-01-02"
+    state.price_history.append({"time": "2099-01-02T09:30:00-05:00", "time_short": "09:30",
+                                "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0})
+    sock = ScriptWS([])
+    await ws_mod.websocket_endpoint(sock, None, state, _noop)
+    data = next(m for m in sock.sent if m["type"] == "init")["data"]
+    assert "price_history" not in data
+    assert data["price"]["session_date"] == "2099-01-02" and len(data["price"]["bars"]) == 1
+    assert data["price"]["mode"] == "historical" and data["price"]["overnight"] == []
+
+
+@pytest.mark.asyncio
 async def test_a_malformed_perf_report_keeps_the_connection(monkeypatch):
     state = create_app_state()
 

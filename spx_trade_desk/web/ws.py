@@ -19,6 +19,7 @@ from spx_trade_desk.core.config import VIEWPORT_CENTER_MIN_INTERVAL
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import now_et, market_status, get_expiration_display, is_within_rth
 from spx_trade_desk.market.chain_manager import monthly_gex_fetch
+from spx_trade_desk.market.price_bars import snapshot_payload
 from spx_trade_desk.ib.account import refresh_account_state, build_account_payload
 from spx_trade_desk.ib.orders import handle_place_order, handle_cancel_order
 from spx_trade_desk.ib.connection import update_vix
@@ -240,7 +241,7 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                 "market_status": market_status(),
                 "expiration": get_expiration_display(state.expiration) if state.expiration else "N/A",
                 "spot_price": round(state.spx_price, 2),
-                "price_history": list(state.price_history),
+                "price": snapshot_payload(state, is_within_rth()),
                 "gex": state.latest_gex,
                 "last_chain_update": state.last_chain_update or "Never",
                 "data_mode": state.data_mode,

@@ -1,18 +1,15 @@
 """
-Historical bar seeding, OHLC bar aggregation, and annualized volatility
-computation.
+One-shot historical bar fetch (the chain poller's "no spot price yet" fallback) and annualized
+volatility computation. The price chart's bars live in ``market/price_bars.py``.
 
-All functions accept `ib`, `state`, and `broadcast_fn` explicitly.
+All functions accept `ib` and `state` explicitly.
 """
 
-import asyncio
 import math
 import logging
 from datetime import datetime
 
-from spx_trade_desk.core.config import PRICE_PUSH_INTERVAL
-from spx_trade_desk.market.hours import now_et, is_within_rth, last_trading_date, ET
-from spx_trade_desk.ib.connection import update_spx_es_prices
+from spx_trade_desk.market.hours import is_within_rth, last_trading_date, ET
 
 logger = logging.getLogger(__name__)
 
@@ -109,69 +106,3 @@ async def fetch_historical_bars(ib, state):
         f"Loaded {len(bars)} historical bars for {session_date.isoformat()}, "
         f"last close={last_close:.2f}"
     )
-
-
-async def price_push_loop(ib, state, broadcast_fn):
-    """Aggregate live ticks into 1-minute OHLC bars and push to clients."""
-    current_bar = None
-    current_minute = None
-
-    while True:
-        try:
-            await asyncio.sleep(PRICE_PUSH_INTERVAL)
-
-            await update_spx_es_prices(state)
-
-            if state.active_tab == "chain":
-                current_bar = None
-                current_minute = None
-                continue
-
-            if state.live_price <= 0 or not is_within_rth() or state.data_mode != "live":
-                continue
-
-            now = now_et()
-            minute_key = (now.hour, now.minute)
-            price = round(state.live_price, 2)
-
-            if minute_key != current_minute:
-                if current_bar is not None:
-                    if not state.price_history or state.price_history[-1]["time"] != current_bar["time"]:
-                        state.price_history.append(current_bar)
-                    await broadcast_fn({"type": "bar", "data": current_bar})
-
-                bar_time = now.replace(second=0, microsecond=0)
-                bar_time_iso = bar_time.isoformat()
-                if state.price_history and state.price_history[-1]["time"] == bar_time_iso:
-                    existing = state.price_history[-1]
-                    current_bar = {
-                        "time": bar_time_iso,
-                        "time_short": bar_time.strftime("%H:%M"),
-                        "open": existing["open"],
-                        "high": max(existing["high"], price),
-                        "low": min(existing["low"], price),
-                        "close": price,
-                    }
-                else:
-                    current_bar = {
-                        "time": bar_time_iso,
-                        "time_short": bar_time.strftime("%H:%M"),
-                        "open": price,
-                        "high": price,
-                        "low": price,
-                        "close": price,
-                    }
-                current_minute = minute_key
-            else:
-                current_bar["high"] = max(current_bar["high"], price)
-                current_bar["low"] = min(current_bar["low"], price)
-                current_bar["close"] = price
-                await broadcast_fn({"type": "bar_update", "data": current_bar})
-
-        except asyncio.CancelledError:
-            if current_bar is not None:
-                state.price_history.append(current_bar)
-            break
-        except Exception as e:
-            logger.error(f"Price push error: {e}")
-            await asyncio.sleep(1)

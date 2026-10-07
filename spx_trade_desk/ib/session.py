@@ -1,7 +1,7 @@
 """Boot of one IB session, shared by the server start and the manual reconnect.
 
 ``boot_session`` runs the setup steps as a dependency graph instead of one serial list; ``first_boot``
-adds the steps that only a fresh process needs (historical bars, ES baseline, risk-free rate).
+adds the steps that only a fresh process needs (price bars, ES baseline, risk-free rate).
 ``start_background_loops`` is the single list of loops that live as long as one IB session.
 """
 import asyncio
@@ -18,11 +18,11 @@ from spx_trade_desk.ib.connection import (
     setup_monthly_chain_info, setup_spx_subscription, setup_vix1d_subscription,
     setup_vix_subscription,
 )
-from spx_trade_desk.market.bars import fetch_historical_bars, price_push_loop
 from spx_trade_desk.market.chain_manager import chain_stream_loop
 from spx_trade_desk.market.chain_poller import chain_poll_loop
 from spx_trade_desk.market.chain_publisher import chain_publish_loop
 from spx_trade_desk.market.hours import is_within_rth
+from spx_trade_desk.market.price_bars import price_bars_loop, seed_price_bars
 from spx_trade_desk.strategy.engine import strategy_evaluation_loop, take_profit_loop
 from spx_trade_desk.strategy.store import load_strategies
 from spx_trade_desk.web.ws import status_push_loop
@@ -52,7 +52,7 @@ async def _spx_branch(ib, state, first_boot: bool, prefetch: list) -> None:
     await setup_spx_subscription(ib, state)         # qualifies SPX: the next steps need its conId
     steps = [setup_chain_info(ib, state), setup_monthly_chain_info(ib, state)]
     if first_boot:
-        steps.append(fetch_historical_bars(ib, state))
+        steps.append(seed_price_bars(ib, state))
     await _all(*steps)
     if state.expiration:
         # The expiration is known now: list its contracts while the rest of the boot runs. Not awaited;
@@ -134,7 +134,7 @@ def start_background_loops(ib, state, broadcast_fn, *, recorder) -> None:
     if state.force_chain_fetch_event is None:
         state.force_chain_fetch_event = asyncio.Event()
     loops = (
-        price_push_loop(ib, state, broadcast_fn),
+        price_bars_loop(ib, state, broadcast_fn),
         status_push_loop(state, broadcast_fn),
         account_push_loop(ib, state, broadcast_fn),
         log_push_loop(state, broadcast_fn),

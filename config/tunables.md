@@ -14,6 +14,7 @@ Source: spx_trade_desk/core/config.py
 - DASHBOARD_CHAIN_REFRESH_SECONDS = 300
 - CHAIN_TAB_FULL_REFRESH_SECONDS = 300
 - PRICE_PUSH_INTERVAL = 1.0
+- PRICE_BARS_KEEP_UP_TO_DATE = true (price chart bars come from an IB keepUpToDate request; false = one-shot backfill at boot, 09:30 and reconnect, with the forming bar aggregated from the live SPX last price)
 - SERVER_HOST = "0.0.0.0"
 - SERVER_PORT = 8000
 - MARKET_DATA_LINES = 100 (account IB line allowance; split into fixed/order/poll/stream shares at startup)
@@ -122,8 +123,14 @@ Source: spx_trade_desk/core/config.py
 - historical bars duration: 1 D
 - historical bars size: 1 min
 - historical fetch off-hours end time: 16:30:00 ET
-- price_push_loop cadence: PRICE_PUSH_INTERVAL (from spx_trade_desk/core/config.py)
-- price push error backoff: 1 s
+
+### spx_trade_desk/market/price_bars.py
+- price_bars_loop cadence: PRICE_PUSH_INTERVAL (live merge of the forming bar, overnight line)
+- price_bars_loop error backoff: 5 s
+- IB request: 1 D, 1 min, TRADES, regular hours, keepUpToDate (PRICE_BARS_KEEP_UP_TO_DATE)
+- PRICE_BARS_STALL_S: 180 s (RTH: no IB update for this long cancels and re-requests the bars)
+- re-request backoff after an IB error or stall: 5 s, 15 s, 60 s (cap)
+- overnight (ES-derived) line: one point per minute outside RTH, at most 1440 points
 
 ### spx_trade_desk/core/rates.py
 - SGOV source URL: https://finance.yahoo.com/quote/SGOV?p=SGOV

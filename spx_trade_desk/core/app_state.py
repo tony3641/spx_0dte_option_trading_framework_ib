@@ -26,6 +26,9 @@ class AppState:
         self.spx_price: float = 0.0       # latest known SPX price (live or historical)
         self.live_price: float = 0.0      # latest live streaming price (0 when not streaming)
         self.price_history: deque = deque(maxlen=28800)  # OHLC bars (1-min)
+        self.price_session_date: str = ""            # ISO date of the bars in price_history
+        self.price_overnight: deque = deque(maxlen=1440)   # ES-derived SPX points outside RTH
+        self.price_feed = None                       # market.price_bars.PriceBarFeed
 
         # GEX
         self.latest_gex: Optional[dict] = None

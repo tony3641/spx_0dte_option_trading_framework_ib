@@ -35,7 +35,7 @@ python -m pytest tests/test_tradelog_settlement.py::test_itm_short_is_settled_at
 
 ## Architecture
 
-**Live runtime.** `server.py` is a thin entrypoint: its FastAPI lifespan builds the `IBClient` (`ib/client.py`, a native `ibapi` wrapper), subscribes SPX/ES/VIX/account, and starts background loops (`price_push`, `status_push`, `account_push`, `log_push`, `strategy_evaluation`, `take_profit`, `chain_fetch`, `chain_stream`) that all read/write one shared `AppState` (`core/app_state.py`) and push to browsers through `web/ws.py`. The frontend is vanilla JS + Plotly in `static/`, with no build step. Gotchas:
+**Live runtime.** `server.py` is a thin entrypoint: its FastAPI lifespan builds the `IBClient` (`ib/client.py`, a native `ibapi` wrapper), subscribes SPX/ES/VIX/account, and starts background loops (`price_bars`, `status_push`, `account_push`, `log_push`, `strategy_evaluation`, `take_profit`, `chain_fetch`, `chain_stream`) that all read/write one shared `AppState` (`core/app_state.py`) and push to browsers through `web/ws.py`. The frontend is vanilla JS + Plotly in `static/`, with no build step. Gotchas:
 - If IB boot fails, the lifespan logs and keeps serving with **no retry**: the dashboard shows `connected:false` / `initializing`. First check *which process and port* you are looking at (orphaned background servers and `IB_PORT` overrides have faked "the dashboard is broken"), then the Log tab.
 - The Discord bot is owned by `DiscordSettingsManager`, not by `state.background_tasks`, so IB reconnects never kill it.
 - Settings resolve **env var → repo-root `.env` → `config/params.yaml` → default** (`core/config.py`); the gear menu persists to `.env`. Paths come only from `resources.py` (anchored to the repo root, never `__file__` or cwd).

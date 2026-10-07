@@ -15,7 +15,7 @@ FIRST_BOOT_STEPS = {"connect", "spx", "chain_info", "monthly_info", "hist_bars",
                     "account", "vix", "vix1d"}
 STEP_ATTRS = {"connect": "connect_ib", "spx": "setup_spx_subscription",
               "chain_info": "setup_chain_info", "monthly_info": "setup_monthly_chain_info",
-              "hist_bars": "fetch_historical_bars", "es": "setup_es_subscription",
+              "hist_bars": "seed_price_bars", "es": "setup_es_subscription",
               "es_baseline": "fetch_es_baseline", "account": "setup_account_subscription",
               "vix": "setup_vix_subscription", "vix1d": "setup_vix1d_subscription"}
 
@@ -331,7 +331,7 @@ async def test_is_within_rth_is_evaluated_once_per_boot(monkeypatch, app_state):
     assert len(calls) == 1 and "es_baseline" in r.started()
 
 
-LOOPS = ("price_push_loop", "status_push_loop", "account_push_loop", "log_push_loop",
+LOOPS = ("price_bars_loop", "status_push_loop", "account_push_loop", "log_push_loop",
          "strategy_evaluation_loop", "take_profit_loop", "chain_poll_loop", "chain_stream_loop",
          "chain_publish_loop")
 
