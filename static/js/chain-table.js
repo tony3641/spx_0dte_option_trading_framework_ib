@@ -44,14 +44,17 @@
         state.chainLastUpdateMs = data.timestamp_iso ? Date.parse(data.timestamp_iso) : Date.now();
         updateChainUpdateAge();
 
-        // A full payload replaces every row and re-seeds each side's receipt time from its age.
+        // A full payload replaces every row and re-seeds each side's receipt time from its age. A side
+        // without an age has no quote: drop its receipt time so it never dims later while showing "-".
         const now = Date.now();
         state.chainData = {};
         for (const row of data.strikes) {
             state.chainData[row.strike] = row;
             for (const [side, right] of CHAIN_SIDES) {
                 const age = row[`${side}_age_s`];
-                if (age !== undefined && age !== null) state.chainSideSeenMs[`${row.strike}|${right}`] = now - age * 1000;
+                const seenKey = `${row.strike}|${right}`;
+                if (age !== undefined && age !== null) state.chainSideSeenMs[seenKey] = now - age * 1000;
+                else delete state.chainSideSeenMs[seenKey];
             }
         }
 
@@ -82,12 +85,17 @@
                 if (LEG_QUOTE_FIELDS.has(f) && _legOnStrike(t.strike, t.right)) legTouched = true;
             }
         }
+        if (state.activeTab !== 'chain') chainView.noFlash = true;     // see flushChainCells
         renderWhenVisible('chain', 'chain.cells', flushChainCells);
         if (legTouched) renderWhenVisible('chain', 'strategy.prices', updateStrategyPrices);
     }
 
     // Write the dirty cells from the model. A null value is a real change and shows the empty text.
+    // Ticks parked while the tab was hidden pile up first-change values for the whole hidden period, so
+    // the first flush after it writes the text without flashing (hundreds of animations at once).
     function flushChainCells() {
+        const flash = !chainView.noFlash;
+        chainView.noFlash = false;
         for (const [ck, oldVal] of chainView.dirty) {
             const bar = ck.indexOf('|');
             const strike = Number(ck.slice(0, bar));
@@ -99,7 +107,7 @@
             const val = row ? row[key] : null;
             const txt = formatChainVal(key.slice(key.indexOf('_') + 1), val);
             if (td.textContent !== txt) td.textContent = txt;
-            if (typeof val === 'number' && typeof oldVal === 'number' && val !== oldVal && td.animate) {
+            if (flash && typeof val === 'number' && typeof oldVal === 'number' && val !== oldVal && td.animate) {
                 td.animate([{ backgroundColor: val > oldVal ? 'rgba(22,163,74,0.38)' : 'rgba(220,38,38,0.38)' },
                             { backgroundColor: 'transparent' }], { duration: 600, easing: 'ease-out' });
             }
@@ -282,11 +290,18 @@
         document.getElementById('chainRangeInfo').textContent =
             `Visible range: ${Math.round(lowerBound)} to ${Math.round(upperBound)} (5sigma +/- 60)`;
 
+        // The anchor row may be one of the rows just removed: resolve it again, and fall back to ATM.
+        const anchorRow = anchorStrike !== null ? chainView.rows.get(anchorStrike) : undefined;
         const first = !chainView.built;
         chainView.built = true;
-        if (first) scrollToATM();
-        else if (anchorStrike !== null) wrap.scrollTop = chainView.rows.get(anchorStrike).tr.offsetTop - anchorOffset;
-        if (state.activeTab === 'chain') reportChainViewportCenter(true);
+        let reported = false;
+        if (first || !anchorRow) {
+            reported = scrollToATM();                   // reports the new centre itself
+        } else {
+            const target = anchorRow.tr.offsetTop - anchorOffset;
+            if (Math.abs(target - wrap.scrollTop) > 0.5) wrap.scrollTop = target;    // never nudge a momentum scroll
+        }
+        if (!reported && state.activeTab === 'chain') reportChainViewportCenter(true);
     }
 
     // Toggle quote-stale only on the sides whose state changed (1 s timer in main.js). A side is stale
@@ -336,18 +351,19 @@
         return `Strike ${strike}: ${signPrefix}${signed.toFixed(2)} sigma (${abs.toFixed(2)} sigma ${direction} spot ${spot.toFixed(2)})`;
     }
 
+    // Returns true when it centred on the ATM row (and so reported the viewport centre).
     function scrollToATM() {
         const spot = state.chainMeta ? state.chainMeta.spot_price : state.currentSpot;
-        if (spot <= 0) return;
+        if (spot <= 0) return false;
         const wrap = document.getElementById('chainTableWrap');
         const row = wrap.querySelector('tr.row-atm');
-        if (row) {
-            // Scroll so ATM is roughly centered
-            const rowTop = row.offsetTop;
-            const wrapH = wrap.clientHeight;
-            wrap.scrollTop = rowTop - wrapH / 2 + row.clientHeight / 2;
-            reportChainViewportCenter(true);
-        }
+        if (!row) return false;
+        // Scroll so ATM is roughly centered
+        const rowTop = row.offsetTop;
+        const wrapH = wrap.clientHeight;
+        wrap.scrollTop = rowTop - wrapH / 2 + row.clientHeight / 2;
+        reportChainViewportCenter(true);
+        return true;
     }
 
     function getChainViewportCenterStrike() {

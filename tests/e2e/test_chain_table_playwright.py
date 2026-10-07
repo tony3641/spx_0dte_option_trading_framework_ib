@@ -42,8 +42,8 @@ def browser_env():
         asyncio.set_event_loop_policy(prev)
 
 
-@pytest.fixture()
-def page(browser_env):
+def _open_chain_page(browser_env, seed=True):
+    """A page on the Chain tab that records page errors and console errors in `problems`."""
     p, url = browser_env
     browser, pg = open_page(p, url, "chain")
     problems = []
@@ -54,7 +54,14 @@ def page(browser_env):
 
     pg.on("pageerror", lambda e: problems.append(f"pageerror: {e}"))
     pg.on("console", on_console)
-    pg.evaluate("d => window.__benchInject({type: 'chain_quotes', data: d})", _full())
+    if seed:
+        pg.evaluate("d => window.__benchInject({type: 'chain_quotes', data: d})", _full())
+    return browser, pg, problems
+
+
+@pytest.fixture()
+def page(browser_env):
+    browser, pg, problems = _open_chain_page(browser_env)
     yield pg
     browser.close()
     assert problems == []
@@ -411,3 +418,125 @@ def test_chain_messages_record_a_paint_span_when_the_tab_is_shown(page):
         return Object.keys(_perfSpans).filter(n => n.startsWith('chain_')).sort();
     }""")
     assert spans == ["chain_quotes.paint", "chain_quotes.recv", "chain_tick.paint", "chain_tick.recv"]
+
+
+# --- fix round 1 -------------------------------------------------------------------------------
+
+_SPY_VIEWPORT_SENDS = """() => {
+    window.__sent = [];
+    const real = ws.send.bind(ws);
+    ws.send = m => { if (String(m).startsWith('viewport_center:')) window.__sent.push(m); return real(m); };
+}"""
+
+
+def _viewport_sends(page):
+    return page.evaluate("() => window.__sent")
+
+
+def _row_exists(page, strike):
+    return page.evaluate("s => !!document.querySelector('tr[data-strike=\"' + s + '\"]')", strike)
+
+
+def test_the_anchor_row_leaving_the_window_falls_back_to_the_atm_and_reports_the_centre(page):
+    import math
+    k = 5 * 0.18 / math.sqrt(252)
+    page.evaluate("() => { document.getElementById('chainTableWrap').scrollTop = 0; }")
+    page.wait_for_timeout(300)                       # the throttled scroll report is out
+    centre = page.evaluate("() => getChainViewportCenterStrike()")
+    spot = int((centre + 85) / (1 - k))              # the window's lower bound lands 25 points above the centre
+    assert spot * (1 - k) - 60 > centre
+    page.evaluate(_SPY_VIEWPORT_SENDS)
+    strikes = STRIKES + [6450 + 5 * i for i in range(80)]
+    _inject(page, "chain_quotes", _full(spot=spot, strikes=strikes))
+    assert _row_exists(page, centre) is False
+    new_centre = page.evaluate("() => getChainViewportCenterStrike()")
+    assert new_centre is not None and new_centre > centre
+    assert _row_exists(page, new_centre)
+    assert _atm_row_distance_from_centre(page) < 30
+    assert _viewport_sends(page)[-1] == f"viewport_center:{new_centre:.1f}"
+
+
+def test_a_full_payload_does_not_rewrite_the_scroll_position_when_nothing_moved(page):
+    page.evaluate("() => { document.getElementById('chainTableWrap').scrollTop = 600; }")
+    page.wait_for_timeout(300)
+    page.evaluate("""() => {
+        const wrap = document.getElementById('chainTableWrap');
+        const proto = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+        window.__scrollWrites = 0;
+        Object.defineProperty(wrap, 'scrollTop', {configurable: true, get() { return proto.get.call(this); },
+                                                  set(v) { window.__scrollWrites += 1; proto.set.call(this, v); }});
+    }""")
+    _inject(page, "chain_quotes", _full())
+    assert page.evaluate("() => window.__scrollWrites") == 0
+
+
+def test_the_first_build_reports_the_viewport_centre_once(browser_env):
+    browser, pg, problems = _open_chain_page(browser_env, seed=False)
+    try:
+        pg.evaluate(_SPY_VIEWPORT_SENDS)
+        _inject(pg, "chain_quotes", _full())
+        pg.wait_for_timeout(300)
+        centre = pg.evaluate("() => getChainViewportCenterStrike()")
+        assert _viewport_sends(pg) == [f"viewport_center:{centre:.1f}"]
+        assert problems == []
+    finally:
+        browser.close()
+
+
+def test_no_flash_storm_when_the_tab_is_shown_after_hidden_ticks(page):
+    page.evaluate("() => switchTab('dashboard')")
+    ticks = [{"strike": 6000 + 5 * k, "right": "C", "bid": 2.0, "ask": 2.1} for k in range(30)]
+    _inject(page, "chain_tick", {"ticks": ticks, "timestamp_iso": "x"})
+    page.evaluate("() => switchTab('chain')")
+    page.wait_for_timeout(150)
+    assert _text(page, "chain_6000_call_bid") == "2.00" and _text(page, "chain_6145_call_ask") == "2.10"
+    assert page.evaluate("() => document.getAnimations().length") == 0
+    _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 3.0}], "timestamp_iso": "x"})
+    assert page.evaluate("() => document.getElementById('chain_6150_call_bid').getAnimations().length") == 1
+
+
+def test_stale_dimming_is_current_the_moment_the_tab_is_shown(page):
+    _inject(page, "chain_quotes", _full(max_age=2))
+    page.evaluate("() => switchTab('dashboard')")
+    page.evaluate("() => { state.chainSideSeenMs['6150|C'] = Date.now() - 5000; }")
+    shown = page.evaluate("""() => {
+        switchTab('chain');
+        return document.getElementById('chain_6150_call_bid').classList.contains('quote-stale');
+    }""")
+    assert shown is True
+
+
+def test_a_side_whose_age_is_null_loses_its_receipt_time_and_is_never_dimmed(page):
+    page.evaluate("() => { state.chainSideSeenMs['6150|C'] = Date.now() - 5000; }")
+    full = _full(max_age=2)
+    for r in full["strikes"]:
+        if r["strike"] == 6150:
+            r.update({"call_age_s": None, "call_bid": None, "call_ask": None})
+    _inject(page, "chain_quotes", full)
+    assert page.evaluate("() => '6150|C' in state.chainSideSeenMs") is False
+    page.evaluate("() => refreshStaleMarks()")
+    assert _text(page, "chain_6150_call_bid") == "-"
+    assert not _has_class(page, "chain_6150_call_bid", "quote-stale")
+
+
+@pytest.mark.parametrize("max_age", [0, None, "missing"])
+def test_no_stale_marks_without_a_positive_max_age(page, max_age):
+    full = _full(max_age=max_age)
+    if max_age == "missing":
+        del full["max_age_s"]
+    _inject(page, "chain_quotes", full)
+    page.evaluate("() => { for (const k of Object.keys(state.chainSideSeenMs)) state.chainSideSeenMs[k] = Date.now() - 600000; refreshStaleMarks(); }")
+    assert page.evaluate("() => document.querySelectorAll('#chainBody td.quote-stale').length") == 0
+    _inject(page, "chain_tick", {"ticks": [{"strike": 6150, "right": "C", "bid": 1.5}], "timestamp_iso": "x"})
+    assert _text(page, "chain_6150_call_bid") == "1.50"
+
+
+def test_itm_classes_follow_the_spot_when_it_crosses_strikes(page):
+    probe = """() => ['call', 'put'].map(side => ['6200', '6250'].map(s =>
+        document.getElementById('chain_' + s + '_' + side + '_bid').classList.contains('itm-' + side)))"""
+    wider = STRIKES + [6450 + 5 * i for i in range(30)]
+    assert page.evaluate(probe) == [[False, False], [True, True]]      # spot 6150: puts above it are ITM
+    _inject(page, "chain_quotes", _full(spot=6300, strikes=wider))
+    assert page.evaluate(probe) == [[True, True], [False, False]]      # spot 6300: calls below it are ITM
+    _inject(page, "chain_quotes", _full(spot=6225, strikes=wider))
+    assert page.evaluate(probe) == [[True, False], [False, True]]      # spot 6225 sits between 6200 and 6250

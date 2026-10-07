@@ -1,6 +1,8 @@
 """Render benchmark runner: drives tests/e2e/render_bench.js in Chromium against the hermetic server.
 
 CLI (baseline / ad-hoc): python -m tests.e2e.render_bench --protocol v1 --seconds 60 --out <file.json>
+Protocol v1 is only valid against the baseline commit 577db68 (its stream-scope partial chain_quotes are a
+full replace for the current client); v2 is the protocol for this branch.
 """
 import argparse
 import asyncio

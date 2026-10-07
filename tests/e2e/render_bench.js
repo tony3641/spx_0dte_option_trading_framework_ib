@@ -1,5 +1,7 @@
 // Synthetic feed for the render benchmark. Invented data only (2099-01-02, strikes 5850-6445).
 // protocol 'v1' = the message mix before sub-project 2; 'v2' = the new mix.
+// v1 is only valid against the baseline commit 577db68: it sends stream-scope partial chain_quotes,
+// which the current client treats as a full replace. The recorded baseline JSON is unaffected.
 (function () {
     function nextFrames() {
         return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
