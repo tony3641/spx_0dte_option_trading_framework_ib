@@ -51,6 +51,21 @@ def _state():
     return st
 
 
+@pytest.fixture(autouse=True)
+def _pinned_default_clock(monkeypatch):
+    """Feeds built by seed_price_bars / price_bars_loop get a fixed clock (a Monday 08:00 ET, outside RTH),
+    so these tests do not depend on the real time or on is_within_rth. Tests that pass their own clock win."""
+    fixed = Clock(DAY, "08:00")
+
+    class PinnedFeed(price_bars.PriceBarFeed):
+        def __init__(self, ib, state, broadcast_fn=None, **kw):
+            kw.setdefault("now_fn", lambda: fixed.now)
+            kw.setdefault("rth_fn", fixed.rth)
+            super().__init__(ib, state, broadcast_fn, **kw)
+
+    monkeypatch.setattr(price_bars, "PriceBarFeed", PinnedFeed)
+
+
 @pytest.mark.asyncio
 async def test_start_in_rth_keeps_today_only_and_sets_prices():
     ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "10:00"), []
