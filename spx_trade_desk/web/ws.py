@@ -270,6 +270,9 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
         if not state.strategies:
             state.strategies = load_strategies()
         out.send_message(_strategy_list_payload(state))
+        # The init carries the cached full chain, which can be up to CHAIN_REFRESH_SECONDS old: have the
+        # chain stream resend whole rows on its next cycle (about 0.5 s) instead of only the changes.
+        state.chain_resync_requested = True
 
         while not out.closed:      # the channel closed itself (slow or gone client): stop reading
             try:

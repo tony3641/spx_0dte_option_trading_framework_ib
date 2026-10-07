@@ -440,3 +440,39 @@ async def test_an_expiry_switch_resends_every_field(app_state, monkeypatch):
     assert len(sent) == 2
     resent = sent[1]["data"]["ticks"]
     assert len(resent) == 10 and all(TICK_FIELDS <= set(t) for t in resent)       # same values, new expiry
+
+
+@pytest.mark.asyncio
+async def test_chain_tick_names_its_expiry_and_follows_a_roll(app_state, monkeypatch):
+    st = _stream_state(app_state)
+    st.contracts = _FakeRegistry(st)
+    sent = []
+
+    def on_pass(n):
+        if n == 2:
+            st.expiration = NEW_EXP
+
+    await _run_stream_loop(monkeypatch, _ticking_ib(), st, passes=4, sent=sent, on_pass=on_pass)
+
+    assert [m["data"]["expiration_raw"] for m in sent] == [OLD_EXP, NEW_EXP]
+
+
+@pytest.mark.asyncio
+async def test_a_new_browser_makes_the_next_cycle_resend_whole_rows(app_state, monkeypatch):
+    st = _stream_state(app_state)
+    st.contracts = _FakeRegistry(st)
+    sent = []
+
+    def on_pass(n):
+        if n == 3:
+            st.chain_resync_requested = True         # what the WebSocket connect path does
+        if n == 4:
+            st.chain_stream_tickers[(5200.0, "C")].ask = 1.3
+
+    await _run_stream_loop(monkeypatch, _ticking_ib(), st, passes=5, sent=sent, on_pass=on_pass)
+
+    assert len(sent) == 3 and len(sent[0]["data"]["ticks"]) == 10
+    resent = sent[1]["data"]["ticks"]                # pass 3: nothing changed, yet every row goes out whole
+    assert len(resent) == 10 and all(TICK_FIELDS <= set(t) for t in resent)
+    assert st.chain_resync_requested is False
+    assert sent[2]["data"]["ticks"] == [{"strike": 5200.0, "right": "C", "ask": 1.3}]    # back to the diff

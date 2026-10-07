@@ -70,6 +70,7 @@ class AppState:
         self.chain_quotes_cache: Optional[dict] = None
         self.chain_stream_tickers: dict = {}
         self.chain_stream_contracts: dict = {}
+        self.chain_resync_requested: bool = False  # a browser just got its `init`: the stream resends whole rows
         self.quote_book = QuoteBook()              # merged stream + poll quotes (chain service)
         self.contracts = ContractRegistry()        # one qualified-contract registry: stream, poller, fetcher, order path
         self.force_chain_fetch_event: Optional[asyncio.Event] = None

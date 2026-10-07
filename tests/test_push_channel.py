@@ -464,3 +464,66 @@ def test_record_client_perf_skips_a_huge_int_sample():
     raw = '{"spans": {"chain_tick.paint": [' + "9" * 400 + ', 2.0, true, "3"]}}'
     assert push.record_client_perf(raw) == 1
     assert perf.snapshot()["metrics"]["client.chain_tick.paint"]["n"] == 1
+
+
+def test_record_client_perf_caps_the_distinct_names_process_wide(caplog):
+    perf.reset()
+    caplog.set_level("DEBUG", logger="spx_trade_desk.web.push")
+    for start in range(0, 260, 40):
+        raw = json.dumps({"spans": {f"span_{chr(97 + i // 26)}{chr(97 + i % 26)}": [1.0]
+                                    for i in range(start, min(start + 40, 260))}})
+        push.record_client_perf(raw)
+    names = [n for n in perf.snapshot()["metrics"] if n.startswith("client.")]
+    assert len(names) == push._CLIENT_MAX_DISTINCT
+    assert push.record_client_perf('{"spans": {"span_aa": [2.0]}}') == 1       # a known name still records
+    assert perf.snapshot()["metrics"]["client.span_aa"]["n"] == 2
+    assert push.record_client_perf('{"spans": {"brand_new": [2.0]}}') == 0     # a new one is dropped
+    assert "client.brand_new" not in perf.snapshot()["metrics"]
+    perf.reset()
+
+
+def test_record_client_perf_rejects_a_name_with_a_trailing_newline():
+    perf.reset()
+    assert push.record_client_perf(json.dumps({"spans": {"longtask" + chr(10): [1.0]}})) == 0
+    assert push.record_client_perf(json.dumps({"spans": {"longtask": [1.0]}})) == 1
+    perf.reset()
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_writer_error_closes_the_channel_and_is_retrieved(caplog):
+    closed = []
+    ch = push.ClientChannel(SlowWS(), on_close=closed.append)
+
+    def boom():
+        raise KeyError("unexpected")
+
+    ch._next = boom
+    ch.start()
+    ch.send_message({"type": "status", "data": {}})
+    task = ch._task
+    await _settle()
+    assert task.done() and task.exception() is None                  # nothing left unretrieved
+    assert ch.closed and closed == [ch]
+    assert [r for r in caplog.records if r.levelno == logging.ERROR and "writer task failed" in r.getMessage()]
+    await ch.aclose(drain=False)
+
+
+@pytest.mark.asyncio
+async def test_a_merged_chain_tick_keeps_its_expiry_and_drops_pending_ticks_of_another():
+    gate = asyncio.Event()
+    ws = SlowWS(gate)
+    ch = push.ClientChannel(ws)
+    ch.start()
+    ch.send_message({"type": "ping"})
+    await _settle()
+    tick = lambda strike, exp: {"type": "chain_tick", "data": {   # noqa: E731
+        "ticks": [{"strike": strike, "right": "C", "bid": 1.0}], "timestamp_iso": "a", "expiration_raw": exp}}
+    ch.send_message(tick(5000.0, "20990105"))
+    ch.send_message(tick(5005.0, "20990105"))
+    ch.send_message(tick(5010.0, "20990106"))        # the expiry rolled: the unsent old ticks are not resent
+    gate.set()
+    await _settle()
+    ticks = [m for m in ws.sent if m["type"] == "chain_tick"]
+    assert len(ticks) == 1 and ticks[0]["data"]["expiration_raw"] == "20990106"
+    assert [t["strike"] for t in ticks[0]["data"]["ticks"]] == [5010.0]
+    await ch.aclose(drain=False)

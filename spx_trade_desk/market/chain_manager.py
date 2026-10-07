@@ -330,8 +330,9 @@ async def chain_stream_loop(ib, state, broadcast_fn):
     Uses the line budget's 'stream' share and is never paused: the wing poller works
     from its own share (chain_poller.py). Ticked rows are merged into the quote book.
     Every CHAIN_STREAM_UPDATE_INTERVAL the fields that changed since the last send go to
-    browsers as `chain_tick` (see `diff_ticks`); the full `chain_quotes` comes from the
-    publisher every CHAIN_REFRESH_SECONDS.
+    browsers as `chain_tick` (see `diff_ticks`) together with the expiry they belong to; the full
+    `chain_quotes` comes from the publisher every CHAIN_REFRESH_SECONDS. A newly connected browser
+    sets ``state.chain_resync_requested``: the next cycle sends it whole rows (``last_sent`` cleared).
     """
     await asyncio.sleep(2)
     last_expiration = ""
@@ -423,11 +424,17 @@ async def chain_stream_loop(ib, state, broadcast_fn):
                 state.quote_book.reset(state.expiration)
             state.quote_book.update(book_options, "stream", time.monotonic())
 
+            if state.chain_resync_requested:
+                # A browser connected since the last cycle: it starts from the cached full chain, so send
+                # every field of every streamed row once (the diff would send only what changed since).
+                state.chain_resync_requested = False
+                last_sent.clear()
             changed = diff_ticks(ticks, last_sent)
             if changed:
                 now_iso = now_et().isoformat()
                 await broadcast_fn({"type": "chain_tick",
-                                    "data": {"ticks": changed, "timestamp_iso": now_iso}})
+                                    "data": {"ticks": changed, "timestamp_iso": now_iso,
+                                             "expiration_raw": state.expiration}})
                 state.last_chain_update = now_et().strftime("%H:%M:%S")
             if ticks:
                 now_monotonic = time.monotonic()

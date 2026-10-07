@@ -39,8 +39,9 @@ LATEST_TYPES = frozenset({
     "status", "vix_update", "gex", "chain_quotes", "chain_progress", "account_update",
     "monthly_gex", "monthly_gex_progress", "price_snapshot", "price_overnight", "price_bar", "ping",
 })
-_CLIENT_SPAN_RE = re.compile(r"^[a-z_]+(\.[a-z_]+)*$")
-_CLIENT_MAX_NAMES = 50
+_CLIENT_SPAN_RE = re.compile(r"[a-z_]+(\.[a-z_]+)*")      # matched with fullmatch: no trailing newline
+_CLIENT_MAX_NAMES = 50          # names accepted per report
+_CLIENT_MAX_DISTINCT = 200      # distinct client.* perf spans kept process-wide (each one owns a deque)
 _CLIENT_MAX_SAMPLES = 200
 
 
@@ -140,9 +141,13 @@ class ClientChannel:
         now = self._clock()
         if kind == "merge":
             data = message.get("data") or {}
+            expiry = data.get("expiration_raw")
+            if self._ticks and expiry != self._tick_meta.get("expiration_raw"):
+                self._ticks = {}            # pending ticks of another expiry must not be sent under this one
+            self._tick_meta = {"timestamp_iso": data.get("timestamp_iso"), "ts": message.get("ts"),
+                               "expiration_raw": expiry}
             for t in data.get("ticks") or []:
                 self._ticks.setdefault((t.get("strike"), t.get("right")), {}).update(t)
-            self._tick_meta = {"timestamp_iso": data.get("timestamp_iso"), "ts": message.get("ts")}
             if self._tick_enq is None:
                 self._tick_enq = now
         elif kind == "latest":
@@ -182,9 +187,10 @@ class ClientChannel:
             return self._log.popleft()
         if self._ticks:
             ticks = [dict(v) for v in self._ticks.values()]
-            msg = {"type": "chain_tick", "data": {"ticks": ticks,
-                                                  "timestamp_iso": self._tick_meta.get("timestamp_iso")},
-                   "ts": self._tick_meta.get("ts")}
+            data = {"ticks": ticks, "timestamp_iso": self._tick_meta.get("timestamp_iso")}
+            if self._tick_meta.get("expiration_raw") is not None:
+                data["expiration_raw"] = self._tick_meta["expiration_raw"]
+            msg = {"type": "chain_tick", "data": data, "ts": self._tick_meta.get("ts")}
             enq = self._tick_enq if self._tick_enq is not None else self._clock()
             self._ticks, self._tick_meta, self._tick_enq = {}, {}, None
             text = encode(msg)
@@ -224,6 +230,9 @@ class ClientChannel:
                     break
         except asyncio.CancelledError:
             pass
+        except Exception as e:     # a bug must not leave an unretrieved task exception or a zombie channel
+            logger.exception(f"push: the writer task failed: {e!r}")
+            self._close(f"writer failed: {e!r}")
 
     # -- teardown -----------------------------------------------------------
 
@@ -311,8 +320,14 @@ def record_client_perf(raw: str) -> int:
     if not isinstance(spans, dict):
         return 0
     kept = 0
+    capped = False
     for name, samples in list(spans.items())[:_CLIENT_MAX_NAMES]:
-        if not isinstance(name, str) or not _CLIENT_SPAN_RE.match(name) or not isinstance(samples, list):
+        if not isinstance(name, str) or not _CLIENT_SPAN_RE.fullmatch(name) or not isinstance(samples, list):
+            continue
+        if not perf.has_span(f"client.{name}") and perf.span_count("client.") >= _CLIENT_MAX_DISTINCT:
+            if not capped:
+                logger.debug(f"push: dropping new client span names (the cap of {_CLIENT_MAX_DISTINCT} is reached)")
+                capped = True
             continue
         for v in samples[-_CLIENT_MAX_SAMPLES:]:
             if isinstance(v, bool) or not isinstance(v, (int, float)):

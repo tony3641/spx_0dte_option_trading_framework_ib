@@ -30,6 +30,13 @@ class PerfRecorder:
             buf = self._samples[name] = deque(maxlen=self._size)
         buf.append(float(ms))
 
+    def has_span(self, name: str) -> bool:
+        return name in self._samples
+
+    def span_count(self, prefix: str = "") -> int:
+        """Number of distinct recorded spans whose name starts with ``prefix``."""
+        return sum(1 for n in self._samples if n.startswith(prefix))
+
     def count(self, name: str, n: int = 1) -> None:
         self._counters[name] = self._counters.get(name, 0) + n
 

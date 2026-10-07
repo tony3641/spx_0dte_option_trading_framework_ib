@@ -279,3 +279,13 @@ async def test_a_malformed_perf_report_keeps_the_connection(monkeypatch):
     sock = ScriptWS([f"perf_report:{huge}", "set_tab:log"])
     await ws_mod.websocket_endpoint(sock, None, state, _noop)
     assert any(m["type"] == "log_history" for m in sock.sent)
+
+
+@pytest.mark.asyncio
+async def test_a_new_client_asks_the_chain_stream_for_whole_rows():
+    state = create_app_state()
+    assert state.chain_resync_requested is False
+    sock = ScriptWS([])
+    await ws_mod.websocket_endpoint(sock, None, state, _noop)
+    assert state.chain_resync_requested is True
+    assert sock.sent[0]["type"] == "init"
