@@ -382,7 +382,8 @@ async def websocket_endpoint(ws: WebSocket, ib, state, broadcast_fn):
                     try:
                         order_id = int(msg.split(":", 1)[1])
                     except (TypeError, ValueError):
-                        out.send_message({"type": "order_status", "data": {"status": "Error", "message": "Bad order id"}})
+                        out.send_message({"type": "order_status",
+                                          "data": {"status": "Error", "action": "cancel", "message": "Bad order id"}})
                         continue
                     # Off the read loop: the confirmed cancel can wait seconds for IB.
                     task = asyncio.create_task(_cancel_and_reply(ib, state, order_id, out))

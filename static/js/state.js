@@ -26,6 +26,7 @@
         chainViewportSendTimer: null,
         // GEX mode toggle (dashboard)
         gexMode: '0dte',        // '0dte' | 'monthly'
+        spotLineMinIntervalMs: 2000,   // at most one spot-line relayout per GEX / smile chart in this window
         monthlyGex: null,       // cached monthly GEX data
         monthlyExpiration: '',  // display string for monthly expiration
         // Account tab state

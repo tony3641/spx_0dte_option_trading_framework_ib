@@ -167,6 +167,15 @@
         return state.gexMode === 'monthly' ? state.monthlyGex : state.gex;
     }
 
+    // Number.prototype.toLocaleString() builds a formatter per call (about 480 calls per GEX draw);
+    // one shared formatter gives the same text for 1/4 of the cost.
+    const _intFmt = new Intl.NumberFormat();
+
+    // The spot the lines are drawn at: the live one (status messages) once known, else the data's own.
+    function spotLevel(gexData) {
+        return state.currentSpot > 0 ? state.currentSpot : (gexData.spot_price || 0);
+    }
+
     // Shapes and annotations of the GEX chart: spot line, key levels, Net GEX box. A spot-only
     // change redraws just these through Plotly.relayout (requestSpotLineRender).
     function gexOverlays(gexData) {
@@ -176,7 +185,7 @@
 
         // Use latest currentSpot (updated via status msgs) so the line moves in
         // real-time as ES moves, rather than waiting for the next chain fetch.
-        const spotForLine = state.currentSpot > 0 ? state.currentSpot : (gexData.spot_price || 0);
+        const spotForLine = spotLevel(gexData);
         const spotLabel = state.esDerived
             ? `ES derived SPX: ${spotForLine}`
             : `SPX: ${spotForLine}`;
@@ -230,8 +239,8 @@
             const regimeColor = isPositive ? '#4ade80' : '#f87171';
             const callOI = gexData.total_call_oi;
             const putOI = gexData.total_put_oi;
-            const callOIStr = (callOI != null && callOI > 0) ? callOI.toLocaleString() : '-';
-            const putOIStr = (putOI != null && putOI > 0) ? putOI.toLocaleString() : '-';
+            const callOIStr = (callOI != null && callOI > 0) ? _intFmt.format(callOI) : '-';
+            const putOIStr = (putOI != null && putOI > 0) ? _intFmt.format(putOI) : '-';
             
             // P/C OI Ratio
             let pcRatioStr = '-';
@@ -307,7 +316,7 @@
                 type: 'bar',
                 name: 'Call GEX',
                 marker: { color: strikes.map(() => '#22c55e80') },
-                customdata: bars.map(b => [fmtGex(b.call_gex), (b.call_oi ?? 0).toLocaleString(), (b.call_vol ?? 0).toLocaleString()]),
+                customdata: bars.map(b => [fmtGex(b.call_gex), _intFmt.format(b.call_oi ?? 0), _intFmt.format(b.call_vol ?? 0)]),
                 hovertemplate: '<b>Strike: %{x}</b><br>Call GEX: %{customdata[0]}<br>Call OI: %{customdata[1]}<br>Call Vol: %{customdata[2]}<extra></extra>',
             },
             {
@@ -316,7 +325,7 @@
                 type: 'bar',
                 name: 'Put GEX',
                 marker: { color: strikes.map(() => '#ef444480') },
-                customdata: bars.map(b => [fmtGex(b.put_gex), (b.put_oi ?? 0).toLocaleString(), (b.put_vol ?? 0).toLocaleString()]),
+                customdata: bars.map(b => [fmtGex(b.put_gex), _intFmt.format(b.put_oi ?? 0), _intFmt.format(b.put_vol ?? 0)]),
                 hovertemplate: '<b>Strike: %{x}</b><br>Put GEX: %{customdata[0]}<br>Put OI: %{customdata[1]}<br>Put Vol: %{customdata[2]}<extra></extra>',
             },
             {
@@ -336,6 +345,7 @@
             annotations,
             xaxis: { ...gexLayout.xaxis, range: commonRange },
         });
+        noteSpotDrawn('gex', gexData);
     }
 
     // Shapes and annotations of the smile chart: the spot and level verticals on both subplots and
@@ -343,7 +353,7 @@
     function smileOverlays(gexData) {
         // Spot + key level vertical lines for both subplots
         const shapes = [];
-        const spotForLine = state.currentSpot > 0 ? state.currentSpot : (gexData.spot_price || 0);
+        const spotForLine = spotLevel(gexData);
         const addVertical = (xref, val, color, dash) => {
             if (val == null || val <= 0) return;
             shapes.push({
@@ -457,31 +467,62 @@
             shapes,
             annotations,
         });
+        noteSpotDrawn('smile', gexData);
     }
 
     // ======================================================================
     // Render requests: GEX and smile are drawn only while the Dashboard tab is visible (parked per
-    // tab otherwise and drawn once on show), and coalesced to one draw per frame.
+    // tab otherwise and drawn once on show). Both are heavy jobs: coalesced per key, one per frame, and
+    // after the light work (price bars, chain cells) of the frame they were requested in.
     // ======================================================================
     function requestGexRender() {
-        renderWhenVisible('dashboard', 'gex', updateGexChart);
-        renderWhenVisible('dashboard', 'smile', updateSmileChart);
+        renderWhenVisible('dashboard', 'gex', updateGexChart, { heavy: true });
+        renderWhenVisible('dashboard', 'smile', updateSmileChart, { heavy: true });
     }
 
-    // A spot-only change moves the spot lines with a shapes-only relayout. When a full GEX draw is
-    // already queued it draws the new spot itself, so nothing more is needed.
+    // A spot-only change moves the spot lines with a relayout of the shapes and annotations (the
+    // charts' data is not rebuilt, the user's zoom stays). Each chart has its own heavy job, so the two
+    // never share a frame, and at most one relayout per chart per state.spotLineMinIntervalMs: a change
+    // inside the window arms one timer for the window's end, and the job then draws the latest spot.
+    // What each chart last drew (full draw or relayout) decides when a relayout would paint nothing new.
+    const _spotDrawn = { gex: null, smile: null };       // {data, spot, es, at}
+    const _spotTimers = { gex: 0, smile: 0 };
+
+    function noteSpotDrawn(kind, gexData) {
+        _spotDrawn[kind] = { data: gexData, spot: spotLevel(gexData), es: !!state.esDerived, at: performance.now() };
+    }
+
     function requestSpotLineRender() {
-        if (isRenderPending('gex')) return;
-        renderWhenVisible('dashboard', 'gex.spot', redrawSpotLines);
+        requestSpotLine('gex');
+        requestSpotLine('smile');
     }
 
-    function redrawSpotLines() {
+    function requestSpotLine(kind) {
+        if (_spotTimers[kind]) return;                    // the trailing edge is armed: it draws the latest spot
+        const drawn = _spotDrawn[kind];
+        if (!drawn) return;                               // never drawn: the first full draw paints the spot line
+        const wait = drawn.at + state.spotLineMinIntervalMs - performance.now();
+        if (wait > 0) {
+            _spotTimers[kind] = setTimeout(() => { _spotTimers[kind] = 0; requestSpotLine(kind); }, wait);
+            return;
+        }
+        renderWhenVisible('dashboard', `${kind}.spot`, () => redrawSpotLine(kind), { heavy: true });
+    }
+
+    function redrawSpotLine(kind) {
         const g = currentGexData();
-        if (!g) return;
-        if (state.gexChartReady && g.gex_bars) Plotly.relayout('gexChart', gexOverlays(g));
-        if (state.smileChartReady && g.smile_data && g.smile_data.length) {
+        const drawn = _spotDrawn[kind];
+        if (!g || !drawn) return;
+        if (isRenderPending(kind)) return;                // a full draw is queued and paints the current spot
+        if (drawn.data === g && drawn.spot === spotLevel(g) && drawn.es === !!state.esDerived) return;   // nothing new
+        if (kind === 'gex') {
+            if (!g.gex_bars) return;
+            Plotly.relayout('gexChart', gexOverlays(g));
+        } else {
+            if (!(g.smile_data && g.smile_data.length)) return;
             Plotly.relayout('smileChart', smileOverlays(g));
         }
+        noteSpotDrawn(kind, g);
     }
 
     // ======================================================================

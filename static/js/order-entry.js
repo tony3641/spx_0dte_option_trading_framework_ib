@@ -208,7 +208,8 @@
             showOrderToast(`Order ${oid} cancelled`, 'ok');
         } else if (st === 'Error') {
             state.pendingCancels.delete(oid);
-            showOrderToast(`Cancel failed for order ${oid}: ${data.message || 'unknown'}`, 'err');
+            const which = oid !== undefined && oid !== null ? `order ${oid}` : 'the order';   // a bad id has no order
+            showOrderToast(`Cancel failed for ${which}: ${data.message || 'unknown'}`, 'err');
         } else if (CANCEL_TERMINAL.has(st) || data.action === 'cancel') {
             state.pendingCancels.delete(oid);
             showOrderToast(`Order ${oid} is already ${st}`, 'info');
@@ -223,7 +224,7 @@
             const o = state.openOrders.find(x => x.orderId === oid);
             if (!o) {
                 state.pendingCancels.delete(oid);
-                showOrderToast(`Order ${oid} is no longer open (cancelled or filled)`, 'ok');
+                showOrderToast(`Order ${oid} is no longer open (cancelled or filled)`, 'info');   // which one is not known
             } else if (o.status === 'Cancelled' || o.status === 'ApiCancelled') {
                 state.pendingCancels.delete(oid);
                 showOrderToast(`Order ${oid} cancelled`, 'ok');

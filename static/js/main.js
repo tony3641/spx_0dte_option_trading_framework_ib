@@ -42,14 +42,14 @@
         });
 
         // Size the Plotly charts from their containers: a chart is resized only while its container has
-        // a real size (never while the tab is hidden, which draws it squashed), once per frame.
+        // a real size (never while the tab is hidden, which draws it squashed), one chart per frame.
         const chartObserver = new ResizeObserver(entries => {
             for (const e of entries) {
                 const el = e.target;
                 if (e.contentRect.width > 0 && e.contentRect.height > 0 && el._fullLayout) {
                     scheduleRender(`resize.${el.id}`, () => {
                         if (el.offsetWidth > 0 && el.offsetHeight > 0) Plotly.Plots.resize(el);
-                    });
+                    }, { heavy: true });
                 }
             }
         });

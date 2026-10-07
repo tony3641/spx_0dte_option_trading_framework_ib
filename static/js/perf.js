@@ -4,15 +4,12 @@
     // ======================================================================
     const PERF_REPORT_MS = 10000;
     const PERF_MAX_SAMPLES = 200;
-    // Message types whose handling ends in a frame-flush paint, and the tab that paints them. A
-    // message for a hidden tab is parked, not painted, so it records no paint span. `status` paints
-    // only the GEX/smile spot line (the header badges are written directly), hence the Dashboard.
-    const PERF_PAINT_TABS = {
-        chain_tick: 'chain', chain_quotes: 'chain', account_update: 'account',
-        price_bar: 'dashboard', price_snapshot: 'dashboard', gex: 'dashboard', status: 'dashboard',
-    };
+    // `<type>.paint` is recorded only for a message whose handling scheduled render jobs (a message for
+    // a hidden tab is parked, a no-op status schedules nothing): it spans receipt to the end of the last
+    // job the message scheduled, light or heavy.
     const _perfSpans = {};
-    let _perfPending = [];
+    let _perfMsg = null;                      // the message being handled; jobs scheduled now belong to it
+    const _perfJobSamples = new Map();        // job key -> paint samples waiting for that job to run
 
     function _perfPush(name, ms) {
         const arr = _perfSpans[name] || (_perfSpans[name] = []);
@@ -26,23 +23,38 @@
             const d = Date.now() - msg.ts;
             if (d >= 0 && d < 60000) _perfPush(`${msg.type}.recv`, d);
         }
-        const tab = PERF_PAINT_TABS[msg.type];
-        if (tab !== undefined && (tab === null || tab === state.activeTab)) {
-            _perfPending.push([msg.type, performance.now()]);
-            if (_perfPending.length > 500) _perfPending.shift();
+        _perfMsg = { type: msg.type, t: performance.now(), jobs: 0 };
+    }
+
+    // render-loop.js calls this for every job scheduled; it attaches the message being handled, if any.
+    function perfNoteJob(key) {
+        if (!_perfMsg) return;
+        _perfMsg.jobs += 1;
+        const waiting = _perfJobSamples.get(key);
+        if (waiting) waiting.push(_perfMsg); else _perfJobSamples.set(key, [_perfMsg]);
+    }
+
+    // Call when handleMessage returns (also when it threw): later jobs belong to no message.
+    function perfAfterHandle() {
+        _perfMsg = null;
+    }
+
+    // The jobs under `keys` have run (the paint of everything they drew starts here).
+    function perfJobsDone(keys, tEnd) {
+        for (const key of keys) {
+            const waiting = _perfJobSamples.get(key);
+            if (!waiting) continue;
+            _perfJobSamples.delete(key);
+            for (const s of waiting) {
+                s.jobs -= 1;
+                if (s.jobs === 0) _perfPush(`${s.type}.paint`, tEnd - s.t);
+            }
         }
     }
 
-    // Call after handleMessage: when handling scheduled no frame (an unchanged spot, a bar for another
-    // session) there is no flush to wait for, so its pending paint sample would only grow until some
-    // unrelated flush. Drop it.
-    function perfAfterHandle() {
-        if (!hasPendingRenders()) _perfPending = [];
-    }
-
-    function perfMarkFlush(t0, t1) {
-        for (const [type, tRecv] of _perfPending) _perfPush(`${type}.paint`, t1 - tRecv);
-        _perfPending = [];
+    // A parked job paints nothing now: its samples are dropped, not recorded.
+    function perfJobDropped(key) {
+        _perfJobSamples.delete(key);
     }
 
     try {

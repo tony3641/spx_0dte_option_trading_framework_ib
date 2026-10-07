@@ -300,10 +300,15 @@ def test_perf_report_reaches_the_server_under_accepted_names(page, browser_env):
     _, url = browser_env
     page.evaluate("""async () => {
         switchTab('dashboard');
-        perfOnMessage({type: 'price_bar', ts: Date.now() - 3});
-        perfOnMessage({type: 'status', ts: Date.now() - 4});
-        perfOnMessage({type: 'chain_tick', ts: Date.now() - 5});      // Chain tab hidden: no paint span
-        scheduleRender('t.perf', () => {});
+        // A paint span exists only for a message whose handling scheduled a render job.
+        const handled = (type, ageMs, jobKey) => {
+            perfOnMessage({type, ts: Date.now() - ageMs});
+            if (jobKey) scheduleRender(jobKey, () => {});
+            perfAfterHandle();
+        };
+        handled('price_bar', 3, 't.perf.bar');
+        handled('status', 4, 't.perf.status');
+        handled('chain_tick', 5, null);                  // Chain tab hidden: parked, nothing scheduled, no paint span
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         perfSendReport();
     }""")

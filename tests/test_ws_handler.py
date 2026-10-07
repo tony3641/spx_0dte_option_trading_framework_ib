@@ -231,6 +231,7 @@ async def test_bad_cancel_order_id_gets_an_error_reply():
     await ws_mod.websocket_endpoint(sock, None, state, _noop)
     errs = [m for m in sock.sent if m["type"] == "order_status"]
     assert errs and errs[0]["data"]["status"] == "Error"
+    assert errs[0]["data"]["action"] == "cancel"      # like every cancel reply: never taken for a place reply
 
 
 @pytest.mark.asyncio
