@@ -56,14 +56,16 @@ def open_page(p, base_url, tab="dashboard", problems=None, before_goto=None):
     return browser, page
 
 
-def run_bench(base_url: str, protocol: str, seconds: float, tabs=("dashboard", "chain")) -> dict:
+def run_bench(base_url: str, protocol: str, seconds: float, tabs=("dashboard", "chain"), problems=None) -> dict:
+    """Run the synthetic feed for `seconds` on each tab. `problems` (a dict) gets tab -> page/console errors."""
     from playwright.sync_api import sync_playwright
     prev = _proactor_policy()
     try:
         results = {}
         with sync_playwright() as p:
             for tab in tabs:
-                browser, page = open_page(p, base_url, tab)
+                tab_problems = None if problems is None else problems.setdefault(tab, [])
+                browser, page = open_page(p, base_url, tab, problems=tab_problems)
                 try:
                     results[tab] = page.evaluate(
                         "opts => window.__renderBench(opts)",
