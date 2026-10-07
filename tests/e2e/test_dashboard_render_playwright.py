@@ -228,8 +228,9 @@ def test_gex_mode_switch_draws_the_monthly_data_and_the_spot_line_follows_it(pag
     assert _gex_x(pg) == 20                                                    # still the 0DTE data
     try:
         pg.evaluate("() => setGexMode('monthly')")
-        pg.wait_for_function("() => gexChart._fullData[0].x.length === 10", timeout=5000)
-        assert pg.evaluate("() => document.getElementById('smileChart')._fullData[0].x.length") == 10
+        # The smile draw runs in the heavy lane one frame after the GEX draw: wait for both.
+        pg.wait_for_function("""() => gexChart._fullData[0].x.length === 10
+            && document.getElementById('smileChart')._fullData[0].x.length === 10""", timeout=5000)
         _settle(pg)
         _inject(pg, "status", {"connected": False, "spot_price": 6140.5})
         _settle(pg)
