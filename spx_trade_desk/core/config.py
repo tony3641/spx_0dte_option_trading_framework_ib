@@ -56,6 +56,8 @@ _YAML_PARAMS = _load_yaml_params()
 
 def _get_setting(name: str, default: Any, cast: Callable[[Any], Any]) -> Any:
     env_val = os.getenv(name)
+    if env_val is not None and not env_val.strip() and cast is not str:
+        return default      # `NAME=` (a blank .env line) means "not set", never False or 0
     if env_val is not None:
         try:
             return cast(env_val)
@@ -147,8 +149,9 @@ CHAIN_QUOTE_MAX_AGE_S = _get_setting("CHAIN_QUOTE_MAX_AGE_S", 180.0, float)
 CHAIN_STREAM_UNKNOWN_RETRY_SECS = _get_setting("CHAIN_STREAM_UNKNOWN_RETRY_SECS", 120.0, float)
 VIEWPORT_CENTER_MIN_INTERVAL = _get_setting("VIEWPORT_CENTER_MIN_INTERVAL", 0.2, float)
 # Push channel (web/push.py): per-browser send queue.
-PUSH_ORDERED_BACKLOG_MAX = _get_setting("PUSH_ORDERED_BACKLOG_MAX", 1000, int)   # unsent critical messages before the client is dropped
-PUSH_SEND_TIMEOUT_S = _get_setting("PUSH_SEND_TIMEOUT_S", 5.0, float)            # one send longer than this drops the client
+# Floors keep a typo from dropping every browser: a 10-message backlog limit or a 0 s timeout would.
+PUSH_ORDERED_BACKLOG_MAX = max(10, _get_setting("PUSH_ORDERED_BACKLOG_MAX", 1000, int))   # unsent critical messages before the client is dropped (min 10)
+PUSH_SEND_TIMEOUT_S = max(0.5, _get_setting("PUSH_SEND_TIMEOUT_S", 5.0, float))          # one send longer than this drops the client (min 0.5)
 
 # ---------------------------------------------------------------------------
 # Chain fetch internals
