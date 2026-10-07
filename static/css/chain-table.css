@@ -150,7 +150,13 @@
         .strike-tag-pw { background: color-mix(in srgb, var(--down) 25%, transparent); color: var(--down); }
         .strike-tag-gf { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--accent); }
 
-        /* The flash on a changed value is a Web Animation started in chain-table.js (flushChainCells). */
+        /* Tick flash (chain-table.js flashCell): the tint is the cell's ::after overlay, faded with an opacity
+           animation. The overlay exists only while the transient fl-up / fl-dn class is set. */
+        .chain-table td { position: relative; }
+        .chain-table td.fl-up::after,
+        .chain-table td.fl-dn::after { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+        .chain-table td.fl-up::after { background: var(--flash-up); }
+        .chain-table td.fl-dn::after { background: var(--flash-down); }
 
         /* Quote older than CHAIN_QUOTE_MAX_AGE_S (polled wing that missed its cycles). */
         .chain-table td.quote-stale { opacity: 0.45; }

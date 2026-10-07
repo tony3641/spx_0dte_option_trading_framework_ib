@@ -73,3 +73,16 @@
 
         .status-value, .level-badge span:not(.label) { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
         .header, .levels-strip { box-shadow: none; }
+
+        /* Hover / selection transitions go on controls only, never on streaming chain cells. */
+        button, .tab-btn, .gex-mode-btn, .dock-toggle, input, select, textarea {
+            transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+                        color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+        }
+        @keyframes tabFade { from { opacity: 0; } to { opacity: 1; } }
+        .charts-container.active, .chain-container.active, .account-container.active,
+        #strategiesTab.active, #logTab.active, #simTab.active { animation: tabFade var(--dur-fast) var(--ease); }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+        }

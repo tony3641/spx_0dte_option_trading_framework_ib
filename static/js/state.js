@@ -27,6 +27,7 @@
         // GEX mode toggle (dashboard)
         gexMode: '0dte',        // '0dte' | 'monthly'
         spotLineMinIntervalMs: 2000,   // at most one spot-line relayout per GEX / smile chart in this window
+        chainFlashMax: 40,             // most tick flashes started per chain flush; 0 turns the flash off
         monthlyGex: null,       // cached monthly GEX data
         monthlyExpiration: '',  // display string for monthly expiration
         // Account tab state

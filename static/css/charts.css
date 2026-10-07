@@ -144,12 +144,12 @@
         }
         .gex-loading.hidden { display: none; }
         .gex-loading-spinner {
-            width: 44px; height: 44px;
-            border: 3px solid var(--border);
-            border-top: 3px solid var(--info);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
+            width: 60%; max-width: 360px; height: 10px; border: none; border-radius: 5px;
+            background: linear-gradient(90deg, var(--bg-raised) 25%, var(--bg-hover) 50%, var(--bg-raised) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.4s linear infinite;
         }
+        @keyframes shimmer { to { background-position: -200% 0; } }
         .gex-loading-text {
             font-size: 13px;
             font-weight: 500;
@@ -176,13 +176,11 @@
         }
         .overlay.hidden { display: none; }
         .overlay .spinner {
-            width: 36px; height: 36px;
-            border: 3px solid var(--border);
-            border-top: 3px solid var(--info);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
+            width: 220px; height: 10px; border: none; border-radius: 5px;
+            background: linear-gradient(90deg, var(--bg-raised) 25%, var(--bg-hover) 50%, var(--bg-raised) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.4s linear infinite;
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
         .overlay .msg {
             font-size: 14px;
             color: var(--text-muted);

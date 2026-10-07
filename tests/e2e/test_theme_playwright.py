@@ -363,3 +363,29 @@ def test_dock_stays_pinned_while_the_table_scrolls_and_clears(browser_env):
         assert not page.is_visible("#orderEntryRow")
     finally:
         browser.close()
+
+
+def _flash_count_after_a_tick(p, url, reduced):
+    browser = p.chromium.launch()
+    ctx = browser.new_context(reduced_motion="reduce" if reduced else "no-preference", viewport={"width": 1600, "height": 1000})
+    page = ctx.new_page()
+    try:
+        page.goto(f"{url}/#chain")
+        page.wait_for_function("() => typeof state !== 'undefined' && state.wsConnected === true", timeout=30000)
+        page.wait_for_timeout(1500)
+        page.add_script_tag(path=BENCH_JS)
+        page.evaluate("() => window.__benchSeed()")
+        page.evaluate("""() => window.__benchInject({type: 'chain_tick', data: {ticks: [{strike: 6150, right: 'C', bid: 4.2}], timestamp_iso: 'x'}})""")
+        flashes = page.evaluate("() => document.getAnimations().filter(a => a.effect && a.effect.pseudoElement === '::after').length")
+        dur = page.evaluate("() => getComputedStyle(document.getElementById('chainTab')).animationDuration")
+        return flashes, dur
+    finally:
+        browser.close()
+
+
+def test_reduced_motion_disables_flash_and_cross_fade(browser_env):
+    p, url = browser_env
+    assert _flash_count_after_a_tick(p, url, reduced=False)[0] == 1               # control: the flash exists
+    flashes, dur = _flash_count_after_a_tick(p, url, reduced=True)
+    assert flashes == 0
+    assert dur in ("0.001s", "1e-06s", "0s")
