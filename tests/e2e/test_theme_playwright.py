@@ -103,3 +103,27 @@ def test_themechange_fires_once_per_change(browser_env):
         assert page.evaluate("() => window.__tc") == ["light", "dark"]
     finally:
         browser.close()
+
+
+@pytest.mark.parametrize("scheme,canvas,panel", [("dark", "rgb(7, 9, 12)", "rgb(13, 17, 23)"),
+                                                  ("light", "rgb(243, 245, 248)", "rgb(255, 255, 255)")])
+def test_shell_uses_the_tokens(browser_env, scheme, canvas, panel):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, scheme)
+    try:
+        assert page.evaluate("() => getComputedStyle(document.body).backgroundColor") == canvas
+        assert page.evaluate("() => getComputedStyle(document.querySelector('.header')).backgroundColor") == panel
+    finally:
+        browser.close()
+
+
+def test_flipping_the_theme_restyles_the_shell_live(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark")
+    try:
+        page.click("#themeToggle")
+        assert page.evaluate("() => getComputedStyle(document.body).backgroundColor") == "rgb(243, 245, 248)"
+        page.click("#themeToggle")
+        assert page.evaluate("() => getComputedStyle(document.body).backgroundColor") == "rgb(7, 9, 12)"
+    finally:
+        browser.close()

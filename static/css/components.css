@@ -1,0 +1,17 @@
+/* New shared pieces used by the redesigned layouts. Per-tab stylesheets keep their own classes. */
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+.chip {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-family: var(--font-num);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    background: var(--bg-raised);
+    color: var(--text-muted);
+}
+.chip.up { background: var(--up-bg); color: var(--up); }
+.chip.down { background: var(--down-bg); color: var(--down); }
+.chip.info { background: var(--info-bg); color: var(--info); }
+.chip.accent { background: var(--accent-bg); color: var(--accent); }
