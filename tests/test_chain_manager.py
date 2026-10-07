@@ -210,8 +210,13 @@ class _FakeRegistry:
         return 0
 
 
-async def _run_stream_loop(monkeypatch, ib, state, passes):
-    """Run chain_stream_loop with no real delays until it has slept ``passes`` times, then stop it."""
+async def _run_stream_loop(monkeypatch, ib, state, passes, sent=None, on_pass=None):
+    """Run chain_stream_loop with no real delays until it has slept ``passes`` times, then stop it.
+
+    ``sent`` collects every broadcast message. ``on_pass(n)`` runs inside the n-th per-pass sleep, i.e.
+    after that pass's subscriptions and before its quotes are collected and broadcast. Passes 1..n-1 are
+    always complete when the n-th sleep starts; pass n may or may not be.
+    """
     real_sleep = asyncio.sleep
     done = asyncio.Event()
     slept = {"n": 0}
@@ -219,6 +224,8 @@ async def _run_stream_loop(monkeypatch, ib, state, passes):
     async def fast_sleep(delay, *a, **k):
         if delay == _LOOP_INTERVAL:
             slept["n"] += 1
+            if on_pass is not None:
+                on_pass(slept["n"])
             if slept["n"] >= passes:
                 done.set()
         await real_sleep(0)
@@ -227,8 +234,9 @@ async def _run_stream_loop(monkeypatch, ib, state, passes):
     monkeypatch.setattr(chain_manager, "is_cboe_options_open", lambda: True)
     monkeypatch.setattr(chain_manager.asyncio, "sleep", fast_sleep)
 
-    async def broadcast(_msg):
-        return None
+    async def broadcast(msg):
+        if sent is not None:
+            sent.append(msg)
 
     task = asyncio.create_task(chain_stream_loop(ib, state, broadcast))
     try:
@@ -291,3 +299,144 @@ async def test_a_zero_stream_share_does_not_qualify_or_subscribe_or_warn_every_p
     assert st.contracts.calls == []
     assert [c for c in ib.call_log if c["method"] == "subscribe_tick"] == []
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+# -- chain_stream_loop: only changed tick fields go out, no stream-scope chain_quotes --------------
+
+import itertools
+import time
+import types
+
+from spx_trade_desk.market.chain_manager import diff_ticks
+
+TICK_FIELDS = {"bid", "ask", "bid_size", "ask_size", "last", "volume", "delta", "gamma", "iv"}
+
+
+def test_diff_ticks_sends_everything_first_then_only_changes():
+    last = {}
+    t1 = [{"strike": 5000.0, "right": "C", "bid": 1.0, "ask": 1.2, "volume": 5}]
+    assert diff_ticks(t1, last) == t1
+    t2 = [{"strike": 5000.0, "right": "C", "bid": 1.0, "ask": 1.3, "volume": 5}]
+    assert diff_ticks(t2, last) == [{"strike": 5000.0, "right": "C", "ask": 1.3}]
+    assert diff_ticks(t2, last) == []
+    assert last == {(5000.0, "C"): {"bid": 1.0, "ask": 1.3, "volume": 5}}
+
+
+def test_diff_ticks_compares_with_the_last_sent_value_not_the_first():
+    last = {}
+    diff_ticks([{"strike": 5000.0, "right": "C", "bid": 1.0}], last)
+    assert diff_ticks([{"strike": 5000.0, "right": "C", "bid": 2.0}], last) == [
+        {"strike": 5000.0, "right": "C", "bid": 2.0}]
+    assert diff_ticks([{"strike": 5000.0, "right": "C", "bid": 1.0}], last) == [
+        {"strike": 5000.0, "right": "C", "bid": 1.0}]
+
+
+def test_diff_ticks_keeps_each_strike_and_right_apart():
+    last = {}
+    both = [{"strike": 5000.0, "right": "C", "bid": 1.0}, {"strike": 5000.0, "right": "P", "bid": 1.0}]
+    assert diff_ticks(both, last) == both
+    assert diff_ticks([{"strike": 5000.0, "right": "C", "bid": 1.0},
+                       {"strike": 5000.0, "right": "P", "bid": 1.5}], last) == [
+        {"strike": 5000.0, "right": "P", "bid": 1.5}]
+
+
+def test_diff_ticks_treats_a_value_turning_none_as_a_change():
+    last = {}
+    diff_ticks([{"strike": 5000.0, "right": "P", "bid": 1.0}], last)
+    assert diff_ticks([{"strike": 5000.0, "right": "P", "bid": None}], last) == [
+        {"strike": 5000.0, "right": "P", "bid": None}]
+
+
+def _ticking_ib():
+    """A mock IB whose stream subscriptions arrive already ticking (bid 1.0 / ask 1.2)."""
+    ib = MockIBClient()
+    real_subscribe = ib.subscribe_tick_paced
+
+    async def ticking_subscribe(contract, generic="", share="fixed"):
+        stream = await real_subscribe(contract, generic, share)
+        stream.bid, stream.ask = 1.0, 1.2
+        stream._mark(True)
+        return stream
+
+    ib.subscribe_tick_paced = ticking_subscribe
+    return ib
+
+
+@pytest.mark.asyncio
+async def test_stream_loop_broadcasts_only_chain_tick_with_changed_fields(app_state, monkeypatch):
+    st = _stream_state(app_state)
+    st.contracts = _FakeRegistry(st)
+    sent = []
+
+    def on_pass(n):
+        if n == 2:
+            st.chain_stream_tickers[(5200.0, "C")].ask = 1.3         # the only quote that moves
+        if n == 3:
+            st.last_chain_update = "sentinel"                         # the quiet pass must leave it alone
+
+    await _run_stream_loop(monkeypatch, _ticking_ib(), st, passes=4, sent=sent, on_pass=on_pass)
+
+    assert {m["type"] for m in sent} == {"chain_tick"}               # no stream-scope chain_quotes
+    first, second = sent[0]["data"]["ticks"], sent[1]["data"]["ticks"]
+    assert len(first) == 10 and all(TICK_FIELDS <= set(t) for t in first)          # first pass: every field
+    assert second == [{"strike": 5200.0, "right": "C", "ask": 1.3}]                 # then only what changed
+    assert len(sent) == 2                                             # pass 3 changed nothing: no message
+    assert st.last_chain_update == "sentinel"
+
+
+@pytest.mark.asyncio
+async def test_the_status_line_counts_every_collected_tick_even_when_none_changed(app_state, monkeypatch):
+    st = _stream_state(app_state)
+    st.contracts = _FakeRegistry(st)
+    sent, status_args = [], []
+    real_line = chain_manager.chain_stream_status_line
+
+    def spy_line(*args):
+        status_args.append(args)
+        return real_line(*args)
+
+    clock = itertools.count(0, 100)         # every read is 100 s later, so the 10 s throttle passes each pass
+    monkeypatch.setattr(chain_manager, "time", types.SimpleNamespace(
+        monotonic=lambda: float(next(clock)), perf_counter=time.perf_counter))
+    monkeypatch.setattr(chain_manager, "chain_stream_status_line", spy_line)
+    await _run_stream_loop(monkeypatch, _ticking_ib(), st, passes=4, sent=sent)
+
+    assert len(sent) == 1                                             # only pass 1 had anything to send
+    assert len(status_args) >= 3 and status_args[2] == (10, 10, 10)   # pass 3 is silent but still counted
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_subscription_loses_its_last_sent_values(app_state, monkeypatch):
+    st = _stream_state(app_state)
+    st.contracts = _FakeRegistry(st)
+    sent = []
+
+    def on_pass(n):
+        if n == 2:
+            st.strikes = [s for s in st.strikes if s != 5210.0]      # 5210 leaves the focus: unsubscribed
+        if n == 3:
+            st.strikes = [5190.0, 5195.0, 5200.0, 5205.0, 5210.0]    # and comes back: a new subscription
+
+    await _run_stream_loop(monkeypatch, _ticking_ib(), st, passes=5, sent=sent, on_pass=on_pass)
+
+    assert len(sent) == 2 and len(sent[0]["data"]["ticks"]) == 10
+    resent = sent[1]["data"]["ticks"]
+    assert sorted((t["strike"], t["right"]) for t in resent) == [(5210.0, "C"), (5210.0, "P")]
+    assert all(TICK_FIELDS <= set(t) for t in resent)               # same values as before, still sent whole
+
+
+@pytest.mark.asyncio
+async def test_an_expiry_switch_resends_every_field(app_state, monkeypatch):
+    st = _stream_state(app_state)
+    st.contracts = _FakeRegistry(st)
+    sent = []
+
+    def on_pass(n):
+        if n == 2:
+            st.expiration = NEW_EXP
+
+    await _run_stream_loop(monkeypatch, _ticking_ib(), st, passes=4, sent=sent, on_pass=on_pass)
+
+    assert len(sent) == 2
+    resent = sent[1]["data"]["ticks"]
+    assert len(resent) == 10 and all(TICK_FIELDS <= set(t) for t in resent)       # same values, new expiry

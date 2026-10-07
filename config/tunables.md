@@ -58,7 +58,7 @@ Source: spx_trade_desk/core/config.py
 - chain contract lookup: one shared ContractRegistry (ib/contracts.py): one bulk reqContractDetails per (expiry, trading class), single-qualification fallback in QUALIFY_BATCH_SIZE batches through the request pacer (ib/pacing.py); strikes missing from the listing are retried after CHAIN_STREAM_UNKNOWN_RETRY_SECS with one re-list
 - chain stream quote-book writes: only rows whose stream ticked since the previous pass
 - chain stream tick-log cadence: 10.0 s
-- chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py)
+- chain stream update cadence: CHAIN_STREAM_UPDATE_INTERVAL (from spx_trade_desk/core/config.py); each cycle sends one `chain_tick` with only the fields that changed per (strike, right), nothing when nothing changed (the full `chain_quotes` comes from the publisher every CHAIN_REFRESH_SECONDS)
 - monthly cache TTL: 600 s
 - monthly fetch std_dev_range: 8.0
 
