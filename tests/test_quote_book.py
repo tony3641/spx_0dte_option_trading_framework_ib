@@ -124,3 +124,13 @@ def test_stream_none_bid_and_ask_clear_the_books_quote_but_poll_none_does_not():
     b.update([opt(7700, ask=1.3, ask_size=2)], "stream", now=2.0)   # stream: no bid = no bid
     o = b.options()[0]
     assert (o.bid, o.ask, o.bid_size, o.ask_size) == (None, 1.3, 0, 2)
+
+
+def test_get_returns_a_copy_and_the_age():
+    b = _book()
+    b.update([opt(7700, bid=1.0, ask=1.2)], "stream", now=10.0)
+    got, age = b.get((7700.0, "P"), now=12.5)
+    assert (got.bid, got.ask, age) == (1.0, 1.2, 2.5)
+    got.bid = 9.9
+    assert b.get((7700.0, "P"), now=12.5)[0].bid == 1.0          # the book's row is untouched
+    assert b.get((7705.0, "P"), now=12.5) is None

@@ -7,12 +7,13 @@ process never sends a request IB would reject with error 101 (max number of tick
 """
 import asyncio
 from collections import deque
-from typing import Deque, Dict, Tuple
+from typing import Deque, Dict, Optional, Tuple
 
 FIXED_LINES = 4     # SPX, ES, VIX, VIX1D underlyings
 ORDER_LINES = 4     # order-entry mid lookups; never lent to anyone else
 POLL_LINES = 12     # wing poller + monthly GEX fetch
 SPARE_LINES = 2     # head-room for IB-side accounting lag
+MIN_MARKET_DATA_LINES = FIXED_LINES + ORDER_LINES + POLL_LINES + SPARE_LINES + 2   # one call/put pair streams
 
 
 class LineBudgetExceeded(RuntimeError):
@@ -22,8 +23,8 @@ class LineBudgetExceeded(RuntimeError):
 def split_lines(total: int, stream_cap: int = 160) -> Dict[str, int]:
     """Split ``total`` lines into shares. Lines past ``stream_cap`` go to the poller."""
     base = FIXED_LINES + ORDER_LINES + POLL_LINES + SPARE_LINES
-    if total < base + 2:
-        raise ValueError(f"MARKET_DATA_LINES={total} is below the minimum of {base + 2}")
+    if total < MIN_MARKET_DATA_LINES:
+        raise ValueError(f"MARKET_DATA_LINES={total} is below the minimum of {MIN_MARKET_DATA_LINES}")
     stream = min(total - base, max(0, int(stream_cap)))
     stream -= stream % 2                      # calls and puts are subscribed in pairs
     poll = POLL_LINES + (total - base - stream)
@@ -37,6 +38,7 @@ class LineBudget:
     def __init__(self, shares: Dict[str, int]):
         self._cap = {k: int(v) for k, v in shares.items()}
         self._used = {k: 0 for k in self._cap}
+        self._ceiling: Optional[int] = None
         self._waiters: Dict[str, Deque[Tuple[int, asyncio.Future]]] = {
             k: deque() for k in self._cap}
 
@@ -51,6 +53,50 @@ class LineBudget:
 
     def shares(self) -> Dict[str, int]:
         return dict(self._cap)
+
+    @property
+    def ceiling(self) -> Optional[int]:
+        """Lowest number of in-use lines at which IB ever refused one (None until it did)."""
+        return self._ceiling
+
+    def observe_limit(self, in_use_total: int) -> Dict[str, int]:
+        """IB refused a line while ``in_use_total`` lines were granted: never plan for more.
+
+        Shrinks the 'stream' share first (kept even: calls and puts are subscribed in pairs), then
+        'poll' (never below 2 lines), never 'fixed' or 'order'. The budget only shrinks within a
+        session. Lines already held above a new cap are released by their owners' next pass.
+        Queued ``acquire`` calls that no longer fit a shrunk share fail with ``ValueError`` (as an
+        oversized request does) instead of blocking the queue behind them forever.
+        """
+        ceiling = max(0, int(in_use_total))
+        self._ceiling = ceiling if self._ceiling is None else min(self._ceiling, ceiling)
+        excess = sum(self._cap.values()) - ceiling
+        if excess <= 0:
+            return self.shares()
+        before = dict(self._cap)
+        if "stream" in self._cap:
+            old = self._cap["stream"]
+            new = max(0, old - excess)
+            new -= new % 2
+            self._cap["stream"] = new
+            excess -= old - new
+        if excess > 0 and "poll" in self._cap:
+            old = self._cap["poll"]
+            new = max(min(old, 2), old - excess)
+            self._cap["poll"] = new
+        for share, old in before.items():
+            if self._cap[share] < old:
+                self._fail_oversized_waiters(share)
+        return self.shares()
+
+    def _fail_oversized_waiters(self, share: str) -> None:
+        """Fail queued acquires that exceed the share's (shrunk) capacity, then let the rest run."""
+        q = self._waiters[share]
+        for entry in [e for e in q if e[0] > self._cap[share] and not e[1].done()]:
+            q.remove(entry)
+            entry[1].set_exception(ValueError(
+                f"cannot take {entry[0]} '{share}' lines: capacity shrank to {self._cap[share]}"))
+        self._wake(share)               # a failed head may have been blocking the waiters behind it
 
     def try_acquire(self, share: str, n: int = 1) -> bool:
         if self.free(share) < n:
@@ -73,7 +119,8 @@ class LineBudget:
                 self._waiters[share].remove(entry)
             except ValueError:
                 pass
-            if fut.done() and not fut.cancelled():   # granted, then cancelled before resuming
+            if fut.done() and not fut.cancelled() and fut.exception() is None:
+                # granted, then cancelled before resuming (a waiter failed by a shrink holds no lines)
                 self.release(share, n)               # frees the lines and wakes the queue
             else:
                 self._wake(share)                    # a cancelled head may have been blocking

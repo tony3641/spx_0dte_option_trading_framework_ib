@@ -5,7 +5,7 @@ import pytest
 
 from spx_trade_desk.market import chain_poller
 from spx_trade_desk.market.chain_poller import poll_once, poll_targets
-from spx_trade_desk.market.qualification import QualificationCache
+from spx_trade_desk.ib.contracts import ContractRegistry
 from spx_trade_desk.market.quote_book import QuoteBook
 from tests.conftest import MockIBClient
 
@@ -28,7 +28,7 @@ def _state(app_state):
     st.spx_price, st.annual_vol = 7700.0, 0.01
     st.strikes = list(STRIKES)
     st.quote_book = QuoteBook()
-    st.qual_cache = QualificationCache()
+    st.contracts = ContractRegistry()
     return st
 
 
@@ -81,7 +81,7 @@ async def test_poll_loop_yields_to_the_event_loop_when_a_cycle_does_no_work(
     st = app_state
     st.connected, st.expiration, st.spx_price = True, "20261005", 7700.0
     st.quote_book = QuoteBook()
-    st.qual_cache = QualificationCache()
+    st.contracts = ContractRegistry()
     calls = {"n": 0}
 
     async def idle_cycle(ib, state, now=None):
@@ -123,3 +123,41 @@ async def test_poll_loop_yields_to_the_event_loop_when_a_cycle_does_no_work(
         counter_task.cancel()
         await asyncio.gather(loop_task, counter_task, return_exceptions=True)
     assert ticks["n"] >= 3 and calls["n"] <= 2000
+
+
+@pytest.mark.asyncio
+async def test_poll_once_lists_the_expiry_with_one_bulk_request(app_state):
+    ib = MockIBClient()
+    st = _state(app_state)
+    assert await poll_once(ib, st, now=lambda: 0.0) == 30
+    assert ib.count_calls("req_chain_contract_details") == 1
+    assert ib.count_calls("req_contract_details") == 0
+
+
+@pytest.mark.asyncio
+async def test_a_strike_listed_after_the_first_cycle_appears_after_the_retry_cooldown(app_state):
+    ib = MockIBClient()
+    st = _state(app_state)
+    st.contracts = ContractRegistry(cooldown=120.0)
+    ib.unlisted_strikes.add(7705.0)                    # not listed yet: 0DTE strikes are added intraday
+    assert await poll_once(ib, st, now=lambda: 0.0) == 28
+    ib.unlisted_strikes.clear()                        # IB lists it now
+    assert await poll_once(ib, st, now=lambda: 60.0) == 28          # inside the cooldown: no re-list
+    assert ib.count_calls("req_chain_contract_details") == 1
+    assert await poll_once(ib, st, now=lambda: 130.0) == 30         # cooldown over: one re-list finds it
+    assert ib.count_calls("req_chain_contract_details") == 2
+    assert (7705.0, "P") in st.quote_book.sources()
+
+@pytest.mark.asyncio
+async def test_poll_batches_are_clamped_to_fifty_even_when_the_poll_share_is_large(app_state):
+    """MARKET_DATA_LINES raised: a huge poll share must not turn one snapshot into hundreds of requests."""
+    ib = MockIBClient(line_shares={"fixed": 4, "order": 4, "poll": 400, "stream": 0})
+    st = _state(app_state)
+    st.annual_vol = 0.05                                # wide range: every listed strike is a target
+    expected = len(poll_targets(st.strikes, st.spx_price, st.annual_vol, set()))
+    assert expected > 50
+    n = await poll_once(ib, st, now=lambda: 0.0)
+    sizes = [c["count"] for c in ib.call_log if c["method"] == "fetch_snapshot"]
+    assert n == expected and sum(sizes) == expected
+    assert max(sizes) == 50                             # clamped to the chain fetcher's snapshot batch
+    assert chain_poller.POLL_BATCH_MAX == 50

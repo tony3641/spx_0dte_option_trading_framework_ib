@@ -1,5 +1,6 @@
 # tests/test_ib_client.py
 import asyncio
+import logging
 import time
 from types import SimpleNamespace
 import pytest
@@ -599,6 +600,11 @@ def test_default_client_uses_configured_split():
         _cfg.MARKET_DATA_LINES, _cfg.CHAIN_STREAM_MAX_LINES_CAP)
 
 
+def test_a_new_client_has_not_seen_its_first_order():
+    """The order path tags the first order of a connection; the flag is declared here, not set from outside."""
+    assert IBClient()._perf_first_order_seen is False
+
+
 def test_subscribe_tick_refuses_past_share_capacity_and_recovers(monkeypatch):
     _quiet(monkeypatch)
     client = IBClient(line_shares={"fixed": 1, "order": 1, "poll": 1, "stream": 2})
@@ -687,3 +693,235 @@ def test_subscribe_tick_releases_its_line_if_the_request_raises(monkeypatch):
         client.subscribe_tick(c, "101", share="stream")
     assert client.line_budget.used("stream") == used_before
     assert not client._streams and not client._stream_share
+
+
+@pytest.mark.asyncio
+async def test_req_contract_details_records_a_span():
+    from spx_trade_desk.core.perf import perf
+    perf.reset()
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    c = Contract(); c.symbol = "SPX"; c.secType = "IND"
+    fut = asyncio.create_task(client.req_contract_details(c))
+    await asyncio.sleep(0.01)
+    req_id = next(iter(client._requests))
+    cd = ContractDetails(); cd.contract = c
+    client.contractDetails(req_id, cd)
+    client.contractDetailsEnd(req_id)
+    await asyncio.wait_for(fut, timeout=1)
+    assert perf.snapshot()["metrics"]["ib.details"]["n"] == 1
+
+
+# Data-lane pacing (RequestPacer)
+class _CountingPacer:
+    def __init__(self):
+        self.acquired = 0
+        self.debited = 0
+
+    async def acquire(self, n=1):
+        self.acquired += n
+        return 0.0
+
+    def debit(self, n=1):
+        self.debited += n
+
+
+class _GatePacer(_CountingPacer):
+    """Lets the first request through and blocks the second until the gate opens."""
+
+    def __init__(self):
+        super().__init__()
+        self.gate = asyncio.Event()
+
+    async def acquire(self, n=1):
+        self.acquired += n
+        if self.acquired >= 2:
+            await self.gate.wait()
+        return 0.0
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshot_acquires_per_request_and_debits_the_cancels(monkeypatch):
+    _quiet(monkeypatch)
+    pacer = _CountingPacer()
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 5, "stream": 0}, pacer=pacer)
+    client._loop = asyncio.get_running_loop()
+    await client.fetch_snapshot([_opt(1), _opt(2), _opt(3)], timeout=0.01, grace=0.0)
+    assert pacer.acquired == 3 and pacer.debited == 3
+
+
+@pytest.mark.asyncio
+async def test_cancelled_snapshot_sends_cancels_only_for_requests_that_went_out(monkeypatch):
+    sent, cancelled = [], []
+    _quiet(monkeypatch, sent)
+    monkeypatch.setattr(EClient, "cancelMktData", lambda self, req_id, *a, **k: cancelled.append(req_id))
+    pacer = _GatePacer()
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 5, "stream": 0}, pacer=pacer)
+    client._loop = asyncio.get_running_loop()
+    t = asyncio.create_task(client.fetch_snapshot([_opt(1), _opt(2), _opt(3)], timeout=5.0, grace=0.0))
+    await asyncio.sleep(0.01)                    # request 1 is out, request 2 waits at the pacer
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert len(sent) == 1 and cancelled == sent  # no cancel for requests IB never saw
+    assert pacer.debited == 1
+    assert client.line_budget.used("poll") == 0 and client._streams == {}
+
+
+@pytest.mark.asyncio
+async def test_subscribe_tick_paced_waits_for_the_pacer_then_takes_a_line(monkeypatch):
+    _quiet(monkeypatch)
+    pacer = _CountingPacer()
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 0, "stream": 2}, pacer=pacer)
+    stream = await client.subscribe_tick_paced(_opt(1), "101", share="stream")
+    assert pacer.acquired == 1 and stream.req_id in client._streams
+    assert client.line_budget.used("stream") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_paced_subscribe_leaks_no_line(monkeypatch):
+    _quiet(monkeypatch)
+    pacer = _GatePacer()
+    pacer.acquired = 1                           # the next acquire blocks
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 0, "stream": 2}, pacer=pacer)
+    t = asyncio.create_task(client.subscribe_tick_paced(_opt(1), "101", share="stream"))
+    await asyncio.sleep(0.01)
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert client.line_budget.used("stream") == 0 and client._streams == {}
+
+
+def test_default_client_gets_a_pacer_from_the_config():
+    from spx_trade_desk.core import config
+    pacer = IBClient().pacer
+    assert pacer.rate == config.IB_REQUEST_RATE and pacer.burst == config.IB_REQUEST_BURST
+
+
+@pytest.mark.asyncio
+async def test_req_chain_contract_details_sends_one_partial_contract(monkeypatch):
+    from ibapi.const import UNSET_DOUBLE
+    from spx_trade_desk.core.perf import perf
+    perf.reset()
+    sent = []
+    monkeypatch.setattr(EClient, "reqContractDetails", lambda self, req_id, contract: sent.append(contract))
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    t = asyncio.create_task(client.req_chain_contract_details("SPX", "20261005", "SPXW"))
+    await asyncio.sleep(0.01)
+    (c,) = sent
+    assert (c.symbol, c.secType, c.exchange, c.currency) == ("SPX", "OPT", "SMART", "USD")
+    assert (c.lastTradeDateOrContractMonth, c.tradingClass) == ("20261005", "SPXW")
+    assert c.right == "" and c.strike == UNSET_DOUBLE       # partial: no strike, no right
+    client.contractDetailsEnd(next(iter(client._requests)))
+    assert await asyncio.wait_for(t, timeout=1) == []
+    assert perf.snapshot()["metrics"]["ib.chain_details"]["n"] == 1
+
+
+# Error 101 (max number of tickers): release the refused line and cap the budget
+@pytest.mark.asyncio
+async def test_error_101_on_a_stream_releases_its_line_marks_it_failed_and_caps_the_budget(monkeypatch, caplog):
+    from spx_trade_desk.core.perf import perf
+    perf.reset()
+    _quiet(monkeypatch)
+    client = IBClient()                                    # default split: fixed 4, order 4, poll 12, stream 78
+    client._loop = asyncio.get_running_loop()
+    for i in range(4):
+        client.subscribe_tick(_opt(i), "", share="fixed")
+    for i in range(70):
+        client.subscribe_tick(_opt(100 + i), "101", share="stream")
+    refused = client.subscribe_tick(_opt(999), "101", share="stream")          # IB says no
+    with caplog.at_level(logging.WARNING):
+        client.error(refused.req_id, 0, 101, "Max number of tickers has been reached", "")
+        await asyncio.sleep(0)                             # the socket-thread callback hops onto the loop
+    assert refused.failed_code == 101
+    assert refused.req_id not in client._streams and refused.req_id not in client._stream_share
+    assert client.line_budget.used("stream") == 70
+    assert client.line_budget.capacity("stream") == 54     # 98 planned lines shrunk to the 74 in use
+    assert client.line_budget.capacity("fixed") == 4 and client.line_budget.capacity("order") == 4
+    assert perf.counter("ib.error_101") == 1
+    assert "capping the budget at 74" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_101_advice_names_the_lines_to_configure_when_they_are_above_the_minimum(monkeypatch, caplog):
+    _quiet(monkeypatch)
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    for i in range(4):
+        client.subscribe_tick(_opt(i), "", share="fixed")
+    for i in range(70):
+        client.subscribe_tick(_opt(100 + i), "101", share="stream")
+    refused = client.subscribe_tick(_opt(999), "101", share="stream")
+    with caplog.at_level(logging.WARNING):
+        client.error(refused.req_id, 0, 101, "Max number of tickers has been reached", "")
+        await asyncio.sleep(0)
+    assert "set MARKET_DATA_LINES <= 74" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_101_advice_never_recommends_less_than_the_minimum_the_app_can_run_on(monkeypatch, caplog):
+    from spx_trade_desk.ib import line_budget
+    _quiet(monkeypatch)
+    client = IBClient(line_shares={"fixed": 10, "order": 0, "poll": 0, "stream": 10})
+    client._loop = asyncio.get_running_loop()
+    for i in range(3):
+        client.subscribe_tick(_opt(i), "", share="fixed")
+    refused = client.subscribe_tick(_opt(999), "101", share="stream")          # IB granted only 3 lines
+    with caplog.at_level(logging.WARNING):
+        client.error(refused.req_id, 0, 101, "Max number of tickers has been reached", "")
+        await asyncio.sleep(0)
+    assert "MARKET_DATA_LINES <= 3" not in caplog.text
+    assert "below the minimum of 24" in caplog.text and "MARKET_DATA_LINES = 24" in caplog.text
+    assert line_budget.MIN_MARKET_DATA_LINES == 24
+
+
+@pytest.mark.asyncio
+async def test_a_burst_of_101_refusals_converges_on_the_lines_actually_granted(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    for i in range(4):
+        client.subscribe_tick(_opt(i), "", share="fixed")
+    for i in range(70):
+        client.subscribe_tick(_opt(100 + i), "101", share="stream")
+    refused = [client.subscribe_tick(_opt(900 + i), "101", share="stream") for i in range(3)]
+    for s in refused:
+        client.error(s.req_id, 0, 101, "Max number of tickers has been reached", "")
+    await asyncio.sleep(0)
+    assert all(s.failed_code == 101 for s in refused)
+    assert client.line_budget.used("stream") == 70
+    assert client.line_budget.capacity("stream") == 54     # never below what IB actually granted
+
+
+@pytest.mark.asyncio
+async def test_error_101_for_an_untracked_request_changes_nothing(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient()
+    client._loop = asyncio.get_running_loop()
+    before = client.line_budget.shares()
+    client.error(424242, 0, 101, "Max number of tickers has been reached", "")
+    await asyncio.sleep(0)
+    assert client.line_budget.shares() == before
+
+
+@pytest.mark.asyncio
+async def test_error_101_mid_snapshot_settles_the_batch_and_releases_each_line_once(monkeypatch):
+    _quiet(monkeypatch)
+    client = IBClient(line_shares={"fixed": 0, "order": 0, "poll": 3, "stream": 0},
+                      pacer=_CountingPacer())
+    client._loop = asyncio.get_running_loop()
+    releases = []
+    original_release = client.line_budget.release
+    client.line_budget.release = lambda share, n=1: (releases.append((share, n)), original_release(share, n))[1]
+    t = asyncio.create_task(client.fetch_snapshot([_opt(1), _opt(2), _opt(3)], timeout=5.0, grace=0.0))
+    await asyncio.sleep(0.01)
+    ids = sorted(client._streams)
+    client.tickPrice(ids[0], BID, 1.0, None)
+    client.tickPrice(ids[1], BID, 2.0, None)
+    client.error(ids[2], 0, 101, "Max number of tickers has been reached", "")   # the third line is refused
+    streams = await asyncio.wait_for(t, timeout=1)                               # the batch must not hang
+    assert [s.bid for s in streams] == [1.0, 2.0, None]
+    assert streams[2].failed_code == 101
+    assert len(releases) == 3                                  # one release per line: no double release
+    assert client.line_budget.used("poll") == 0 and client._streams == {}

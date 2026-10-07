@@ -2,8 +2,8 @@
            Strategy Builder Panel
            ====================================================== */
         .strategy-panel {
-            background: #111827;
-            border-top: 1px solid #1e293b;
+            background: var(--bg-panel);
+            border-top: 1px solid var(--border);
             max-height: 280px;
             overflow-y: auto;
             flex-shrink: 0;
@@ -13,24 +13,24 @@
             align-items: center;
             justify-content: space-between;
             padding: 8px 16px;
-            background: #0f172a;
-            border-bottom: 1px solid #1e293b;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border);
         }
         .strategy-header h3 {
             font-size: 13px;
             font-weight: 600;
-            color: #e2e8f0;
+            color: var(--text-strong);
         }
         .strategy-clear-btn {
             font-size: 11px;
-            color: #64748b;
-            background: #1e293b;
-            border: 1px solid #334155;
+            color: var(--text-faint);
+            background: var(--bg-raised);
+            border: 1px solid var(--border-strong);
             border-radius: 4px;
             padding: 3px 10px;
             cursor: pointer;
         }
-        .strategy-clear-btn:hover { color: #f87171; border-color: #f87171; }
+        .strategy-clear-btn:hover { color: var(--down); border-color: var(--down); }
 
         .strategy-legs {
             width: 100%;
@@ -38,33 +38,33 @@
             font-size: 12px;
         }
         .strategy-legs th {
-            background: #0f172a;
-            color: #64748b;
+            background: var(--bg-panel);
+            color: var(--text-faint);
             font-weight: 600;
             padding: 5px 8px;
             text-align: left;
-            border-bottom: 1px solid #1e293b;
+            border-bottom: 1px solid var(--border);
             font-size: 11px;
         }
         .strategy-legs td {
             padding: 5px 8px;
-            border-bottom: 1px solid #111827;
-            color: #cbd5e1;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
         }
-        .strategy-legs .leg-buy  { color: #4ade80; font-weight: 700; }
-        .strategy-legs .leg-sell { color: #f87171; font-weight: 700; }
+        .strategy-legs .leg-buy  { color: var(--up); font-weight: 700; }
+        .strategy-legs .leg-sell { color: var(--down); font-weight: 700; }
         .leg-remove {
             cursor: pointer;
-            color: #64748b;
+            color: var(--text-faint);
             font-size: 14px;
             padding: 0 4px;
         }
-        .leg-remove:hover { color: #f87171; }
+        .leg-remove:hover { color: var(--down); }
         .leg-qty {
             width: 40px;
-            background: #0f172a;
-            border: 1px solid #334155;
-            color: #e2e8f0;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-strong);
+            color: var(--text-strong);
             text-align: center;
             border-radius: 3px;
             padding: 2px;
@@ -79,22 +79,22 @@
             width: 18px;
             height: 18px;
             border-radius: 3px;
-            border: 1px solid #334155;
-            background: #0b1220;
-            color: #94a3b8;
+            border: 1px solid var(--border-strong);
+            background: var(--bg-overlay);
+            color: var(--text-muted);
             cursor: pointer;
             font-size: 12px;
             line-height: 14px;
             padding: 0;
         }
-        .qty-btn:hover { color: #e2e8f0; border-color: #64748b; }
+        .qty-btn:hover { color: var(--text-strong); border-color: var(--border-strong); }
 
         .strategy-summary {
             display: flex;
             flex-wrap: wrap;
             gap: 16px;
             padding: 10px 16px;
-            border-top: 1px solid #1e293b;
+            border-top: 1px solid var(--border);
             font-size: 12px;
         }
         .summary-item {
@@ -102,16 +102,23 @@
             flex-direction: column;
             gap: 2px;
         }
-        .summary-label { color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; }
-        .summary-value { color: #e2e8f0; font-weight: 600; font-variant-numeric: tabular-nums; }
-        .summary-credit { color: #4ade80; }
-        .summary-debit  { color: #f87171; }
+        .summary-label { color: var(--text-faint); font-size: 10px; font-weight: 600; text-transform: uppercase; }
+        .summary-value { color: var(--text-strong); font-weight: 600; font-variant-numeric: tabular-nums; }
+        .summary-credit { color: var(--up); }
+        .summary-debit  { color: var(--down); }
         .strategy-empty {
             padding: 16px;
             text-align: center;
-            color: #475569;
+            color: var(--text-faint);
             font-size: 12px;
         }
 
-
-
+.strategy-panel { border-top: 1px solid var(--border-strong); box-shadow: 0 -6px 16px var(--scrim); }
+.strategy-header { gap: var(--s-3); }
+.strategy-header h3 { white-space: nowrap; }
+.dock-line { flex: 1; min-width: 0; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strategy-header-actions { display: flex; gap: var(--s-2); align-items: center; }
+.dock-toggle { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border-strong); border-radius: var(--r-sm); padding: 3px 10px; font-size: 11px; cursor: pointer; }
+.dock-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.strategy-panel.dock-collapsed #strategyContent,
+.strategy-panel.dock-collapsed #strategySummary { display: none; }

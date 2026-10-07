@@ -31,6 +31,7 @@ from spx_trade_desk.ib.client import (
     _TERMINAL_STATUSES,
 )
 from spx_trade_desk.ib.line_budget import LineBudget, LineBudgetExceeded
+from spx_trade_desk.ib.pacing import RequestPacer
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +144,11 @@ class MockIBClient:
         self.account_dirty = False
         self.on_account_dirty = None
         self.call_log: List[Dict] = []  # records every method call for AI analysis
+        self.pacer = RequestPacer(0, 1)                 # disabled: tests never wait on pacing
+        self.unlisted_strikes: set = set()              # strikes IB cannot resolve (single requests)
+        self.chain_listings: Dict[tuple, list] = {}     # (symbol, expiry, trading_class) -> forced bulk result
+        self.live_bars_initial: list = []               # initial bars of every keepUpToDate request
+        self.live_bar_subs: Dict[int, tuple] = {}       # req_id -> (on_update, on_error) until cancelled
 
     # -- Connection ----------------------------------------------------------
 
@@ -160,12 +166,17 @@ class MockIBClient:
 
     # -- Contract qualification / one-shot requests ---------------------------
 
-    async def req_contract_details(self, contract):
+    async def req_contract_details(self, contract, timeout=30.0):
         """Return one MockContractDetails carrying a fresh conId + minTick.
 
         The returned contract mirrors the input's symbol/secType/etc. so
-        ported tests see the same shape the real bridge produces.
+        ported tests see the same shape the real bridge produces. Strikes in
+        ``unlisted_strikes`` resolve to nothing, like a strike IB does not list.
         """
+        if float(getattr(contract, "strike", 0) or 0) in self.unlisted_strikes:
+            self.call_log.append({"method": "req_contract_details", "found": False,
+                                  "symbol": getattr(contract, "symbol", "")})
+            return []
         mc = MockContract(
             conId=self._next_con_id,
             symbol=getattr(contract, "symbol", "SPX"),
@@ -184,6 +195,31 @@ class MockIBClient:
         self.call_log.append({"method": "req_contract_details", "symbol": mc.symbol,
                               "secType": mc.secType, "conId": mc.conId})
         return [MockContractDetails(minTick=0.05, contract=mc)]
+
+    async def req_chain_contract_details(self, symbol, expiry, trading_class, timeout=60.0):
+        """One partial request: every listed contract of the expiry (strikes 5000..9000, step 5)."""
+        self.call_log.append({"method": "req_chain_contract_details", "symbol": symbol,
+                              "expiry": expiry, "trading_class": trading_class})
+        forced = self.chain_listings.get((symbol, expiry, trading_class))
+        if forced is not None:
+            return list(forced)
+        out = []
+        for i in range(801):
+            strike = 5000.0 + 5.0 * i
+            if strike in self.unlisted_strikes:
+                continue
+            for right in ("C", "P"):
+                mc = MockContract(conId=self._next_con_id, symbol=symbol, secType="OPT",
+                                  lastTradeDateOrContractMonth=expiry, strike=strike, right=right,
+                                  multiplier="100", currency="USD", exchange="SMART",
+                                  tradingClass=trading_class)
+                self._next_con_id += 1
+                out.append(MockContractDetails(minTick=0.05, contract=mc))
+        return out
+
+    def count_calls(self, method: str) -> int:
+        """Number of recorded calls of ``method`` (e.g. the lookups an order path made)."""
+        return sum(1 for c in self.call_log if c["method"] == method)
 
     async def req_sec_def_opt_params(self, symbol, fut_fop_exchange="", sec_type="OPT", con_id=0):
         """Minimal fake — SPXW (exchange SMART) plus an SPX monthly chain."""
@@ -209,6 +245,32 @@ class MockIBClient:
                               "duration": duration, "bar_size": bar_size,
                               "what_to_show": what_to_show})
         return []
+
+    async def req_historical_bars_live(self, contract, on_update, on_error=None, *, duration="1 D",
+                                       bar_size="1 min", what_to_show="TRADES", use_rth=True,
+                                       timeout=30.0):
+        """keepUpToDate fake: returns ``live_bars_initial``; ``push_live_bar`` / ``push_live_error``
+        drive the callbacks until ``cancel_historical_bars``."""
+        req_id = self._next_req_id
+        self._next_req_id += 1
+        self.live_bar_subs[req_id] = (on_update, on_error)
+        self.call_log.append({"method": "req_historical_bars_live", "reqId": req_id,
+                              "symbol": getattr(contract, "symbol", ""), "bar_size": bar_size})
+        return req_id, list(self.live_bars_initial)
+
+    def cancel_historical_bars(self, req_id):
+        self.call_log.append({"method": "cancel_historical_bars", "reqId": req_id})
+        self.live_bar_subs.pop(req_id, None)
+
+    def push_live_bar(self, req_id, bar):
+        sub = self.live_bar_subs.get(req_id)
+        if sub is not None:
+            sub[0](bar)
+
+    def push_live_error(self, req_id, code, msg):
+        sub = self.live_bar_subs.get(req_id)
+        if sub is not None and sub[1] is not None:
+            sub[1](code, msg)
 
     # -- Market data ---------------------------------------------------------
 
@@ -240,7 +302,11 @@ class MockIBClient:
             raise LineBudgetExceeded(f"no free '{share}' market-data line")
         return self._new_stream(contract, generic, share)
 
-    def unsubscribe_tick(self, req_id):
+    async def subscribe_tick_paced(self, contract, generic="", share="fixed"):
+        await self.pacer.acquire()
+        return self.subscribe_tick(contract, generic, share)
+
+    def unsubscribe_tick(self, req_id, send_cancel=True):
         self.call_log.append({"method": "unsubscribe_tick", "reqId": req_id})
         self._streams.pop(req_id, None)
         share = self._stream_share.pop(req_id, None)

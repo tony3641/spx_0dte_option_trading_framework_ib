@@ -19,11 +19,20 @@ from typing import Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from ibapi.client import EClient
-from ibapi.common import BarData  # noqa: F401  (used in Task 4)
+from ibapi.contract import Contract
 from ibapi.wrapper import EWrapper
 
-from spx_trade_desk.core.config import CHAIN_STREAM_MAX_LINES_CAP, MARKET_DATA_LINES
-from spx_trade_desk.ib.line_budget import LineBudget, LineBudgetExceeded, split_lines
+from spx_trade_desk.core.config import (
+    CHAIN_STREAM_MAX_LINES_CAP,
+    IB_REQUEST_BURST,
+    IB_REQUEST_RATE,
+    MARKET_DATA_LINES,
+)
+from spx_trade_desk.core.perf import perf
+from spx_trade_desk.ib.line_budget import (
+    MIN_MARKET_DATA_LINES, LineBudget, LineBudgetExceeded, split_lines,
+)
+from spx_trade_desk.ib.pacing import RequestPacer
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +82,20 @@ class _Request:
     def __init__(self, loop):
         self.future = loop.create_future()
         self.items: list = []
+
+
+def _is_warning(code) -> bool:
+    """IB's warning / notification range (2100-2299, e.g. 2104 farm OK, 2176 fractional size)."""
+    return 2100 <= code <= 2299
+
+
+class _LiveBars:
+    """Callbacks of one keepUpToDate historical-data request (loop thread)."""
+    __slots__ = ("on_update", "on_error")
+
+    def __init__(self, on_update, on_error):
+        self.on_update = on_update
+        self.on_error = on_error
 
 
 SecDefOptParams = namedtuple(
@@ -142,6 +165,7 @@ class TickStream:
         # time.monotonic() of the latest tick, written on the socket thread (a float
         # assignment): lets readers tell a silent subscription from a live one.
         self.last_tick_mono = 0.0
+        self.failed_code = None      # IB error code that refused this subscription (101: ticker limit)
 
     def received_any_tick(self):
         return self._first_tick
@@ -203,7 +227,8 @@ class _SnapshotBatch:
 
 
 class IBClient(EWrapper, EClient):
-    def __init__(self, line_shares: Optional[Dict[str, int]] = None):
+    def __init__(self, line_shares: Optional[Dict[str, int]] = None,
+                 pacer: Optional[RequestPacer] = None):
         EClient.__init__(self, self)
         # ibapi 10.45 useProtoBuf() crashes on None serverVersion when unconnected
         # (`unifiedVersion <= None`). Default to 0 so one-shot request methods degrade
@@ -216,11 +241,14 @@ class IBClient(EWrapper, EClient):
         self._next_order_id: Optional[int] = None
         self._account_code: Optional[str] = None
         self._requests: Dict[int, _Request] = {}
+        self._live_bars: Dict[int, _LiveBars] = {}               # keepUpToDate bar requests
         self._streams: Dict[int, "TickStream"] = {}
         self._snapshot_batches: Dict[int, _SnapshotBatch] = {}   # req_id -> its batch
         self._stream_share: Dict[int, str] = {}                  # req_id -> budget share
         self.line_budget = LineBudget(
             line_shares or split_lines(MARKET_DATA_LINES, CHAIN_STREAM_MAX_LINES_CAP))
+        # Data-lane pacing: orders and cancels never wait on it (see ib/pacing.py).
+        self.pacer = pacer if pacer is not None else RequestPacer(IB_REQUEST_RATE, IB_REQUEST_BURST)
         self._orders: Dict[int, "OrderHandle"] = {}
         self._thread: Optional[threading.Thread] = None
         self._connected_evt: Optional[asyncio.Event] = None
@@ -231,6 +259,7 @@ class IBClient(EWrapper, EClient):
         self.on_account_dirty: Optional[Callable] = None
         self._exec_by_id: Dict[str, ExecutionRecord] = {}
         self.error_handler: Optional[Callable] = None
+        self._perf_first_order_seen = False     # set by the order path after the first order's ack
 
     # -- connection ---------------------------------------------------------
 
@@ -267,12 +296,22 @@ class IBClient(EWrapper, EClient):
     def error(self, reqId, errorTime, errorCode, errorString, advancedOrderRejectJson=""):
         logger.warning("IB error reqId=%s code=%s: %s", reqId, errorCode, errorString)
         self._snapshot_settle(reqId)   # don't let a dead stream hold a batch
+        if errorCode == 101 and self._loop is not None:
+            # Max number of tickers reached: IB refused a market-data line. Handle it on the loop thread.
+            self._loop.call_soon_threadsafe(self._handle_line_limit, reqId)
+        # A keepUpToDate bar request hears every error on its id except warnings (10182, 10225 and
+        # 10197 end its updates, so they must reach the caller). A warning is only logged: it
+        # neither reaches on_error nor cuts the initial load short below.
+        live = self._live_bars.get(reqId)
+        live_warning = live is not None and _is_warning(errorCode)
+        if live is not None and not live_warning and live.on_error is not None and self._loop is not None:
+            self._loop.call_soon_threadsafe(self._deliver_live_error, reqId, live, errorCode, errorString)
         # Resolve any pending one-shot request so awaiting callers don't hang:
         # IB rejects some requests (e.g. error 200 contract-not-found, 321 invalid
         # contract id) with an error but no matching ...End callback, which would
         # otherwise leave the request future unresolved forever.
         req = self._requests.get(reqId)
-        if req is not None and not req.future.done():
+        if req is not None and not req.future.done() and not live_warning:
             self._requests.pop(reqId, None)
             self._loop.call_soon_threadsafe(req.future.set_result, list(req.items))
         handler = self.error_handler
@@ -281,6 +320,33 @@ class IBClient(EWrapper, EClient):
             contract = handle.contract if handle is not None else None
             self._loop.call_soon_threadsafe(
                 handler, reqId, errorCode, errorString, contract)
+
+    def _handle_line_limit(self, req_id):
+        """Error 101 for a tracked market-data request: free its line and cap the budget.
+
+        The cap is the number of lines granted at the moment of refusal; it only ever shrinks
+        within a session (see ``LineBudget.observe_limit``). Runs on the loop thread.
+        """
+        share = self._stream_share.pop(req_id, None)
+        if share is None:
+            return                      # not a market-data request this client tracks
+        perf.count("ib.error_101")
+        stream = self._streams.pop(req_id, None)
+        if stream is not None:
+            stream.failed_code = 101
+        self.line_budget.release(share)
+        in_use = sum(self.line_budget.used(s) for s in self.line_budget.shares())
+        before = self.line_budget.shares()
+        if self.line_budget.observe_limit(in_use) != before:
+            if in_use >= MIN_MARKET_DATA_LINES:
+                logger.warning("IB refused a line with %d in use; capping the budget at %d; "
+                               "set MARKET_DATA_LINES <= %d", in_use, in_use, in_use)
+            else:
+                logger.warning("IB refused a line with %d in use; capping the budget at %d, which is "
+                               "below the minimum of %d that MARKET_DATA_LINES accepts: set "
+                               "MARKET_DATA_LINES = %d and free the lines held by other API clients "
+                               "and TWS watchlists", in_use, in_use, MIN_MARKET_DATA_LINES,
+                               MIN_MARKET_DATA_LINES)
 
     # -- order placement / lifecycle ----------------------------------------
 
@@ -454,12 +520,22 @@ class IBClient(EWrapper, EClient):
     async def req_contract_details(self, contract, timeout=30.0):
         req_id, req = self._start_request()
         EClient.reqContractDetails(self, req_id, contract)
-        try:
-            return await asyncio.wait_for(req.future, timeout=timeout)
-        except asyncio.TimeoutError:
-            return []
-        finally:
-            self._requests.pop(req_id, None)
+        with perf.timer("ib.details"):
+            try:
+                return await asyncio.wait_for(req.future, timeout=timeout)
+            except asyncio.TimeoutError:
+                return []
+            finally:
+                self._requests.pop(req_id, None)
+
+    async def req_chain_contract_details(self, symbol, expiry, trading_class, timeout=60.0):
+        """One partial request (no strike, no right): every listed contract of the expiry."""
+        c = Contract()
+        c.symbol, c.secType, c.exchange, c.currency = symbol, "OPT", "SMART", "USD"
+        c.lastTradeDateOrContractMonth = expiry
+        c.tradingClass = trading_class
+        with perf.timer("ib.chain_details"):
+            return await self.req_contract_details(c, timeout=timeout)
 
     async def req_sec_def_opt_params(self, symbol, fut_fop_exchange, sec_type, con_id,
                                      timeout=30.0):
@@ -486,6 +562,62 @@ class IBClient(EWrapper, EClient):
         finally:
             self._requests.pop(req_id, None)
         return [_coerce_bar(b) for b in bars]
+
+    async def req_historical_bars_live(self, contract, on_update, on_error=None, *, duration="1 D",
+                                       bar_size="1 min", what_to_show="TRADES", use_rth=True,
+                                       timeout=30.0):
+        """keepUpToDate request: return (req_id, initial bars); later bars go to ``on_update``.
+
+        ``on_update(bar)`` and ``on_error(code, message)`` run on the loop thread. ``on_error`` gets
+        every error on the request except IB warnings (2100-2299), including those that end the
+        updates (10182, 10225, 10197); the caller re-requests on them. An error during the initial
+        load reaches ``on_error`` before this coroutine returns, and the return is then short or
+        empty; the request is still registered, so the caller must call ``cancel_historical_bars``.
+        An initial load that times out or is cancelled is cancelled here (timeout: ``(req_id, [])``).
+        Data lane: waits on the pacer.
+        """
+        await self.pacer.acquire()
+        req_id, req = self._start_request()
+        self._live_bars[req_id] = _LiveBars(on_update, on_error)
+        EClient.reqHistoricalData(self, req_id, contract, "", duration, bar_size,
+                                  what_to_show, use_rth, 2, True, [])
+        try:
+            bars = await asyncio.wait_for(req.future, timeout=timeout)
+        except asyncio.TimeoutError:
+            self.cancel_historical_bars(req_id)
+            return req_id, []
+        except asyncio.CancelledError:
+            self.cancel_historical_bars(req_id)
+            raise
+        finally:
+            self._requests.pop(req_id, None)
+        return req_id, [_coerce_bar(b) for b in bars]
+
+    def cancel_historical_bars(self, req_id) -> None:
+        """Stop a keepUpToDate request; a second call (or an unknown id) sends nothing."""
+        if self._live_bars.pop(req_id, None) is None:
+            return
+        self._requests.pop(req_id, None)
+        try:
+            EClient.cancelHistoricalData(self, req_id)
+        except Exception:
+            pass
+        self.pacer.debit()
+
+    def historicalDataUpdate(self, reqId, bar):
+        live = self._live_bars.get(reqId)
+        if live is not None and self._loop is not None:
+            self._loop.call_soon_threadsafe(self._deliver_live_bar, reqId, live, _coerce_bar(bar))
+
+    def _deliver_live_bar(self, req_id, live, bar):
+        """Loop thread: drop an update queued before its request was cancelled (or re-requested)."""
+        if self._live_bars.get(req_id) is live:
+            live.on_update(bar)
+
+    def _deliver_live_error(self, req_id, live, code, message):
+        """Loop thread: drop an error queued before its request was cancelled (or re-requested)."""
+        if self._live_bars.get(req_id) is live:
+            live.on_error(code, message)
 
     def historicalData(self, reqId, bar):
         req = self._requests.get(reqId)
@@ -600,11 +732,19 @@ class IBClient(EWrapper, EClient):
             raise
         return stream
 
-    def unsubscribe_tick(self, req_id):
+    async def subscribe_tick_paced(self, contract, generic="", share="fixed"):
+        """``subscribe_tick`` for the data lane: waits for the pacer first, so a long fill of
+        stream subscriptions never queues ahead of an order. A cancelled wait takes no line."""
+        await self.pacer.acquire()
+        return self.subscribe_tick(contract, generic, share)
+
+    def unsubscribe_tick(self, req_id, send_cancel=True):
         self._streams.pop(req_id, None)
         share = self._stream_share.pop(req_id, None)
         if share is not None:
             self.line_budget.release(share)
+        if not send_cancel:
+            return                      # the request never went out: nothing to cancel at IB
         try:
             EClient.cancelMktData(self, req_id)
         except Exception:
@@ -650,9 +790,12 @@ class IBClient(EWrapper, EClient):
             self._stream_share[s.req_id] = share
             batch.pending.add(s.req_id)
             self._snapshot_batches[s.req_id] = batch
+        sent = set()                                  # req ids whose reqMktData actually went out
         try:
             for s in streams:
+                await self.pacer.acquire()            # data lane: keep the queue short for orders
                 EClient.reqMktData(self, s.req_id, s.contract, generic, False, False, [])
+                sent.add(s.req_id)
             try:
                 await asyncio.wait_for(batch.done.wait(), timeout=timeout)
             except asyncio.TimeoutError:
@@ -665,5 +808,6 @@ class IBClient(EWrapper, EClient):
         finally:
             for s in streams:
                 self._snapshot_batches.pop(s.req_id, None)
-                self.unsubscribe_tick(s.req_id)      # releases the line
+                self.unsubscribe_tick(s.req_id, send_cancel=s.req_id in sent)   # releases the line
+            self.pacer.debit(len(sent))               # the cancels are messages too, but never awaited
         return streams

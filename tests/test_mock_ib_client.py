@@ -301,3 +301,58 @@ async def test_mock_mirrors_line_budget():
         await mock.fetch_snapshot([_contract()] * 3)
     await mock.fetch_snapshot([_contract()] * 2)
     assert mock.line_budget.used("poll") == 0
+
+
+@pytest.mark.asyncio
+async def test_mock_has_a_disabled_pacer_and_a_paced_subscribe():
+    mock = MockIBClient()
+    assert mock.pacer.rate <= 0
+    stream = await mock.subscribe_tick_paced(_contract(), "101", share="stream")
+    assert isinstance(stream, TickStream) and mock.count_calls("subscribe_tick") == 1
+
+
+@pytest.mark.asyncio
+async def test_mock_unlisted_strikes_cannot_be_qualified():
+    mock = MockIBClient()
+    mock.unlisted_strikes.add(5200.0)
+    assert await mock.req_contract_details(_contract(), timeout=5.0) == []
+    assert mock.count_calls("req_contract_details") == 1
+
+
+@pytest.mark.asyncio
+async def test_mock_bulk_listing_is_a_dense_grid_that_honours_unlisted_strikes():
+    mock = MockIBClient()
+    mock.unlisted_strikes.add(7705.0)
+    rows = await mock.req_chain_contract_details("SPX", "20261005", "SPXW")
+    assert len(rows) == (801 - 1) * 2                       # strikes 5000..9000 step 5, calls and puts
+    assert all(r.contract.tradingClass == "SPXW" and r.contract.lastTradeDateOrContractMonth == "20261005"
+               for r in rows)
+    assert len({r.contract.conId for r in rows}) == len(rows)
+    assert not any(r.contract.strike == 7705.0 for r in rows)
+    assert any(r.contract.strike == 7700.0 and r.contract.right == "P" for r in rows)
+    assert mock.count_calls("req_chain_contract_details") == 1
+
+
+@pytest.mark.asyncio
+async def test_mock_bulk_listing_returns_a_forced_result_for_its_key():
+    mock = MockIBClient()
+    mock.chain_listings[("SPX", "20261005", "SPXW")] = []
+    assert await mock.req_chain_contract_details("SPX", "20261005", "SPXW") == []
+    assert len(await mock.req_chain_contract_details("SPX", "20261006", "SPXW")) == 801 * 2
+
+
+@pytest.mark.asyncio
+async def test_mock_live_bars_return_the_initial_bars_and_push_until_cancelled():
+    mock = MockIBClient()
+    mock.live_bars_initial = ["bar-0"]
+    got, errors = [], []
+    req_id, bars = await mock.req_historical_bars_live(_contract(), got.append,
+                                                       lambda c, m: errors.append(c))
+    assert bars == ["bar-0"] and req_id in mock.live_bar_subs
+    assert mock.count_calls("req_historical_bars_live") == 1
+    mock.push_live_bar(req_id, "bar-1")
+    mock.push_live_error(req_id, 162, "query cancelled")
+    mock.cancel_historical_bars(req_id)
+    mock.push_live_bar(req_id, "bar-2")
+    assert got == ["bar-1"] and errors == [162] and mock.live_bar_subs == {}
+    assert mock.count_calls("cancel_historical_bars") == 1

@@ -14,9 +14,8 @@ from typing import Dict, List, Optional
 
 from spx_trade_desk.ib.line_budget import LineBudgetExceeded
 
-from spx_trade_desk.core.config import (
-    CHAIN_QUOTE_MAX_AGE_S, CHAIN_STREAM_UPDATE_INTERVAL, MONTHLY_CACHE_TTL,
-)
+from spx_trade_desk.core.config import CHAIN_STREAM_UPDATE_INTERVAL, MONTHLY_CACHE_TTL
+from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import now_et, is_cboe_options_open
 from spx_trade_desk.market.chain_fetcher import fetch_option_chain
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict, GEXResult, OptionData
@@ -275,11 +274,65 @@ def _collect_stream_quotes(tickers: dict, oi_fallback: dict, seen: Optional[dict
     return ticks, live_options, book_options
 
 
+_MISSING = object()
+
+
+def diff_ticks(ticks: list, last_sent: dict) -> list:
+    """Only the fields that changed since the last send, per (strike, right).
+
+    A key seen for the first time goes out whole; a value turning None counts as a change.
+    ``last_sent`` (key -> {field: value}) is updated in place.
+    """
+    out = []
+    for t in ticks:
+        key = (t["strike"], t["right"])
+        prev = last_sent.get(key)
+        fields = {k: v for k, v in t.items() if k not in ("strike", "right")}
+        changed = fields if prev is None else {k: v for k, v in fields.items() if prev.get(k, _MISSING) != v}
+        if changed:
+            out.append({"strike": t["strike"], "right": t["right"], **changed})
+            last_sent[key] = {**(prev or {}), **changed}
+    return out
+
+
+STREAM_SUBSCRIBE_CHUNK = 30      # subscriptions per pass: quote pushes keep flowing during a long fill
+
+
+async def _subscribe_new_keys(ib, state, qualified: Dict, new_keys: List) -> int:
+    """Subscribe up to STREAM_SUBSCRIBE_CHUNK qualified keys (nearest first) through the paced path."""
+    subscribed = 0
+    for key in [k for k in new_keys if k in qualified][:STREAM_SUBSCRIBE_CHUNK]:
+        try:
+            stream = await ib.subscribe_tick_paced(qualified[key], "101", share="stream")
+        except LineBudgetExceeded as e:
+            logger.warning(f"Chain stream: {e}")
+            break
+        state.chain_stream_tickers[key] = stream
+        state.chain_stream_contracts[key] = qualified[key]
+        subscribed += 1
+    return subscribed
+
+
+def drop_failed_streams(state) -> int:
+    """Forget streams IB refused (error 101): the client already released their lines."""
+    dropped = 0
+    for key, stream in list(state.chain_stream_tickers.items()):
+        if getattr(stream, "failed_code", None) is not None:
+            state.chain_stream_tickers.pop(key, None)
+            state.chain_stream_contracts.pop(key, None)
+            dropped += 1
+    return dropped
+
+
 async def chain_stream_loop(ib, state, broadcast_fn):
     """Maintain persistent market-data subscriptions for the strikes nearest the focus.
 
     Uses the line budget's 'stream' share and is never paused: the wing poller works
     from its own share (chain_poller.py). Ticked rows are merged into the quote book.
+    Every CHAIN_STREAM_UPDATE_INTERVAL the fields that changed since the last send go to
+    browsers as `chain_tick` (see `diff_ticks`) together with the expiry they belong to; the full
+    `chain_quotes` comes from the publisher every CHAIN_REFRESH_SECONDS. A newly connected browser
+    sets ``state.chain_resync_requested``: the next cycle sends it whole rows (``last_sent`` cleared).
     """
     await asyncio.sleep(2)
     last_expiration = ""
@@ -287,6 +340,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
     last_tick_log_ts = 0.0
     last_center_log = ""
     seen_ticks: Dict[tuple, float] = {}     # key -> last stream tick time merged into the book
+    last_sent: Dict[tuple, dict] = {}       # key -> {field: value} the browsers were last sent
 
     while True:
         try:
@@ -300,6 +354,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             if state.expiration != last_expiration:
                 _cancel_stream_subs(ib, state)
                 seen_ticks.clear()
+                last_sent.clear()
                 last_expiration = state.expiration
                 logger.info(f"Chain stream expiration switched to {state.expiration}; reset subscriptions")
 
@@ -319,12 +374,14 @@ async def chain_stream_loop(ib, state, broadcast_fn):
                 await asyncio.sleep(10)
                 continue
 
-            max_strikes = max(1, ib.line_budget.capacity("stream") // 2)
+            stream_cap = ib.line_budget.capacity("stream")
+            max_strikes = max(1, stream_cap // 2)
             nearest = sorted(avail, key=lambda s: (abs(s - focus_center), s))[:max_strikes]
             desired_keys = {norm_key(s, r) for s in nearest for r in ("C", "P")}
             if available_pairs:
                 desired_keys = {k for k in desired_keys if k in available_pairs}
 
+            drop_failed_streams(state)
             current_keys = set(state.chain_stream_tickers.keys())
             for key in current_keys - desired_keys:
                 stream = state.chain_stream_tickers.pop(key, None)
@@ -337,22 +394,13 @@ async def chain_stream_loop(ib, state, broadcast_fn):
 
             new_keys = sorted(desired_keys - current_keys,
                               key=lambda k: (abs(k[0] - focus_center), k))
-            if new_keys:
-                qualified = await state.qual_cache.qualify(
-                    ib, state.expiration, state.trading_class, new_keys, time.monotonic())
-                subscribed = 0
-                for key in new_keys:
-                    qc = qualified.get(key)
-                    if qc is None:
-                        continue
-                    try:
-                        stream = ib.subscribe_tick(qc, "101", share="stream")
-                    except LineBudgetExceeded as e:
-                        logger.warning(f"Chain stream: {e}")
-                        break
-                    state.chain_stream_tickers[key] = stream
-                    state.chain_stream_contracts[key] = qc
-                    subscribed += 1
+            if new_keys and stream_cap > 0:         # a share shrunk to 0 (error 101) subscribes nothing
+                exp, cls = state.expiration, state.trading_class
+                qualified = await state.contracts.qualify_keys(
+                    ib, exp, cls, new_keys, time.monotonic())
+                if (state.expiration, state.trading_class) != (exp, cls):
+                    continue            # the expiry rolled while we waited: these contracts are stale
+                subscribed = await _subscribe_new_keys(ib, state, qualified, new_keys)
                 if subscribed:
                     logger.info(f"Chain stream subscribed {subscribed}/{len(new_keys)}; "
                                 f"active_subs={len(state.chain_stream_tickers)}")
@@ -360,35 +408,35 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             if len(state.chain_stream_tickers) != last_sub_count:
                 last_sub_count = len(state.chain_stream_tickers)
                 logger.info(f"Chain stream active subscriptions: {last_sub_count} "
-                            f"(unknown_blacklist={len(state.qual_cache.unknown)})")
+                            f"(unknown_blacklist={state.contracts.unknown_count()})")
 
             await asyncio.sleep(CHAIN_STREAM_UPDATE_INTERVAL)
+            t_cycle = time.perf_counter()
 
             oi_fallback = {(o.strike, o.right): o.open_interest for o in state.chain_data}
             for k in [k for k in seen_ticks if k not in state.chain_stream_tickers]:
                 del seen_ticks[k]
-            ticks, live_options, book_options = _collect_stream_quotes(
+            for k in [k for k in last_sent if k not in state.chain_stream_tickers]:
+                del last_sent[k]
+            ticks, _, book_options = _collect_stream_quotes(
                 state.chain_stream_tickers, oi_fallback, seen_ticks)
             if state.quote_book.expiry != state.expiration:
                 state.quote_book.reset(state.expiration)
             state.quote_book.update(book_options, "stream", time.monotonic())
-            book_ages = state.quote_book.ages(time.monotonic())
 
-            if ticks:
+            if state.chain_resync_requested:
+                # A browser connected since the last cycle: it starts from the cached full chain, so send
+                # every field of every streamed row once (the diff would send only what changed since).
+                state.chain_resync_requested = False
+                last_sent.clear()
+            changed = diff_ticks(ticks, last_sent)
+            if changed:
                 now_iso = now_et().isoformat()
                 await broadcast_fn({"type": "chain_tick",
-                                    "data": {"ticks": ticks, "timestamp_iso": now_iso}})
-                live_quotes = build_chain_quotes(
-                    options=live_options, spot_price=state.spx_price,
-                    gex_result=state.gex_result, annual_vol=state.annual_vol,
-                    expiration=state.expiration, trading_class=state.trading_class,
-                    ages={k: book_ages[k] for k in (norm_key(o.strike, o.right)
-                                                    for o in live_options) if k in book_ages},
-                    max_age_s=CHAIN_QUOTE_MAX_AGE_S)
-                live_quotes["timestamp_iso"] = now_iso
-                live_quotes["scope"] = "stream"
+                                    "data": {"ticks": changed, "timestamp_iso": now_iso,
+                                             "expiration_raw": state.expiration}})
                 state.last_chain_update = now_et().strftime("%H:%M:%S")
-
+            if ticks:
                 now_monotonic = time.monotonic()
                 if now_monotonic - last_tick_log_ts >= 10.0:
                     last_tick_log_ts = now_monotonic
@@ -396,7 +444,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
                                       or t.get("ask") is not None or t.get("last") is not None)
                     logger.info(chain_stream_status_line(
                         len(ticks), with_quotes, len(state.chain_stream_tickers)))
-                await broadcast_fn({"type": "chain_quotes", "data": live_quotes})
+            perf.record("chain.stream_cycle", (time.perf_counter() - t_cycle) * 1000.0)
 
         except asyncio.CancelledError:
             _cancel_stream_subs(ib, state)
@@ -444,6 +492,7 @@ async def monthly_gex_fetch(ib, state, broadcast_fn):
             std_dev_range=8.0,
             annual_vol=state.annual_vol,
             trading_class='SPX',
+            registry=state.contracts,
         )
 
         if not options:

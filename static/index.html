@@ -3,10 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="/static/js/theme.js"></script>
     <title>SPX 0DTE Option Dashboard</title>
-    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" integrity="sha384-7TVmlZWH60iKX5Uk7lSvQhjtcgw2tkFjuwLcXoRSR4zXTyWFJRm9aPAguMh7CIra" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js" integrity="sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="/static/css/tokens.css">
     <link rel="stylesheet" href="/static/css/theme.css">
     <link rel="stylesheet" href="/static/css/layout.css">
+    <link rel="stylesheet" href="/static/css/components.css">
     <link rel="stylesheet" href="/static/css/charts.css">
     <link rel="stylesheet" href="/static/css/chain-table.css">
     <link rel="stylesheet" href="/static/css/strategy.css">
@@ -39,6 +43,7 @@
                 <span class="status-label">Last GEX:</span>
                 <span class="status-value" id="lastGexUpdate">-</span>
             </div>
+            <button class="theme-toggle" id="themeToggle" onclick="toggleTheme(event)" title="Switch light/dark theme (Shift+click: follow the OS)" aria-label="Switch light/dark theme"><span class="theme-icon" aria-hidden="true"></span></button>
             <button class="settings-btn" id="settingsBtn" onclick="openSettings()" title="Settings">&#9881;</button>
         </div>
     </div>
@@ -89,19 +94,27 @@
 
     <!-- Charts (Tab 1) -->
     <div class="charts-container active" id="dashboardTab">
-        <div class="chart-panel">
-            <div class="chart-title" id="priceChartTitle">SPX Intraday</div>
+        <div class="chart-panel panel-price">
+            <div class="chart-title"><span id="priceChartTitle">SPX Intraday</span>
+                <span class="help" tabindex="0" aria-label="Price chart info">?
+                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall, put wall, gamma flip and max pain are drawn as price lines. Times are ET.</span>
+                </span>
+            </div>
             <div id="priceChart"></div>
         </div>
-        <div class="chart-panel">
+        <div class="chart-panel panel-gex">
             <div class="chart-title">
                 <span id="gexChartLabel">Gamma Exposure (GEX) by Strike</span>
                 <span class="gex-mode-toggle" id="gexModeToggle">
                     <button class="gex-mode-btn active" data-mode="0dte" onclick="setGexMode('0dte')">0DTE</button>
                     <button class="gex-mode-btn" data-mode="monthly" onclick="setGexMode('monthly')">Monthly</button>
                 </span>
+                <span class="gex-mode-toggle" id="gexRangeToggle">
+                    <button class="gex-mode-btn active" data-range="near" onclick="setGexRange(false)" title="Strikes within 40 steps of spot">Near</button>
+                    <button class="gex-mode-btn" data-range="all" onclick="setGexRange(true)" title="Every strike in the data">All</button>
+                </span>
                 <span class="help" tabindex="0" aria-label="GEX chart info">?
-                    <span class="tooltip" role="tooltip">Use this chart to see where gamma exposure accumulates by strike. Peaks show levels where option dealer hedging is concentrated; net line direction indicates whether overall market makers are long (positive) or short (negative) gamma.</span>
+                    <span class="tooltip" role="tooltip">Use this chart to see where gamma exposure accumulates by strike. Peaks show levels where option dealer hedging is concentrated; net line direction indicates whether overall market makers are long (positive) or short (negative) gamma. By default the chart shows the strikes within 40 steps of spot; "All" shows every strike.</span>
                 </span>
             </div>
             <div class="gex-loading hidden" id="gexLoading">
@@ -111,7 +124,7 @@
             </div>
             <div id="gexChart"></div>
         </div>
-        <div class="chart-panel">
+        <div class="chart-panel panel-smile">
             <div class="chart-title"><span id="smileChartLabel">IV Smile & Delta-Decay Efficiency</span>
                 <span class="help" tabindex="0" aria-label="IV Smile help">?
                     <span class="tooltip" role="tooltip">Delta-decay efficiency = |charm| - |delta|.<br>Computed from short finite-difference decay (15-minute step) of option delta; it represents the rate at which an option's delta changes relative to its current delta magnitude.<br>Higher values indicate faster delta erosion per unit delta - useful for assessing hedging sensitivity to time decay and short-term rebalancing cost.</span>
@@ -124,6 +137,24 @@
             </div>
             <div id="smileChart"></div>
         </div>
+        <div class="chart-panel panel-pos" id="positionsPanel">
+            <div class="chart-title"><span>Positions &amp; P&amp;L</span>
+                <span class="help" tabindex="0" aria-label="Positions help">?
+                    <span class="tooltip" role="tooltip">Net liquidation value and unrealized / realized P&amp;L from the account feed, plus your open positions with their live marks. The Account tab has the full detail and the close buttons.</span>
+                </span>
+            </div>
+            <div class="pos-panel-body">
+                <div class="pos-kpis">
+                    <div class="kpi"><span class="kpi-label">Net Liq</span><span class="kpi-value" id="dashNetLiq">-</span></div>
+                    <div class="kpi"><span class="kpi-label">Unrealized</span><span class="kpi-value" id="dashUnPnl">-</span></div>
+                    <div class="kpi"><span class="kpi-label">Realized</span><span class="kpi-value" id="dashRePnl">-</span></div>
+                </div>
+                <table class="pos-table">
+                    <thead><tr><th>Position</th><th>Qty</th><th>Mark</th><th>Unrealized</th></tr></thead>
+                    <tbody id="dashPositionsBody"><tr><td colspan="4" class="acct-empty">No open positions</td></tr></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <!-- Option Chain (Tab 2) -->
@@ -131,9 +162,9 @@
         <div class="chain-controls">
             <div>
                 <div id="chainRangeInfo">Visible range: -</div>
-                <div id="chainLastUpdateInfo" style="font-size:11px;color:#64748b;">Last update: -</div>
+                <div id="chainLastUpdateInfo" style="font-size:11px;color:var(--text-faint);">Last update: -</div>
                 <span class="help" tabindex="0" aria-label="Chain quote freshness">?
-                    <span class="tooltip" role="tooltip">Strikes near spot stream live. The rest of the chain is polled continuously in small batches, so the live stream never pauses. A side is dimmed when its quote is older than CHAIN_QUOTE_MAX_AGE_S (180 s by default), and the strategy engine ignores dimmed legs.</span>
+                    <span class="tooltip" role="tooltip">Strikes near spot stream live; how many depends on your market-data line budget. The rest of the chain is refreshed by a slower poller, and contract ids come from one listing per expiry. A side is dimmed when its quote is older than CHAIN_QUOTE_MAX_AGE_S (180 s by default), and the strategy engine ignores dimmed legs. Only changed fields stream; the full chain refreshes every 10 s.</span>
                 </span>
             </div>
             <button class="chain-refresh-btn" onclick="manualRefreshChain()">Manual Update</button>
@@ -168,13 +199,17 @@
         </div>
 
         <!-- Strategy Builder -->
-        <div class="strategy-panel" id="strategyPanel">
+        <div class="strategy-panel dock-collapsed" id="strategyPanel">
             <div class="strategy-header">
-                <h3>Strategy Builder <span id="strategyLegCount" style="color:#64748b;font-weight:400;font-size:11px;"></span></h3>
-                <button class="strategy-clear-btn" onclick="clearStrategy()">Clear All</button>
+                <h3>Strategy Builder <span id="strategyLegCount" style="color:var(--text-faint);font-weight:400;font-size:11px;"></span></h3>
+                <span class="dock-line num" id="strategyDockLine">Click Ask to buy or Bid to sell an option</span>
+                <span class="strategy-header-actions">
+                    <button class="strategy-clear-btn" onclick="clearStrategy()">Clear All</button>
+                    <button class="dock-toggle" id="strategyDockToggle" onclick="toggleStrategyDock()" aria-expanded="false" aria-controls="strategyContent" title="Show or hide the legs and combo details">&#9650;</button>
+                </span>
             </div>
             <div id="strategyContent">
-                <div class="strategy-empty" id="strategyEmpty">Click <span style="color:#4ade80">Ask</span> to buy or <span style="color:#f87171">Bid</span> to sell an option</div>
+                <div class="strategy-empty" id="strategyEmpty">Click <span style="color:var(--up)">Ask</span> to buy or <span style="color:var(--down)">Bid</span> to sell an option</div>
             </div>
             <div class="strategy-summary" id="strategySummary" style="display:none;">
                 <div class="summary-item">
@@ -228,7 +263,7 @@
                     oninput="updatePriceInputStep(this)"
                     onchange="this.value=_roundSpxPrice(Math.abs(this.value)).toFixed(2); updatePriceInputStep(this)">
                 <span id="outsideRthBadge" class="outside-rth-badge" style="display:none;">Extended Hours</span>
-                <span class="order-entry-label" id="orderEntryHint" style="color:#475569;font-size:11px;"></span>
+                <span class="order-entry-label" id="orderEntryHint" style="color:var(--text-faint);font-size:11px;"></span>
             </div>
         </div>
     </div>
@@ -274,7 +309,7 @@
         <!-- Positions -->
         <div class="acct-section">
             <div class="acct-section-header">
-                <span class="acct-section-title">Positions <span id="posCount" style="color:#64748b;font-size:11px;"></span></span>
+                <span class="acct-section-title">Positions <span id="posCount" style="color:var(--text-faint);font-size:11px;"></span></span>
             </div>
             <div class="acct-table-wrap">
                 <table class="acct-table" id="positionsTable">
@@ -304,7 +339,7 @@
         <!-- Open Orders -->
         <div class="acct-section">
             <div class="acct-section-header">
-                <span class="acct-section-title">Open Orders <span id="ordersCount" style="color:#64748b;font-size:11px;"></span></span>
+                <span class="acct-section-title">Open Orders <span id="ordersCount" style="color:var(--text-faint);font-size:11px;"></span></span>
             </div>
             <div class="acct-table-wrap">
                 <table class="acct-table" id="ordersTable">
@@ -335,7 +370,7 @@
         <!-- Today's Executions -->
         <div class="acct-section">
             <div class="acct-section-header">
-                <span class="acct-section-title">Today&apos;s Executions <span id="exeCount" style="color:#64748b;font-size:11px;"></span></span>
+                <span class="acct-section-title">Today&apos;s Executions <span id="exeCount" style="color:var(--text-faint);font-size:11px;"></span></span>
             </div>
             <div class="acct-table-wrap">
                 <table class="acct-table" id="executionsTable">
@@ -669,11 +704,16 @@
     </div>
 
     <script src="/static/js/state.js"></script>
+    <script src="/static/js/render-loop.js"></script>
+    <script src="/static/js/theme-colors.js"></script>
     <script src="/static/js/charts.js"></script>
+    <script src="/static/js/price-chart.js"></script>
     <script src="/static/js/badges.js"></script>
     <script src="/static/js/ws.js"></script>
+    <script src="/static/js/perf.js"></script>
     <script src="/static/js/tabs.js"></script>
     <script src="/static/js/account.js"></script>
+    <script src="/static/js/dash-positions.js"></script>
     <script src="/static/js/order-entry.js"></script>
     <script src="/static/js/chain-table.js"></script>
     <script src="/static/js/strategy-builder.js"></script>

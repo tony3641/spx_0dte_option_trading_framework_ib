@@ -15,7 +15,7 @@ state, so a bid or ask it reports as absent (IB's -1) clears the book's value (a
 side's size). Poll rows keep the "None never overwrites" rule.
 """
 from dataclasses import dataclass, fields, replace
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from spx_trade_desk.market.gex import OptionData
 from spx_trade_desk.market.qualification import Key, norm_key
@@ -84,6 +84,11 @@ class QuoteBook:
 
     def ages(self, now: float) -> Dict[Key, float]:
         return {k: max(0.0, now - e.ts) for k, e in self._rows.items()}
+
+    def get(self, key: Key, now: float) -> Optional[Tuple[OptionData, float]]:
+        """A copy of one row and its age in seconds, or None."""
+        e = self._rows.get(key)
+        return None if e is None else (replace(e.option), max(0.0, now - e.ts))
 
     def sources(self) -> Dict[Key, str]:
         return {k: e.source for k, e in self._rows.items()}

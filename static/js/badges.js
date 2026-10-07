@@ -12,7 +12,7 @@
     }
 
     function updateBadges() {
-        const spot = state.bars.length > 0 ? state.bars[state.bars.length - 1].close : null;
+        const spot = priceChart.latest ? priceChart.latest.close : null;   // latest bar of the shown series
         document.getElementById('spotBadge').textContent = spot ? spot.toFixed(2) : '-';
 
         if (state.gex) {
@@ -66,9 +66,9 @@
         const ms = document.getElementById('marketStatus');
         const msVal = data.market_status || '-';
         ms.textContent = msVal;
-        if (msVal === 'RTH') ms.style.color = '#22c55e';
-        else if (msVal === 'GTH' || msVal === 'CURB') ms.style.color = '#eab308';
-        else ms.style.color = '#94a3b8';
+        if (msVal === 'RTH') ms.style.color = 'var(--up)';
+        else if (msVal === 'GTH' || msVal === 'CURB') ms.style.color = 'var(--accent)';
+        else ms.style.color = 'var(--text-muted)';
 
         // Show/hide Extended Hours badge in order entry row
         const rthBadge = document.getElementById('outsideRthBadge');
@@ -95,11 +95,10 @@
             const prevDerived = state.esDerived;
             state.currentSpot = data.spot_price;
             state.esDerived = data.es_derived || false;
-            // Re-render GEX spot line if spot or regime changed
+            // Move the GEX spot line (shapes only) if spot or regime changed
             if (state.gexChartReady && state.gex &&
                 (state.currentSpot !== prevSpot || state.esDerived !== prevDerived)) {
-                updateGexChart();
-                updateSmileChart();
+                requestSpotLineRender();
             }
         }
 

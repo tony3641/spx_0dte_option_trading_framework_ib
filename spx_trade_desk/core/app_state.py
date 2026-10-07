@@ -10,8 +10,8 @@ from collections import deque
 from typing import Dict, List, Optional, Set
 
 from spx_trade_desk.core import config
+from spx_trade_desk.ib.contracts import ContractRegistry
 from spx_trade_desk.market.gex import GEXResult, OptionData
-from spx_trade_desk.market.qualification import QualificationCache
 from spx_trade_desk.market.quote_book import QuoteBook
 from spx_trade_desk.strategy.models import RuntimeState
 
@@ -26,6 +26,9 @@ class AppState:
         self.spx_price: float = 0.0       # latest known SPX price (live or historical)
         self.live_price: float = 0.0      # latest live streaming price (0 when not streaming)
         self.price_history: deque = deque(maxlen=28800)  # OHLC bars (1-min)
+        self.price_session_date: str = ""            # ISO date of the bars in price_history
+        self.price_overnight: deque = deque(maxlen=1440)   # ES-derived SPX points outside RTH
+        self.price_feed = None                       # market.price_bars.PriceBarFeed
 
         # GEX
         self.latest_gex: Optional[dict] = None
@@ -42,7 +45,7 @@ class AppState:
         self.ib_port: int = config.IB_PORT   # live port; updated by connect_ib
         self.chain_fetching: bool = False
         self.last_chain_update: str = ""
-        self.ws_clients: set = set()     # Set[WebSocket]
+        self.ws_clients: dict = {}       # WebSocket -> web.push.ClientChannel
         self.alert_bridge = None       # Optional[AlertBridge] — Discord event observer
         self.background_tasks: List[asyncio.Task] = []
 
@@ -67,8 +70,9 @@ class AppState:
         self.chain_quotes_cache: Optional[dict] = None
         self.chain_stream_tickers: dict = {}
         self.chain_stream_contracts: dict = {}
+        self.chain_resync_requested: bool = False  # a browser just got its `init`: the stream resends whole rows
         self.quote_book = QuoteBook()              # merged stream + poll quotes (chain service)
-        self.qual_cache = QualificationCache()     # shared by the stream and the wing poller
+        self.contracts = ContractRegistry()        # one qualified-contract registry: stream, poller, fetcher, order path
         self.force_chain_fetch_event: Optional[asyncio.Event] = None
         self.active_tab: str = "dashboard"
         self.viewport_center_strike: float = 0.0
