@@ -163,17 +163,16 @@
             const q = getLegQuote(leg);
             const mid = (q.bid !== null && q.ask !== null) ? ((q.bid + q.ask) / 2).toFixed(2) : '-';
             const legDelta = getLegDelta(leg);
-            const legDeltaClass = legDelta === null ? '' : (legDelta > 0 ? 'summary-credit' : (legDelta < 0 ? 'summary-debit' : ''));
             const actionClass = leg.action === 'BUY' ? 'leg-buy' : 'leg-sell';
-            html += '<tr>';
+            html += `<tr data-leg-id="${leg.id}">`;
             html += `<td class="${actionClass}">${leg.action}</td>`;
             html += `<td>${leg.strike}</td>`;
             html += `<td>${leg.right === 'C' ? 'Call' : 'Put'}</td>`;
             html += `<td><span class="qty-group"><button class="qty-btn" onclick="bumpAllQty(-1)" title="Decrease all legs">-</button><input type="number" class="leg-qty" value="${leg.qty}" min="1" onchange="updateLegQty(${leg.id}, this.value)"><button class="qty-btn" onclick="bumpAllQty(1)" title="Increase all legs">+</button></span></td>`;
-            html += `<td>${q.bid !== null ? q.bid.toFixed(2) : '-'}</td>`;
-            html += `<td>${q.ask !== null ? q.ask.toFixed(2) : '-'}</td>`;
-            html += `<td>${mid}</td>`;
-            html += `<td class="${legDeltaClass}">${legDelta !== null ? formatSignedNumber(legDelta, 1) : '-'}</td>`;
+            html += `<td class="leg-bid">${q.bid !== null ? q.bid.toFixed(2) : '-'}</td>`;
+            html += `<td class="leg-ask">${q.ask !== null ? q.ask.toFixed(2) : '-'}</td>`;
+            html += `<td class="leg-mid">${mid}</td>`;
+            html += `<td class="${legDeltaCellClass(legDelta)}">${legDelta !== null ? formatSignedNumber(legDelta, 1) : '-'}</td>`;
             html += `<td><span class="leg-remove" onclick="removeLeg(${leg.id})">x</span></td>`;
             html += '</tr>';
         }
@@ -189,10 +188,33 @@
         if (orderRow) orderRow.style.display = '';
     }
 
+    function legDeltaCellClass(legDelta) {
+        const tone = legDelta === null ? '' : (legDelta > 0 ? 'summary-credit' : (legDelta < 0 ? 'summary-debit' : ''));
+        return tone ? `leg-delta ${tone}` : 'leg-delta';
+    }
+
+    // Patch the leg rows' price cells in place (the quantity inputs keep focus while quotes stream)
+    // and recompute the combo. A leg without a row means the table is stale: rebuild it.
     function updateStrategyPrices() {
         if (state.strategyLegs.length === 0) return;
-        // Re-render leg prices and recompute combo
-        renderStrategy();
+        const content = document.getElementById('strategyContent');
+        for (const leg of state.strategyLegs) {
+            const tr = content.querySelector(`tr[data-leg-id="${leg.id}"]`);
+            if (!tr) { renderStrategy(); return; }
+            const q = getLegQuote(leg);
+            const d = getLegDelta(leg);
+            const set = (cls, txt, className = cls) => {
+                const c = tr.querySelector(`.${cls}`);
+                if (!c) return;
+                if (c.textContent !== txt) c.textContent = txt;
+                if (c.className !== className) c.className = className;
+            };
+            set('leg-bid', q.bid !== null ? q.bid.toFixed(2) : '-');
+            set('leg-ask', q.ask !== null ? q.ask.toFixed(2) : '-');
+            set('leg-mid', (q.bid !== null && q.ask !== null) ? ((q.bid + q.ask) / 2).toFixed(2) : '-');
+            set('leg-delta', d !== null ? formatSignedNumber(d, 1) : '-', legDeltaCellClass(d));
+        }
+        computeCombo();
     }
 
     function computeCombo() {

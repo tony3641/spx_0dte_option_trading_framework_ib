@@ -38,6 +38,8 @@
             chain.classList.add('active');
             flushHiddenDirty('chain');
             scrollToATM();
+            // Parked structure work lands next frame and may move ATM: centre on it again once it has.
+            if (isRenderPending('chain.structure')) scheduleRender('chain.recenter', scrollToATM);
             setTimeout(() => { reportChainViewportCenter(true); }, 80);
         } else if (tab === 'account') {
             account.classList.add('active');

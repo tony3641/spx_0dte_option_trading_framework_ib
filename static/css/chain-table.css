@@ -149,12 +149,7 @@
         .strike-tag-pw { background: #dc262640; color: #f87171; }
         .strike-tag-gf { background: #ca8a0440; color: #facc15; }
 
-        /* Flash animation on value change */
-        @keyframes flash-green { 0% { background: #16a34a60; } 100% { background: transparent; } }
-        @keyframes flash-red   { 0% { background: #dc262660; } 100% { background: transparent; } }
-        .flash-up  { animation: flash-green 0.6s ease-out; }
-        .flash-down{ animation: flash-red 0.6s ease-out; }
-
+        /* The flash on a changed value is a Web Animation started in chain-table.js (flushChainCells). */
 
         /* Quote older than CHAIN_QUOTE_MAX_AGE_S (polled wing that missed its cycles). */
         .chain-table td.quote-stale { opacity: 0.45; }

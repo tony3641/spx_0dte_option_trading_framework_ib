@@ -58,7 +58,9 @@
             }
         });
 
-        state.chainAgeTimer = setInterval(updateChainUpdateAge, 1000);
+        state.chainAgeTimer = setInterval(() => { updateChainUpdateAge(); refreshStaleMarks(); }, 1000);
+
+        document.getElementById('chainBody').addEventListener('click', onChainBodyClick);
 
         const chainWrap = document.getElementById('chainTableWrap');
         if (chainWrap) {

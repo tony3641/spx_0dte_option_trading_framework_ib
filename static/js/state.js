@@ -17,7 +17,7 @@
         chainMeta: null,      // {spot_price, call_wall, put_wall, gamma_flip}
         strategyLegs: [],     // [{id, action, strike, right, qty, ...}]
         nextLegId: 1,
-        prevCellValues: {},   // for flash animation: "strike_right_field" - prev value
+        chainSideSeenMs: {},  // "strike|C" / "strike|P" -> ms of the last tick (or age-seeded full payload) for stale marks
         chainLastUpdateMs: null,
         chainAgeTimer: null,
         chainViewportCenterStrike: null,
