@@ -153,12 +153,18 @@ Source: spx_trade_desk/core/config.py
 - VALID_TABS: dashboard, chain, account
 - CHAIN_VIEWPORT_SEND_THROTTLE_MS: 200
 - CHAIN_VIEWPORT_CENTER_THRESHOLD: 30
+- state.gexWindowStrikes: 40 (the GEX and smile charts draw this many strike steps each side of spot; the step is the median gap between strikes)
+- state.gexShowAll: false (true draws every strike; the Near / All toggle sets it)
+- state.smileMinIntervalMs: 5000 (a changed IV smile redraws at most this often, with a trailing draw)
+- state.chainFlashMax: 40 (most tick flashes started per chain flush; 0 turns the flash off)
+- Theme storage key: `spx-theme` (`light` or `dark`; absent = follow the OS), set from static/js/theme.js
 
 ### static/js/ws.js
 - Initial viewport report delay after open: 120 ms
 - Reconnect delays: 500, 1000, 2000 ms, then every 3000 ms (the attempt counter resets when a socket opens)
 
 ### static/js/main.js
+- `--shell-h` CSS variable: measured height of the header, tab bar and status bar (`syncShellHeight()`); the dashboard grid and chain container fill the rest of the viewport (CSS fallback 134px)
 - Chain age update interval: 1000 ms (also toggles the chain table's quote-stale marks)
 
 ### static/js/tabs.js
@@ -175,7 +181,8 @@ Source: spx_trade_desk/core/config.py
 
 ### static/js/price-chart.js
 - Level price lines: Call Wall, Put Wall (solid), Gamma Flip, Max Pain (dashed)
-- Candle colours #22c55e / #ef4444; ES-derived line #facc15, dotted, 1 px
+- Candle and line colors come from `themeColors()` (tokens in static/css/tokens.css), re-applied on `themechange`
+- A reconnect snapshot of the same session keeps the visible range; only the first snapshot and a new session fit the content
 - Times: ET wall-clock encoded as UTC seconds (Date.UTC)
 
 ### static/js/chain-table.js
@@ -185,10 +192,7 @@ Source: spx_trade_desk/core/config.py
 ### static/js/charts.js
 - Mobile breakpoint: 600 px
 - state.spotLineMinIntervalMs: 2000 (at most one spot-line relayout per GEX / smile chart in this window; set in state.js)
-- Theme colors:
-  - CHART_BG = #111827
-  - GRID_COLOR = #1e293b
-  - TEXT_COLOR = #94a3b8
+- Chart colors come from `themeColors()` (static/js/theme-colors.js), which reads the tokens in static/css/tokens.css; `chartTheme()` / `patchChartTheme()` re-theme the Plotly charts on `themechange`
 - Axis/title legend default font sizes: 9, 10, 11
 - Common line widths used for overlays/traces: 1.5, 2
 

@@ -4,6 +4,52 @@ All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboa
 
 ---
 
+## Session: October 7, 2026 - UI redesign (sub-project 3)
+
+Sub-project 3 of 3 (IB layer, push pipeline and render, then the visual redesign). Branch `feature/ui-redesign`, built on `feature/ib-layer-latency` (so it carries sub-projects 1 and 2). Desktop first.
+
+- **Look**: a terminal-pro style with soft cards: amber accent, dense layout, tabular monospace numerals (`.num`). Both a dark and a light theme. The default follows the OS (`prefers-color-scheme`); the sun/moon button in the header flips it and remembers the choice (`localStorage` key `spx-theme`); Shift+click goes back to following the OS. The charts re-theme live on the `themechange` event (Plotly `relayout`, Lightweight Charts `applyOptions`), no reload.
+- **One place for colors**: `static/css/tokens.css` holds every color, radius, spacing, shadow and motion token (dark in `:root`, light in `:root[data-theme="light"]`). `static/js/theme.js` (a blocking script in `<head>`, so the first paint is already themed) sets `data-theme`; `static/js/theme-colors.js` hands the tokens to JS (`themeColors()`, `withAlpha()`) because Plotly and Lightweight Charts cannot parse CSS `color-mix()` or `var()`. A new color goes into `tokens.css` and nowhere else.
+- **Guard rails** (`tests/test_ui_tokens.py`): the two token blocks define the same names; text/background pairs meet WCAG AA in both themes; no `var(--x)` is used without a definition; and the hard-coded color budget is 0, so a hex or `rgb()` literal in any other CSS or JS file fails the test.
+- **Dashboard** is a quad overview: SPX price, IV smile, GEX and a new **Positions & P&L** panel (net liquidation, unrealized and realized P&L, one row per position, fed by the account updates; `static/js/dash-positions.js`). The quad is a CSS grid that fills the viewport below the header and collapses to one column at 1100 px and below. The shell height is measured once and written to `--shell-h`.
+- **Option Chain**: the Strategy Builder is a collapsible order dock. Collapsed (the default) it shows one line (legs, net price, max loss) and the order row; expanded it adds the legs table and the combo numbers. The order row is never hidden, so an armed stop-loss and Place Order stay one click away. DOM ids and `onclick` names are unchanged.
+- **Motion**: tab switches cross-fade (120 ms), loading states are shimmer bars instead of spinners, control hover and focus use short transitions (never on streaming chain cells), and a `prefers-reduced-motion` block turns all of it off. The chain tick flash is now a Web Animation of `opacity` on a cell's `::after` overlay (a transient `fl-up` / `fl-dn` class picks the tint), capped at `state.chainFlashMax` (40) flashes per flush; `0` turns the flash off, and reduced motion skips it.
+- **Draw cost (carry-over from sub-project 2)**: the GEX and smile charts draw only the strikes within `state.gexWindowStrikes` (40) steps of spot, with a Near / All toggle (`setGexRange`); a draw signature skips a redraw when the painted data did not change (a spot-only change goes through the light relayout); a changed smile redraws at most every `state.smileMinIntervalMs` (5000 ms), with a trailing draw so the last change always lands. The price chart keeps the user's zoom across a reconnect snapshot of the same session (it fits only the first snapshot and a new session). The help tooltips are no longer clipped by the chart cards.
+- **Render benchmark**: `python -m tests.e2e.render_bench --protocol v2 --seconds 60` gained `--no-flash` (sets `state.chainFlashMax = 0` after the page loads) so the tick flash can be measured on its own. Same invented data as sub-project 2. Headless Chromium with software rendering, laptop on mains power (Windows `BatteryStatus` 2). p50 / p95 in ms:
+
+  | Tab / metric | sub-project 2 run A | sub-project 2 run B | redesign run A | redesign run B | redesign, no flash |
+  |---|---|---|---|---|---|
+  | Dashboard stream cycle | 8.8 / 18.8 | 9.3 / 17.5 | 10.8 / 18.7 | 8.2 / 18.0 | 9.8 / 17.7 |
+  | Dashboard price bar | 12.9 / 22.2 | 13.3 / 24.3 | 15.9 / 21.3 | 9.1 / 20.7 | 12.2 / 21.5 |
+  | Dashboard full publish | 9.8 / 17.3 | 11.9 / 15.5 | 9.1 / 19.3 | 7.3 / 10.2 | 10.6 / 74.3 |
+  | Dashboard long tasks over 50 ms (max ms) | 12 (140) | 12 (133) | 6 (72) | 6 (76) | 4 (77) |
+  | Chain stream cycle | 34.2 / 50.8 | 35.1 / 47.7 | 32.2 / 45.2 | 39.7 / 50.8 | 16.9 / 21.6 |
+  | Chain price bar | 34.1 / 54.8 | 35.7 / 49.6 | 32.2 / 44.8 | 39.8 / 52.0 | 16.8 / 25.3 |
+  | Chain full publish | 43.8 / 52.5 | 46.6 / 51.9 | 39.3 / 55.9 | 49.5 / 58.6 | 24.0 / 26.7 |
+  | Chain long tasks over 50 ms (max ms) | 6 (303) | 0 (0) | 0 (0) | 0 (0) | 0 (0) |
+
+  Read it with these caveats: the machine shows 2 to 3 times run-to-run variance, so only differences of that size mean anything; this is a software-rendered headless browser, not a GPU one; the Dashboard "full publish" p95 of 74.3 in the no-flash run is one of six samples that landed behind a draw. What the table shows:
+  - **Dashboard long tasks fell from 12 per run to 4 to 6** (the windowed GEX and smile draws plus the draw signatures), and the longest dropped from 133 to 140 ms down to 72 to 77 ms. They are not zero.
+  - **The tick flash costs about 15 to 20 ms on the Chain tab** in this browser: with the flash off the Chain stream cycle and price bar p50 are 17 ms against 32 to 40 ms with it on. The Dashboard is unaffected (its table is not visible). An experiment that replaced the per-cell Web Animation with CSS animation classes and one delegated `animationend` handler cost the same (36.6 / 46 stream cycle), so the cost is the tinted overlay, not the animation object; the simpler Web Animation version stays. A GPU browser may well show less; this is one of the user gates below.
+- **Spec targets, as measured in these three runs** (the three runs above, 60 s each):
+
+  | Target | Dashboard | Chain |
+  |---|---|---|
+  | `chain_tick` inject to painted, p95 at most 50 ms | met in all three (17.7 to 18.7) | met in two of three with the flash on (45.2, 50.8), met with it off (21.6) |
+  | price bar inject to painted, p95 at most 20 ms | missed narrowly in all three (20.7 to 21.5) | missed with the flash on (44.8, 52.0), missed narrowly with it off (25.3) |
+  | no long tasks over 50 ms in 60 s | missed (4 to 6 per run, down from 12) | met in all three |
+
+- **Tests** (scoped, the full suite was not run): `tests/test_ui_tokens.py`, `tests/e2e/test_theme_playwright.py` (themes, persistence, blocked storage, live re-theming of both chart libraries, the quad layout, the Positions panel, the dock, the GEX window and signature, the reconnect zoom), `tests/e2e/test_chain_table_playwright.py` (flash is an opacity animation, capped, switchable, reduced-motion safe), `tests/e2e/test_dashboard_render_playwright.py`, `tests/e2e/test_price_chart_playwright.py`, `tests/e2e/test_sim_ui_playwright.py`, plus the push, bars and chain-manager unit tests. `window.__benchSeed()` in `tests/e2e/render_bench.js` gives the e2e tests an `init` plus an account with invented positions.
+- **Not done / next** (user gates):
+  - Run the benchmark twice on mains power, plus once with `--no-flash`, on a GPU browser if possible, to settle the flash cost and the 20 ms price-bar target.
+  - Look at all six tabs in both themes with live paper data.
+  - Place a paper order through the dock, collapsed and expanded, including a stop-loss bracket.
+  - Flip the theme while the chain and the price chart stream.
+  - The open items from sub-projects 1 and 2: the `keepUpToDate` live gate (`python -m spx_trade_desk.ib.bars_probe --seconds 180` on paper TWS in regular hours), the live correctness checks, and the `ibapi` upgrade before 2026-12-15.
+  - Mobile (600 px and below) was kept working but not redesigned; `mobile.css` is untouched.
+
+---
+
 ## Session: October 6, 2026 - Push pipeline and frontend render (sub-project 2)
 
 Sub-project 2 of 3 (IB layer, then push pipeline + render, then visual redesign). Branch `feature/push-render`, built on the IB layer work above.
