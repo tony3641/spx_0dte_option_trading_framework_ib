@@ -2114,3 +2114,74 @@ async def test_combo_bracket_place_to_ack_span_is_recorded(mock_ib, app_state, s
     sample_legs_combo["stopLoss"] = sample_stop_loss
     await handle_place_order(mock_ib, app_state, sample_legs_combo)
     assert perf.snapshot()["metrics"]["order.place_to_ack.combo_bracket"]["n"] == 1
+
+
+def _close_spread_payload(qty=2):
+    """Close two short put spreads: buy back the short 5200P, sell the long 5100P, no limit prices."""
+    return {"legs": [{"symbol": "SPX", "expiry": "20260410", "strike": 5200.0, "right": "P",
+                      "action": "BUY", "qty": 1, "secType": "OPT"},
+                     {"symbol": "SPX", "expiry": "20260410", "strike": 5100.0, "right": "P",
+                      "action": "SELL", "qty": 1, "secType": "OPT"}],
+            "orderType": "LMT", "tif": "DAY", "comboAction": "BUY", "comboQuantity": qty,
+            "dynamicFill": True, "repriceIntervalSec": 0.01, "outsideRth": True}
+
+
+def _book_put_quotes(app_state):
+    app_state.quote_book.reset("20260410")
+    app_state.quote_book.update([OptionData(strike=5200.0, right="P", bid=3.4, ask=3.6),
+                                 OptionData(strike=5100.0, right="P", bid=1.9, ask=2.1)],
+                                "stream", time.monotonic())
+
+
+@pytest.mark.asyncio
+async def test_a_dynamic_combo_close_starts_at_the_net_mid_for_every_spread(mock_ib, app_state, monkeypatch):
+    monkeypatch.setattr(config, "ORDER_MID_MAX_AGE_S", 2.0)
+    _book_put_quotes(app_state)
+    result = await handle_place_order(mock_ib, app_state, _close_spread_payload(qty=2))
+    assert result["data"]["status"] == "Filled"
+    trade = mock_ib.get_last_trade()
+    assert trade.contract.secType == "BAG"
+    assert trade.order.action == "BUY"
+    assert trade.order.totalQuantity == 2                              # both spreads in one order
+    assert trade.order.lmtPrice == 1.5                                  # 3.50 - 2.00 net debit
+    assert [cl.action for cl in trade.contract.comboLegs] == ["BUY", "SELL"]
+    assert [cl.ratio for cl in trade.contract.comboLegs] == [1, 1]
+    assert mock_ib.count_calls("subscribe_tick") == 0                  # mids came from the quote book
+
+
+@pytest.mark.asyncio
+async def test_a_dynamic_combo_close_reprices_the_same_order_one_tick_toward_the_market(
+        mock_ib, app_state, monkeypatch):
+    monkeypatch.setattr(config, "ORDER_MID_MAX_AGE_S", 2.0)
+    _book_put_quotes(app_state)
+    mock_ib._fill_immediately = False
+    await handle_place_order(mock_ib, app_state, _close_spread_payload(qty=2))
+    place_calls = [c for c in mock_ib.call_log if c["method"] == "place_order"]
+    assert len(place_calls) >= 2
+    assert {c["orderId"] for c in place_calls} == {place_calls[0]["orderId"]}   # a modify, never a second order
+    assert len(mock_ib.get_placed_orders()) == 1
+    assert [c["lmtPrice"] for c in place_calls[:3]] == [1.5, 1.55, 1.6]
+    assert all(c["totalQuantity"] == 2 for c in place_calls)
+
+
+@pytest.mark.asyncio
+async def test_a_dynamic_combo_without_any_quote_is_refused(mock_ib, app_state, monkeypatch):
+    monkeypatch.setattr(mock_ib, "subscribe_tick", lambda *a, **k: (_ for _ in ()).throw(
+        orders_mod.LineBudgetExceeded("no free 'order' market-data line")))
+    result = await handle_place_order(mock_ib, app_state, _close_spread_payload())
+    assert result["data"]["status"] == "Error"
+    assert "midpoint" in result["data"]["message"]
+    assert mock_ib.count_calls("place_order") == 0
+
+
+@pytest.mark.asyncio
+async def test_a_dynamic_combo_close_steps_past_two_dollars_onto_the_dime_grid(mock_ib, app_state, monkeypatch):
+    monkeypatch.setattr(config, "ORDER_MID_MAX_AGE_S", 2.0)
+    app_state.quote_book.reset("20260410")
+    app_state.quote_book.update([OptionData(strike=5200.0, right="P", bid=3.9, ask=4.1),
+                                 OptionData(strike=5100.0, right="P", bid=1.9, ask=2.1)],
+                                "stream", time.monotonic())
+    mock_ib._fill_immediately = False
+    await handle_place_order(mock_ib, app_state, _close_spread_payload(qty=1))
+    prices = [c["lmtPrice"] for c in mock_ib.call_log if c["method"] == "place_order"]
+    assert prices[:3] == [2.0, 2.1, 2.2]                               # 2.05 is off-grid above $2: never stuck at 2.00

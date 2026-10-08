@@ -117,6 +117,19 @@
             </tr>`;
     }
 
+    function _spreadLiquidateHtml(r) {
+        const n = Math.abs(r.position || 0);
+        const ok = n > 0 && (r.legs || []).length > 1 && (r.legs || []).every(l => _isOptContract(l.contract));
+        const sending = state.liquidatingPositions.has(r.id);
+        const title = ok ? `Close all ${n} spread${n === 1 ? '' : 's'} as one combo order via adaptive fill`
+                         : 'Requires option legs and a non-zero spread position';
+        return `<button class="btn-liquidate${sending ? ' sending' : ''}" onclick="liquidateSpread('${r.id}', this)" title="${title}" ${(!ok || sending) ? 'disabled' : ''}>${ok ? (sending ? 'Sent' : 'Liquidate') : 'N/A'}</button>`;
+    }
+
+    function _isOptContract(c) {
+        return !!c && c.secType === 'OPT' && !!c.expiry && c.strike !== null && c.strike !== undefined && !!c.right;
+    }
+
     function _spreadRowHtml(r) {
         const open = state.expandedSpreads.has(r.id);
         const qty = r.position;
@@ -129,7 +142,7 @@
                 <td>${fmtCurrencyFull(r.marketValue)}</td>
                 <td class="${pnlClass(r.unrealizedPNL)}">${fmtCurrencyFull(r.unrealizedPNL)}</td>
                 <td class="${pnlClass(r.realizedPNL)}">${fmtCurrencyFull(r.realizedPNL)}</td>
-                <td class="spread-action" title="Close a spread as one order from the Option Chain, or expand it to close a leg">-</td>
+                <td>${_spreadLiquidateHtml(r)}</td>
             </tr>`;
         if (open) r.legs.forEach(leg => { html += _positionRowHtml(leg, 'spread-leg'); });
         return html;
@@ -149,6 +162,7 @@
         // Clean up liquidatingPositions for positions that have been closed
         if (state.liquidatingPositions.size > 0) {
             const currentPosKeys = new Set((state.positions || []).filter(Boolean).map(p => _posKey(p.contract || {})));
+            rows.forEach(r => { if (r.kind === 'spread') currentPosKeys.add(r.id); });
             for (const key of state.liquidatingPositions) {
                 if (!currentPosKeys.has(key)) state.liquidatingPositions.delete(key);
             }
@@ -295,6 +309,54 @@
                 showOrderToast('Liquidation failed: ' + (resp?.message || 'Unknown error'), 'err');
                 setTimeout(() => {
                     if (btn && !state.liquidatingPositions.has(posKey)) {
+                        btn.className = 'btn-liquidate'; btn.disabled = false; btn.textContent = 'Liquidate';
+                    }
+                }, 5000);
+            }
+        });
+    }
+
+    // Close a whole spread row: one BAG order, every leg reversed at its per-spread ratio, for all |n|
+    // spreads (two identical spreads close together). The backend prices it from the legs' net mid and
+    // steps it toward the market like a single-leg liquidation.
+    function liquidateSpread(id, btnEl) {
+        const r = positionDisplayRows().find(x => x.kind === 'spread' && x.id === id);
+        if (!r) return;
+        const n = Math.abs(r.position || 0);
+        if (!n || !(r.legs || []).length || !r.legs.every(l => _isOptContract(l.contract))) {
+            showOrderToast('Spread liquidation needs option legs and a non-zero position', 'err');
+            return;
+        }
+        if (state.liquidatingPositions.has(id)) return;
+        state.liquidatingPositions.add(id);
+        const btn = btnEl || null;
+        if (btn) { btn.className = 'btn-liquidate sending'; btn.disabled = true; btn.textContent = 'Sending-'; }
+
+        const legs = r.legs.map(l => {
+            const c = l.contract;
+            const leg = {
+                symbol: c.symbol, secType: 'OPT', expiry: c.expiry, strike: c.strike, right: c.right,
+                action: l.position > 0 ? 'SELL' : 'BUY',
+                qty: Math.max(1, Math.round(Math.abs(l.position) / n)),     // per-spread ratio
+            };
+            if (c.tradingClass) leg.trading_class = c.tradingClass;
+            return leg;
+        });
+        const payload = {
+            legs, orderType: 'LMT', tif: 'DAY', outsideRth: true,
+            comboAction: 'BUY', comboQuantity: n,
+            dynamicFill: true, repriceIntervalSec: 0.3,
+        };
+        sendPlaceOrder(payload, (resp) => {
+            if (resp && resp.status && resp.status !== 'Error') {
+                if (btn) { btn.className = 'btn-liquidate done'; btn.textContent = 'Sent'; }
+                showOrderToast(`Close ${n}x ${r.label} submitted`, 'ok');
+            } else {
+                state.liquidatingPositions.delete(id);
+                if (btn) { btn.className = 'btn-liquidate failed'; btn.disabled = false; btn.textContent = 'Failed'; }
+                showOrderToast('Spread liquidation failed: ' + (resp?.message || 'Unknown error'), 'err');
+                setTimeout(() => {
+                    if (btn && !state.liquidatingPositions.has(id)) {
                         btn.className = 'btn-liquidate'; btn.disabled = false; btn.textContent = 'Liquidate';
                     }
                 }, 5000);

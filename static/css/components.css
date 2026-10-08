@@ -34,7 +34,6 @@
 .spread-toggle:hover, .spread-toggle:focus-visible { color: var(--accent); }
 .spread-tag { color: var(--text-faint); font-weight: 400; font-size: 10px; letter-spacing: .04em; margin-left: 4px; }
 .pos-table tr.spread-leg td:first-child, .acct-table tr.spread-leg td:first-child { padding-left: 22px; font-weight: 400; color: var(--text-muted); }
-.acct-table td.spread-action { text-align: center; color: var(--text-faint); }
 
 /* Order row quotes: Bid / Mid / Ask of the order; a click puts that price in the limit. */
 .order-quotes { display: inline-flex; gap: 2px; margin-right: var(--s-2); }

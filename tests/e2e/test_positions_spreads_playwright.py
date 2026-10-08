@@ -73,14 +73,14 @@ def test_the_dashboard_shows_a_spread_as_one_row_that_expands(browser_env):
         browser.close()
 
 
-def test_the_account_tab_groups_the_spread_and_closes_legs_one_by_one(browser_env):
+def test_the_account_tab_groups_the_spread_and_can_close_it_or_its_legs(browser_env):
     p, url = browser_env
     browser, _ctx, page = _open(p, url, "dark", tab="account")
     try:
         _inject(page)
         rows = _texts(page, "#positionsBody tr")
         assert len(rows) == 2 and "1000/990 P" in rows[0]
-        assert page.evaluate("() => document.querySelector('#positionsBody tr.spread-row .btn-liquidate')") is None
+        assert page.evaluate("() => document.querySelector('#positionsBody tr.spread-row .btn-liquidate').disabled") is False
         page.click("#positionsBody .spread-toggle")
         page.evaluate(FRAMES)
         rows = _texts(page, "#positionsBody tr")
@@ -115,5 +115,34 @@ def test_a_combo_fill_reads_bag_in_the_executions_table(browser_env):
         page.evaluate(FRAMES)
         cells = page.evaluate("() => [...document.querySelectorAll('#executionsBody tr td')].map(td => td.textContent)")
         assert cells[4] == "BAG"
+    finally:
+        browser.close()
+
+
+TWO = [_opt(101, 1000.0, "P", -2, 2.5, 100.0), _opt(102, 990.0, "P", 2, 1.7, -60.0)]
+TWO_ROWS = [{"kind": "spread", "id": "spread:101-102", "label": "SPX 2099-01-05 1000/990 P", "position": -2,
+             "marketPrice": 0.8, "averageCost": 100.0, "marketValue": -160.0, "unrealizedPNL": 40.0,
+             "realizedPNL": 0.0, "legs": [dict(TWO[0], index=0), dict(TWO[1], index=1)]}]
+
+
+def test_liquidating_a_spread_closes_every_spread_in_one_combo_order(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", tab="account")
+    try:
+        page.evaluate("m => window.__benchInject({type: 'account_update', data: m})",
+                      {"summary": {}, "positions": TWO, "positionRows": TWO_ROWS, "orders": [], "executions": []})
+        page.evaluate(FRAMES)
+        page.evaluate("() => { window.__sent = []; ws.send = m => { window.__sent.push(m); }; }")
+        page.click("#positionsBody tr.spread-row .btn-liquidate")
+        page.click("#positionsBody tr.spread-row .btn-liquidate", force=True)     # a second click sends nothing
+        sent = page.evaluate("() => window.__sent")
+        assert len(sent) == 1 and sent[0].startswith("place_order:")
+        import json
+        order = json.loads(sent[0][len("place_order:"):])
+        assert order["comboQuantity"] == 2 and order["comboAction"] == "BUY"
+        assert order["dynamicFill"] is True and order["orderType"] == "LMT"
+        assert [(l["action"], l["strike"], l["right"], l["qty"]) for l in order["legs"]] == [
+            ("BUY", 1000.0, "P", 1), ("SELL", 990.0, "P", 1)]
+        assert all(l.get("lmtPrice") is None for l in order["legs"])
     finally:
         browser.close()
