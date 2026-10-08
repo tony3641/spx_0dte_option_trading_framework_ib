@@ -16,7 +16,7 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
 - **GEX dashboard with 0DTE / Monthly toggle** — switch the GEX calculation between the current 0DTE SPXW expiry and the monthly SPX expiry.
 - **SPX price chart** — today's session from the 09:30 ET open as 1-minute bars from IB with the current minute following the live SPX price; outside regular hours the last session plus a dotted ES-derived line.
 - **Real-time option chain streaming** — live 0DTE chain with greeks, wall/flip markers, and a strike filter; only changed fields stream and the table is patched in place.
-- **Account / Order Management tab** — account summary, portfolio positions, and order placement with **Stop Limit** support (also accessible as an order-entry widget on the dashboard).
+- **Account / Order Management tab** — account summary, portfolio positions (legs filled together as one combo order today are grouped into one expandable spread row, here and on the Dashboard), today's executions, and order placement with **Stop Limit** support (also accessible as an order-entry widget on the dashboard).
 - **Strategies tab** — define automated multi-leg strategies and let the server watch the market for you:
   - Conditions (entry window, short delta, spread width, credit, trend, volatility), triggers, and a candidate scanner.
   - **Budget-based position sizing** with total-credit preview per candidate.

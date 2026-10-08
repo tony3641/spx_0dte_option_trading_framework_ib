@@ -29,3 +29,9 @@
 .pos-table th:first-child, .pos-table td:first-child { text-align: left; }
 .pos-table td.pnl-pos { color: var(--up); }
 .pos-table td.pnl-neg { color: var(--down); }
+/* Spreads in the positions tables (Dashboard and Account): a toggle shows the legs under the spread row. */
+.spread-toggle { background: none; border: none; padding: 0 2px; color: var(--text-muted); cursor: pointer; font: inherit; line-height: 1; }
+.spread-toggle:hover, .spread-toggle:focus-visible { color: var(--accent); }
+.spread-tag { color: var(--text-faint); font-weight: 400; font-size: 10px; letter-spacing: .04em; margin-left: 4px; }
+.pos-table tr.spread-leg td:first-child, .acct-table tr.spread-leg td:first-child { padding-left: 22px; font-weight: 400; color: var(--text-muted); }
+.acct-table td.spread-action { text-align: center; color: var(--text-faint); }

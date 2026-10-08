@@ -24,7 +24,10 @@
 
     function handleAccountUpdate(data) {
         if (data.summary) state.accountSummary = data.summary;
-        if (data.positions) state.positions = data.positions;
+        if (data.positions) {
+            state.positions = data.positions;
+            state.positionRows = Array.isArray(data.positionRows) ? data.positionRows : null;
+        }
         if (data.orders) { state.openOrders = data.orders; resolvePendingCancels(); }
         if (data.executions) state.executions = data.executions;
         renderWhenVisible('account', 'account.tab', renderAccountTab);
@@ -56,74 +59,102 @@
         setPnl('acctRePnl', s.RealizedPnL);
     }
 
+    // Rows for the positions tables: the server's grouping (spreads with their legs, then singles), or
+    // every open position as a single when an update carries no grouping.
+    function positionDisplayRows() {
+        if (Array.isArray(state.positionRows)) return state.positionRows.filter(r => r && r.position);
+        return (state.positions || [])
+            .map((p, i) => (p && p.position) ? Object.assign({kind: 'single', index: i}, p) : null)
+            .filter(Boolean);
+    }
+
+    function toggleSpread(id) {
+        if (state.expandedSpreads.has(id)) state.expandedSpreads.delete(id);
+        else state.expandedSpreads.add(id);
+        renderWhenVisible('account', 'account.tab', renderAccountTab);
+        renderWhenVisible('dashboard', 'dash.positions', renderDashPositions);
+    }
+
     function renderAccountTab() {
         renderPositionsTable();
         renderOrdersTable();
         renderExecutionsTable();
     }
 
+    function _posKey(c) {
+        return `${c.symbol}|${c.secType}|${c.expiry || ''}|${c.strike || ''}|${c.right || ''}`;
+    }
+
+    // One position (or the part of it in a spread): the table's per-contract columns and its close button.
+    function _positionRowHtml(p, extraClass) {
+        const c = p.contract || {};
+        const idx = p.index;
+        const sym = c.symbol || '-';
+        const secType = c.secType || '-';
+        const isOptLiquidatable =
+            secType === 'OPT' &&
+            !!c.expiry &&
+            c.strike !== null && c.strike !== undefined &&
+            !!c.right;
+        const isStkLiquidatable = secType === 'STK' && !!c.symbol;
+        const qty = p.position;
+        const canLiquidate = (isOptLiquidatable || isStkLiquidatable) && qty !== 0;
+        const isLiquidating = state.liquidatingPositions.has(_posKey(c));
+        const qtyClass = qty > 0 ? 'side-buy' : qty < 0 ? 'side-sell' : '';
+        return `<tr${extraClass ? ` class="${extraClass}"` : ''}>
+                <td>${sym}</td>
+                <td>${secType}</td>
+                <td>${fmtExpiry(c.expiry)}</td>
+                <td>${c.strike ? c.strike.toFixed(0) : '-'}</td>
+                <td>${c.right || '-'}</td>
+                <td class="${qtyClass}">${qty > 0 ? '+' : ''}${qty}</td>
+                <td>${fmtCurrencyFull(p.averageCost)}</td>
+                <td>${fmtCurrencyFull(p.marketPrice)}</td>
+                <td>${fmtCurrencyFull(p.marketValue)}</td>
+                <td class="${pnlClass(p.unrealizedPNL)}">${fmtCurrencyFull(p.unrealizedPNL)}</td>
+                <td class="${pnlClass(p.realizedPNL)}">${fmtCurrencyFull(p.realizedPNL)}</td>
+                <td><button class="btn-liquidate${isLiquidating ? ' sending' : ''}" onclick="liquidatePosition(${idx}, ${Math.abs(qty)}, this)" title="${canLiquidate ? 'Close this position via adaptive fill' : 'Requires a supported contract (OPT or STK) and non-zero position'}" ${(!canLiquidate || isLiquidating) ? 'disabled' : ''}>${canLiquidate ? (isLiquidating ? 'Sent' : 'Liquidate') : 'N/A'}</button></td>
+            </tr>`;
+    }
+
+    function _spreadRowHtml(r) {
+        const open = state.expandedSpreads.has(r.id);
+        const qty = r.position;
+        const qtyClass = qty > 0 ? 'side-buy' : qty < 0 ? 'side-sell' : '';
+        let html = `<tr class="spread-row">
+                <td colspan="5"><button class="spread-toggle" type="button" aria-expanded="${open}" onclick="toggleSpread('${r.id}')" title="${open ? 'Hide' : 'Show'} the legs">${open ? '▾' : '▸'}</button> ${r.label} <span class="spread-tag">${r.legs.length}-leg spread</span></td>
+                <td class="${qtyClass}">${qty > 0 ? '+' : ''}${qty}</td>
+                <td>${fmtCurrencyFull(r.averageCost)}</td>
+                <td>${fmtCurrencyFull(r.marketPrice)}</td>
+                <td>${fmtCurrencyFull(r.marketValue)}</td>
+                <td class="${pnlClass(r.unrealizedPNL)}">${fmtCurrencyFull(r.unrealizedPNL)}</td>
+                <td class="${pnlClass(r.realizedPNL)}">${fmtCurrencyFull(r.realizedPNL)}</td>
+                <td class="spread-action" title="Close a spread as one order from the Option Chain, or expand it to close a leg">-</td>
+            </tr>`;
+        if (open) r.legs.forEach(leg => { html += _positionRowHtml(leg, 'spread-leg'); });
+        return html;
+    }
+
     function renderPositionsTable() {
         const tbody = document.getElementById('positionsBody');
         const count = document.getElementById('posCount');
         if (!tbody) return;
-        const rows = state.positions;
+        const rows = positionDisplayRows();
         count.textContent = rows.length > 0 ? `(${rows.length})` : '';
-        if (!rows || rows.length === 0) {
+        if (rows.length === 0) {
             tbody.innerHTML = '<tr><td colspan="12" class="acct-empty">No positions</td></tr>';
             return;
         }
 
         // Clean up liquidatingPositions for positions that have been closed
         if (state.liquidatingPositions.size > 0) {
-            const currentPosKeys = new Set(rows.map(p => {
-                const c = p.contract || {};
-                return `${c.symbol}|${c.secType}|${c.expiry || ''}|${c.strike || ''}|${c.right || ''}`;
-            }));
+            const currentPosKeys = new Set((state.positions || []).filter(Boolean).map(p => _posKey(p.contract || {})));
             for (const key of state.liquidatingPositions) {
                 if (!currentPosKeys.has(key)) state.liquidatingPositions.delete(key);
             }
         }
         let html = '';
-        rows.forEach((p, idx) => {
-            const c = p.contract || {};
-            const sym = c.symbol || '-';
-            const secType = c.secType || '-';
-            const expiry = fmtExpiry(c.expiry);
-            const strike = c.strike ? c.strike.toFixed(0) : '-';
-            const right = c.right || '-';
-            const isOptLiquidatable =
-                secType === 'OPT' &&
-                !!c.expiry &&
-                c.strike !== null && c.strike !== undefined &&
-                !!c.right;
-            const isStkLiquidatable = secType === 'STK' && !!c.symbol;
-            const canLiquidate = (isOptLiquidatable || isStkLiquidatable) && p.position !== 0;
-            const posKey = `${sym}|${secType}|${c.expiry || ''}|${c.strike || ''}|${c.right || ''}`;
-            const isLiquidating = state.liquidatingPositions.has(posKey);
-            const qty = p.position;
-            const avgCost = p.averageCost;
-            const mktPrice = p.marketPrice;
-            const mktVal = p.marketValue;
-            const unPnl = p.unrealizedPNL;
-            const rePnl = p.realizedPNL;
-            const unClass = pnlClass(unPnl);
-            const reClass = pnlClass(rePnl);
-            const qtyClass = qty > 0 ? 'side-buy' : qty < 0 ? 'side-sell' : '';
-            html += `<tr>
-                <td>${sym}</td>
-                <td>${secType}</td>
-                <td>${expiry}</td>
-                <td>${strike}</td>
-                <td>${right}</td>
-                <td class="${qtyClass}">${qty > 0 ? '+' : ''}${qty}</td>
-                <td>${fmtCurrencyFull(avgCost)}</td>
-                <td>${fmtCurrencyFull(mktPrice)}</td>
-                <td>${fmtCurrencyFull(mktVal)}</td>
-                <td class="${unClass}">${fmtCurrencyFull(unPnl)}</td>
-                <td class="${reClass}">${fmtCurrencyFull(rePnl)}</td>
-                <td><button class="btn-liquidate${isLiquidating ? ' sending' : ''}" id="liqBtn${idx}" onclick="liquidatePosition(${idx})" title="${canLiquidate ? 'Close this position via adaptive fill' : 'Requires a supported contract (OPT or STK) and non-zero position'}" ${(!canLiquidate || isLiquidating) ? 'disabled' : ''}>${canLiquidate ? (isLiquidating ? 'Sent' : 'Liquidate') : 'N/A'}</button></td>
-            </tr>`;
-        });
+        rows.forEach(r => { html += r.kind === 'spread' ? _spreadRowHtml(r) : _positionRowHtml(r, ''); });
         tbody.innerHTML = html;
     }
 
@@ -201,11 +232,12 @@
     }
 
     // Emergency liquidation: close position via adaptive mid-price fill (no confirmation)
-    function liquidatePosition(idx) {
+    // ``qty``: contracts to close (default the whole position; a spread leg closes only its part).
+    function liquidatePosition(idx, qty, btnEl) {
         const p = state.positions[idx];
         if (!p) return;
         const c = p.contract;
-        const btn = document.getElementById('liqBtn' + idx);
+        const btn = btnEl || null;
 
         const isOpt = !!c && c.secType === 'OPT' && !!c.expiry && c.strike !== null && c.strike !== undefined && !!c.right;
         const isStk = !!c && c.secType === 'STK' && !!c.symbol;
@@ -225,7 +257,7 @@
 
         // Determine close side
         const closeAction = p.position > 0 ? 'SELL' : 'BUY';
-        const absQty = Math.abs(p.position);
+        const absQty = Math.min(Math.abs(p.position), qty > 0 ? qty : Math.abs(p.position));
 
         if (btn) { btn.className = 'btn-liquidate sending'; btn.disabled = true; btn.textContent = 'Sending-'; }
 
