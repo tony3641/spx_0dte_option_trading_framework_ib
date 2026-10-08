@@ -92,7 +92,7 @@ The exact URLs are printed to the console when the server starts. You can overri
 
 ## Dashboard Tabs
 
-- **Dashboard** — a four-panel overview: SPX intraday chart, IV smile, GEX bars and Positions & P&L, plus level badges and the status bar. The panels fill the window below the header and stack into one column at 1100 px and below.
+- **Dashboard** — a four-panel overview: SPX intraday chart (1-minute bars with an RSI(14) pane below), IV smile, GEX bars and Positions & P&L, plus level badges and the status bar. The panels fill the window below the header and stack into one column at 1100 px and below.
 - **Option Chain** — full streaming chain table with greeks and order entry. The Strategy Builder is a collapsible order dock at the bottom: collapsed (the default) it shows one line (legs, net price, max loss) and the order row; the arrow button expands the legs table and the combo numbers. The order row shows the order's Bid / Mid / Ask (spreads as a signed net, negative for a credit); the limit price defaults to the mid on the SPX tick (0.05, or 0.10 above $2.00) and follows it until you type a price, and clicking Bid, Mid or Ask puts that price in the limit.
 - **Account** — account summary, positions, executions, order placement.
 - **Strategies** — strategy list/editor, live candidates, triggers, and arm/disarm controls.

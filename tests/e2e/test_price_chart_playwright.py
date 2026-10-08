@@ -376,3 +376,31 @@ def test_reconnect_backs_off_and_resets_when_the_socket_opens(page):
         return {delays, beforeOpen, afterOpen: reconnectAttempt};
     }""")
     assert out == {"delays": [500, 1000, 2000, 3000, 3000, 3000], "beforeOpen": 6, "afterOpen": 0}
+
+
+# --- RSI(14) pane --------------------------------------------------------------------------------
+
+def test_rsi_uses_wilder_smoothing(page):
+    closes = [100 + i for i in range(15)] + [113]          # 14 rises of 1, then a fall of 1
+    vals = page.evaluate("c => rsiValues(c, 14)", closes)
+    assert vals[:14] == [None] * 14 and vals[14] == 100
+    assert round(vals[15], 3) == round(100 - 100 / (1 + 13), 3)   # avg gain 13/14, avg loss 1/14
+    assert page.evaluate("() => rsiValues([1, 1, 1, 1], 3)") == [None, None, None, 50]   # a flat market is 50
+
+
+def test_the_rsi_pane_follows_the_bars(page):
+    bars = [_bar(f"10:{m:02d}", 100 + (m % 3)) for m in range(20)]
+    _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": []})
+    page.evaluate(FRAMES)
+    assert page.evaluate("() => priceChart.chart.panes().length") == 2
+    assert page.evaluate("() => priceChart.rsi.data().length") == 6            # 20 bars, the first 14 warm up
+    assert page.evaluate("() => priceChart.rsi.data()[0].time") == _utc_seconds(2099, 1, 5, 10, 14)
+    assert sorted(page.evaluate("() => priceChart.rsiGuides.map(l => l.options().price)")) == [30, 70]
+    before = page.evaluate("() => priceChart.rsi.data().slice(-1)[0].value")
+    _inject(page, "price_bar", {"session_date": S, "bar": _bar("10:19", 140)})   # a jump on the live bar
+    page.evaluate(FRAMES)
+    last = page.evaluate("() => priceChart.rsi.data().slice(-1)[0]")
+    assert last["time"] == _utc_seconds(2099, 1, 5, 10, 19) and last["value"] > before
+    _inject(page, "price_bar", {"session_date": S, "bar": _bar("10:20", 139)})
+    page.evaluate(FRAMES)
+    assert page.evaluate("() => priceChart.rsi.data().length") == 7

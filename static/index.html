@@ -97,7 +97,7 @@
         <div class="chart-panel panel-price">
             <div class="chart-title"><span id="priceChartTitle">SPX Intraday</span>
                 <span class="help" tabindex="0" aria-label="Price chart info">?
-                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall, put wall, gamma flip and max pain are drawn as price lines. Times are ET.</span>
+                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall, put wall, gamma flip and max pain are drawn as price lines. The pane below is RSI(14) of the 1-minute closes (Wilder's smoothing, dashed guides at 70 and 30); it starts on the 15th bar of the session. A dashboard started mid-session still loads the bars from the open. Times are ET.</span>
                 </span>
             </div>
             <div id="priceChart"></div>
