@@ -15,6 +15,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from typing import List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from spx_trade_desk.core.config import FORCE_REFRESH_INTERVAL
 from spx_trade_desk.market.hours import now_et, ET
@@ -125,6 +126,17 @@ def parse_execution_time(raw_time):
         text = str(raw_time).strip()
         if not text:
             return None
+
+        # Current TWS builds append the IANA zone TWS is set to: "20261008 13:13:14 US/Central".
+        zoned = re.match(r'^(\d{8})\s(\d{2}:\d{2}:\d{2})\s+([A-Za-z_]+(?:/[A-Za-z_+-]+)+)$', text)
+        if zoned:
+            d, t, zone = zoned.groups()
+            try:
+                tz = ZoneInfo(zone)
+            except (ZoneInfoNotFoundError, ValueError):
+                return None
+            local = datetime.fromisoformat(f"{d[:4]}-{d[4:6]}-{d[6:8]}T{t}").replace(tzinfo=tz)
+            return local.astimezone(ET)
 
         today_et = now_et().date()
         used_today = False

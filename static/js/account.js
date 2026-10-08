@@ -190,7 +190,7 @@
                 <td>${e.symbol || '-'}</td>
                 <td>${fmtExpiry(e.expiry)}</td>
                 <td>${e.strike ? e.strike.toFixed(0) : '-'}</td>
-                <td>${e.right || '-'}</td>
+                <td>${e.right || (e.secType === 'BAG' ? 'BAG' : '-')}</td>
                 <td class="${sideClass}">${e.side}</td>
                 <td>${e.shares}</td>
                 <td>$${parseFloat(e.price).toFixed(2)}</td>

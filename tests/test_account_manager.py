@@ -366,3 +366,19 @@ class TestExecutionTimeParsing:
         assert parsed.date() == datetime(2026, 4, 9, tzinfo=ET).date()
         assert parsed.hour == 12
         assert parsed.minute == 37
+
+    def test_parse_ib_time_with_a_zone_name(self):
+        # Current TWS builds send "YYYYMMDD HH:MM:SS <IANA zone>", in the zone TWS is set to.
+        parsed = parse_execution_time("20260820 13:30:05 US/Central")
+        assert parsed is not None
+        assert (parsed.hour, parsed.minute, parsed.second) == (14, 30, 5)    # 13:30 CDT is 14:30 EDT
+        assert parsed.tzinfo is ET
+
+    def test_a_fill_stamped_with_a_zone_name_is_listed_today(self):
+        mock = MockIBClient()
+        stamp = now_et().strftime("%Y%m%d %H:%M:%S") + " America/New_York"
+        mock.executions = [ExecutionRecord(
+            _contract(symbol="SPX"),
+            SimpleNamespace(execId="E9", time=stamp, side="BOT", shares=1, price=2.0, orderId=7),
+            None)]
+        assert [e["execId"] for e in serialize_execution(mock)] == ["E9"]
