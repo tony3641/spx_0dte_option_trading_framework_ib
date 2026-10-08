@@ -102,3 +102,18 @@ def test_an_update_without_position_rows_lists_every_position(browser_env):
         assert len(_texts(page, "#dashPositionsBody tr")) == 3
     finally:
         browser.close()
+
+
+def test_a_combo_fill_reads_bag_in_the_executions_table(browser_env):
+    p, url = browser_env
+    browser, _ctx, page = _open(p, url, "dark", tab="account")
+    try:
+        bag = {"execId": "X1", "time": "10:00:00 EDT", "symbol": "SPX", "secType": "BAG", "expiry": "",
+               "strike": None, "right": "P", "side": "SLD", "shares": 1, "price": 1.0, "commission": None}
+        page.evaluate("m => window.__benchInject({type: 'account_update', data: m})",
+                      dict(UPDATE, executions=[bag]))
+        page.evaluate(FRAMES)
+        cells = page.evaluate("() => [...document.querySelectorAll('#executionsBody tr td')].map(td => td.textContent)")
+        assert cells[4] == "BAG"
+    finally:
+        browser.close()

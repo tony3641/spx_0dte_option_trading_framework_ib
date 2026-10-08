@@ -393,6 +393,9 @@ def test_the_rsi_pane_follows_the_bars(page):
     _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": []})
     page.evaluate(FRAMES)
     assert page.evaluate("() => priceChart.chart.panes().length") == 2
+    share = page.evaluate("() => { const h = priceChart.chart.panes().map(p => p.getHeight());"
+                          " return h[1] / (h[0] + h[1]); }")
+    assert 0.2 <= share <= 0.3                                              # a readable strip, not a sliver
     assert page.evaluate("() => priceChart.rsi.data().length") == 6            # 20 bars, the first 14 warm up
     assert page.evaluate("() => priceChart.rsi.data()[0].time") == _utc_seconds(2099, 1, 5, 10, 14)
     assert sorted(page.evaluate("() => priceChart.rsiGuides.map(l => l.options().price)")) == [30, 70]

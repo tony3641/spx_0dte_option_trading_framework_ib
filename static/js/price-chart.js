@@ -93,7 +93,8 @@
                 priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
                 autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
             }, 1);
-            chart.panes()[1].setStretchFactor(0.3);
+            chart.panes()[0].setStretchFactor(3);          // RSI gets a quarter of the height (the
+            chart.panes()[1].setStretchFactor(1);          // library's own default factors are not 1:1)
             const rsiGuides = [70, 30].map(price => rsi.createPriceLine({
                 price, color: c.textFaint, lineWidth: 1, lineStyle: LC.LineStyle.Dashed, axisLabelVisible: false,
             }));
