@@ -59,6 +59,9 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+# ibapi 10.45 logs every protobuf callback at INFO ("ANSWER tickPriceProtoBuf ..."): thousands of
+# records a second flood the Log tab ring buffer and push our own warnings out of it.
+logging.getLogger("ibapi").setLevel(logging.WARNING)
 logger = logging.getLogger("server")
 
 # ---------------------------------------------------------------------------

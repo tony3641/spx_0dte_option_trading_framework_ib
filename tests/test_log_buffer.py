@@ -142,3 +142,13 @@ async def test_set_tab_log_sends_log_history(app_state):
     assert len(hist) == 1
     assert hist[0]["data"][0]["msg"] == "hello"
     assert hist[0]["data"][1]["level"] == "ERROR"
+
+
+def test_ibapi_tick_chatter_stays_out_of_the_log():
+    """ibapi 10.45 logs every protobuf tick at INFO ("ANSWER tickPriceProtoBuf ..."): thousands of
+    records a second would flood the Log tab ring buffer and push WARNINGs out of it."""
+    import spx_trade_desk.server  # noqa: F401  (configures logging at import)
+
+    # The level is set on the "ibapi" logger itself: under pytest the root logger is not INFO, so the
+    # effective level of a child would pass without it.
+    assert logging.getLogger("ibapi").level >= logging.WARNING

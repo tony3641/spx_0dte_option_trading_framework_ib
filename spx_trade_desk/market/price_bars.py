@@ -11,10 +11,10 @@ Loop thread only.
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-from spx_trade_desk.core.config import PRICE_BARS_KEEP_UP_TO_DATE, PRICE_BARS_STALL_S, PRICE_PUSH_INTERVAL
+from spx_trade_desk.core.config import PRICE_BARS_KEEP_UP_TO_DATE, PRICE_BARS_STALL_S, PRICE_PUSH_INTERVAL, RTH_OPEN
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.connection import update_spx_es_prices
 from spx_trade_desk.market.hours import ET, is_within_rth, now_et
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 RETRY_BACKOFF_S = (5.0, 15.0, 60.0)
 LIVE_FAILURES_BEFORE_FALLBACK = 3
+OPEN_GRACE = timedelta(minutes=2)       # RTH: an empty answer is a real "no bar yet" only this soon after the open
 
 
 def _as_et(dt: datetime) -> datetime:
@@ -96,9 +97,9 @@ class PriceBarFeed:
     async def start(self) -> bool:
         """(Re)request the bars; replace the series; broadcast a snapshot.
 
-        True when the series is usable: bars arrived, or RTH has just opened and there is no bar yet
-        (IB updates will fill it). False when the request failed or came back empty outside RTH; a
-        retry is then scheduled.
+        True when the series is usable: bars arrived, or RTH opened less than OPEN_GRACE ago and there
+        is no bar yet (IB updates will fill it). False when the request failed or came back empty
+        otherwise (a late start must still get the session from the open); a retry is then scheduled.
         """
         self.stop()
         st = self.state
@@ -136,6 +137,9 @@ class PriceBarFeed:
             return self._retry_later()           # keep the series; the failed request is cancelled
         if not rows and (not rth or (st.price_history and st.price_session_date == target)):
             return self._retry_later()           # an empty answer never wipes a series we have
+        # RTH with nothing for today yet: adopt the (empty) session so the live merge draws from ``last``.
+        # Past OPEN_GRACE IB must have bars since the open, so keep re-requesting them.
+        incomplete = not rows and not self._just_opened()
         self._live_failures = 0                  # a start that gave a usable series ends the failure streak
         st.price_history.clear()
         st.price_history.extend(rows)
@@ -148,12 +152,18 @@ class PriceBarFeed:
             st.historical_date = target
         if st.data_mode != "live":
             st.data_mode = "historical"
-        if not self._keep:
+        if not self._keep and not incomplete:
             self._attempt = 0               # no IB updates to wait for: the backfill is the success
         logger.info(f"Price bars: {len(rows)} bars for {target} "
                     f"({'keepUpToDate' if self._keep else 'one-shot backfill'})")
         await self.broadcast_snapshot()
+        if incomplete:
+            return self._retry_later()
         return bool(rows) or rth
+
+    def _just_opened(self) -> bool:
+        now = self._now()
+        return now - now.replace(hour=RTH_OPEN.hour, minute=RTH_OPEN.minute, second=0, microsecond=0) < OPEN_GRACE
 
     def stop(self) -> None:
         if self.req_id is not None:
