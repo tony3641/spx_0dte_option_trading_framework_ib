@@ -382,3 +382,16 @@ class TestExecutionTimeParsing:
             SimpleNamespace(execId="E9", time=stamp, side="BOT", shares=1, price=2.0, orderId=7),
             None)]
         assert [e["execId"] for e in serialize_execution(mock)] == ["E9"]
+
+    def test_ib_decimal_fill_sizes_serialize_to_json(self):
+        # ibapi reports execution.shares as a Decimal; one in the payload would drop the whole account update.
+        import json
+        from decimal import Decimal
+        mock = MockIBClient()
+        mock.executions = [ExecutionRecord(
+            _contract(symbol="SPX"),
+            SimpleNamespace(execId="E10", time=now_et().strftime("%Y%m%d %H:%M:%S") + " US/Eastern",
+                            side="BOT", shares=Decimal("2"), price=1.5, orderId=8),
+            None)]
+        rows = serialize_execution(mock)
+        assert json.loads(json.dumps(rows))[0]["shares"] == 2

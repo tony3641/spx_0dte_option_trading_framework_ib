@@ -214,8 +214,8 @@ def serialize_execution(ib, exec_filter=None) -> List[dict]:
             "localSymbol": getattr(c, "localSymbol", ""),
             "conId": getattr(c, "conId", 0),
             "side": ex.side,
-            "shares": ex.shares,
-            "price": ex.price,
+            "shares": float(ex.shares),            # ibapi: a Decimal, which JSON cannot carry
+            "price": float(ex.price),
             "orderId": ex.orderId,
             "commission": commission_val if commission_val and commission_val < 1e8 else None,
         })
