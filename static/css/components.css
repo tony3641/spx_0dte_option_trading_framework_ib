@@ -35,3 +35,14 @@
 .spread-tag { color: var(--text-faint); font-weight: 400; font-size: 10px; letter-spacing: .04em; margin-left: 4px; }
 .pos-table tr.spread-leg td:first-child, .acct-table tr.spread-leg td:first-child { padding-left: 22px; font-weight: 400; color: var(--text-muted); }
 .acct-table td.spread-action { text-align: center; color: var(--text-faint); }
+
+/* Order row quotes: Bid / Mid / Ask of the order; a click puts that price in the limit. */
+.order-quotes { display: inline-flex; gap: 2px; margin-right: var(--s-2); }
+.quote-btn { display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg-raised); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.quote-btn:hover:not(:disabled), .quote-btn:focus-visible { border-color: var(--accent); }
+.quote-btn:disabled { cursor: default; color: var(--text-faint); }
+.quote-btn .quote-label { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.quote-btn .quote-val { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.quote-bid .quote-val { color: var(--down); }
+.quote-ask .quote-val { color: var(--up); }
+.quote-btn:disabled .quote-val { color: var(--text-faint); }
