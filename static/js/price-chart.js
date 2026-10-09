@@ -9,8 +9,9 @@
     ];
     // The model (bars, overnightPts, latest) is always current; the series are brought up to date
     // only while the Dashboard tab is visible. pending* hold what the next frame must push.
+    const RSI_PERIOD = 14;
     const priceChart = {
-        chart: null, candles: null, overnight: null,
+        chart: null, candles: null, overnight: null, rsi: null, rsiGuides: [],
         sessionDate: null, bars: new Map(), overnightPts: new Map(), latest: null,
         pendingBars: new Map(), pendingOvernight: [],
         lastTime: null, lastOvernightTime: null,      // last time written to each series
@@ -21,6 +22,39 @@
         const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso || '');
         if (!m) return null;
         return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) / 1000;
+    }
+
+    // Wilder's RSI of ``closes``: null for the first ``period`` closes (warm-up), then
+    // 100 - 100 / (1 + avgGain / avgLoss) with Wilder's smoothing. A flat market reads 50.
+    function rsiValues(closes, period) {
+        const out = new Array(closes.length).fill(null);
+        if (closes.length <= period) return out;
+        const rsi = (g, l) => (l === 0 ? (g === 0 ? 50 : 100) : 100 - 100 / (1 + g / l));
+        let gain = 0, loss = 0;
+        for (let i = 1; i <= period; i++) {
+            const d = closes[i] - closes[i - 1];
+            if (d > 0) gain += d; else loss -= d;
+        }
+        gain /= period;
+        loss /= period;
+        out[period] = rsi(gain, loss);
+        for (let i = period + 1; i < closes.length; i++) {
+            const d = closes[i] - closes[i - 1];
+            gain = (gain * (period - 1) + Math.max(d, 0)) / period;
+            loss = (loss * (period - 1) + Math.max(-d, 0)) / period;
+            out[i] = rsi(gain, loss);
+        }
+        return out;
+    }
+
+    // RSI points for the bars (sorted by time); the warm-up bars have none.
+    function _rsiPoints(candles) {
+        const vals = rsiValues(candles.map(c => c.close), RSI_PERIOD);
+        const pts = [];
+        for (let i = 0; i < candles.length; i++) {
+            if (vals[i] !== null) pts.push({ time: candles[i].time, value: vals[i] });
+        }
+        return pts;
     }
 
     function _toCandle(b) {
@@ -53,9 +87,22 @@
                 color: c.accent, lineWidth: 1, lineStyle: LC.LineStyle.Dotted,
                 priceLineVisible: false, lastValueVisible: true, title: 'ES-derived',
             });
+            // RSI(14) of the 1-minute closes in a pane under the price (same time axis), 70 / 30 guides.
+            const rsi = chart.addSeries(LC.LineSeries, {
+                color: c.alt, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'RSI 14',
+                priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+                autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+            }, 1);
+            chart.panes()[0].setStretchFactor(3);          // RSI gets a quarter of the height (the
+            chart.panes()[1].setStretchFactor(1);          // library's own default factors are not 1:1)
+            const rsiGuides = [70, 30].map(price => rsi.createPriceLine({
+                price, color: c.textFaint, lineWidth: 1, lineStyle: LC.LineStyle.Dashed, axisLabelVisible: false,
+            }));
             priceChart.chart = chart;                       // published together: never a half-built chart
             priceChart.candles = candles;
             priceChart.overnight = overnight;
+            priceChart.rsi = rsi;
+            priceChart.rsiGuides = rsiGuides;
             state.priceChartReady = true;
         } catch (e) {
             console.error('Price chart unavailable', e);
@@ -98,6 +145,7 @@
         const keep = priceChart.needsFit ? null : ts.getVisibleLogicalRange();
         const oldLen = priceChart.candles.data().length;
         priceChart.candles.setData(candles);
+        priceChart.rsi.setData(_rsiPoints(candles));
         const pts = Array.from(priceChart.overnightPts.values()).sort((a, b) => a.time - b.time);   // unique times
         priceChart.overnight.setData(pts);
         priceChart.lastTime = candles.length ? candles[candles.length - 1].time : null;
@@ -141,6 +189,14 @@
         for (const c of pending) {
             priceChart.candles.update(c);
             priceChart.lastTime = c.time;
+        }
+        // Only the pending bars' RSI can change (earlier values depend on earlier closes only). Recomputing
+        // over the session is a few hundred additions; the series gets in-place updates.
+        const rsiByTime = new Map(_rsiPoints(Array.from(priceChart.bars.values()).sort((a, b) => a.time - b.time))
+            .map(p => [p.time, p]));
+        for (const c of pending) {
+            const pt = rsiByTime.get(c.time);
+            if (pt) priceChart.rsi.update(pt);
         }
     }
 
@@ -205,6 +261,8 @@
         });
         priceChart.candles.applyOptions({ upColor: c.up, downColor: c.down, wickUpColor: c.up, wickDownColor: c.down });
         priceChart.overnight.applyOptions({ color: c.accent });
+        priceChart.rsi.applyOptions({ color: c.alt });
+        for (const g of priceChart.rsiGuides) g.applyOptions({ color: c.textFaint });
         for (const lv of PRICE_LEVELS) {
             const line = priceChart.levels[lv.key];
             if (line) line.applyOptions({ color: c[lv.color] });

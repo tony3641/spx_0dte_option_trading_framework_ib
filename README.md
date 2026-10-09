@@ -16,7 +16,7 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
 - **GEX dashboard with 0DTE / Monthly toggle** — switch the GEX calculation between the current 0DTE SPXW expiry and the monthly SPX expiry.
 - **SPX price chart** — today's session from the 09:30 ET open as 1-minute bars from IB with the current minute following the live SPX price; outside regular hours the last session plus a dotted ES-derived line.
 - **Real-time option chain streaming** — live 0DTE chain with greeks, wall/flip markers, and a strike filter; only changed fields stream and the table is patched in place.
-- **Account / Order Management tab** — account summary, portfolio positions, and order placement with **Stop Limit** support (also accessible as an order-entry widget on the dashboard).
+- **Account / Order Management tab** — account summary, portfolio positions (legs filled together as one combo order today are grouped into one expandable spread row, here and on the Dashboard; the spread row's Liquidate closes all of its spreads as one combo order, started at the legs' net mid and stepped one tick toward the market every 0.3 s for up to 10 steps), today's executions, and order placement with **Stop Limit** support (also accessible as an order-entry widget on the dashboard).
 - **Strategies tab** — define automated multi-leg strategies and let the server watch the market for you:
   - Conditions (entry window, short delta, spread width, credit, trend, volatility), triggers, and a candidate scanner.
   - **Budget-based position sizing** with total-credit preview per candidate.
@@ -92,8 +92,8 @@ The exact URLs are printed to the console when the server starts. You can overri
 
 ## Dashboard Tabs
 
-- **Dashboard** — a four-panel overview: SPX intraday chart, IV smile, GEX bars and Positions & P&L, plus level badges and the status bar. The panels fill the window below the header and stack into one column at 1100 px and below.
-- **Option Chain** — full streaming chain table with greeks and order entry. The Strategy Builder is a collapsible order dock at the bottom: collapsed (the default) it shows one line (legs, net price, max loss) and the order row; the arrow button expands the legs table and the combo numbers.
+- **Dashboard** — a four-panel overview: SPX intraday chart (1-minute bars with an RSI(14) pane below), IV smile, GEX bars and Positions & P&L, plus level badges and the status bar. The panels fill the window below the header and stack into one column at 1100 px and below.
+- **Option Chain** — full streaming chain table with greeks and order entry. The Strategy Builder is a collapsible order dock at the bottom: collapsed (the default) it shows one line (legs, net price, max loss) and the order row; the arrow button expands the legs table and the combo numbers. The order row shows the order's Bid / Mid / Ask (spreads as a signed net, negative for a credit); the limit price defaults to the mid on the SPX tick (0.05, or 0.10 above $2.00) and follows it until you type a price, and clicking Bid, Mid or Ask puts that price in the limit.
 - **Account** — account summary, positions, executions, order placement.
 - **Strategies** — strategy list/editor, live candidates, triggers, and arm/disarm controls.
 - **Simulation** — run intraday MC stress tests, sweep stop-loss multipliers and dynamic strike distances, A/B stress dials, read the report (SPX percentile fan + per-cell charts), force-clear it between runs, and export a full AI-readable JSON report.

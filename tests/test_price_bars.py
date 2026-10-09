@@ -555,3 +555,57 @@ async def test_a_good_start_resets_the_live_failure_streak():
     state["fail"] = True
     assert not await feed.start()
     assert feed._live_failures == 1 and feed._keep        # a new streak starts from one, not from three
+
+
+@pytest.mark.asyncio
+async def test_an_empty_answer_long_after_the_open_is_retried_until_the_session_loads():
+    """A late start (14:05) whose first request comes back empty must not settle for the bars merged from
+    ``last`` since then: it retries until IB returns the session from 09:30."""
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "14:05"), []
+    ib.live_bars_initial = []
+    feed = _feed(ib, st, clock, msgs)
+    assert not await feed.start()
+    st.spx_stream.last = 105.0
+    clock.mono += 1.0
+    await feed.tick()                                     # the live merge starts a 14:05 bar meanwhile
+    assert [b["time"][11:16] for b in st.price_history] == ["14:05"]
+    ib.live_bars_initial = [_bar(DAY, "09:30", 100.0), _bar(DAY, "09:31", 101.0), _bar(DAY, "14:04", 104.0)]
+    clock.mono += 5.1
+    await feed.tick()
+    assert [b["time"][11:16] for b in st.price_history][:3] == ["09:30", "09:31", "14:04"]
+    assert ib.count_calls("req_historical_bars_live") == 2
+
+
+@pytest.mark.asyncio
+async def test_the_one_shot_fallback_retries_an_empty_backfill():
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "14:05"), []
+    answers = [[], [_bar(DAY, "09:30", 100.0), _bar(DAY, "09:31", 101.0)]]
+
+    async def one_shot(contract, end_date_time="", duration="1 D", bar_size="1 min",
+                       what_to_show="TRADES", use_rth=True, format_date=2):
+        return answers.pop(0) if answers else []
+
+    ib.req_historical_bars = one_shot
+    feed = _feed(ib, st, clock, msgs, keep=False)
+    assert not await feed.start()
+    clock.mono += 5.1
+    await feed.tick()
+    assert [b["close"] for b in st.price_history] == [100.0, 101.0]
+
+
+@pytest.mark.asyncio
+async def test_repeated_empty_backfills_back_off():
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "14:05"), []
+    calls = []
+
+    async def one_shot(contract, **kw):
+        calls.append(clock.mono)
+        return []
+
+    ib.req_historical_bars = one_shot
+    feed = _feed(ib, st, clock, msgs, keep=False)
+    await feed.start()
+    for _ in range(80):                                   # 80 s of loop passes
+        clock.mono += 1.0
+        await feed.tick()
+    assert [round(b - a) for a, b in zip(calls, calls[1:])] == [5, 15, 60]

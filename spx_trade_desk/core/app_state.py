@@ -93,6 +93,7 @@ class AppState:
         self.positions: List[dict] = []
         self.open_orders: List[dict] = []
         self.executions: List[dict] = []
+        self.position_rows: List[dict] = []      # positions grouped into spreads (ib/account.position_rows)
         self.account_dirty: bool = False
         self.active_trades: dict = {}     # {orderId: OrderHandle}
 

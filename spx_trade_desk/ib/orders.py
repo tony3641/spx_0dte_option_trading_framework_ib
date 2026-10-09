@@ -158,6 +158,88 @@ async def watch_parent_and_cancel_child(ib, ws, parent, child,
                 pass
 
 
+def _valid_quote(v) -> bool:
+    try:
+        return float(v) > 0
+    except Exception:
+        return False
+
+
+async def _quote_mid(ib, state, contract, expiry, strike, right) -> Optional[float]:
+    """Unrounded mid of one contract: a fresh two-sided quote from the shared quote book
+    (options only), else a short-lived ``order`` market-data line (falling back to last).
+    None when neither gives a price."""
+    book = getattr(state, "quote_book", None)
+    if (strike is not None and book is not None and book.expiry == expiry
+            and getattr(state, "trading_class", "") == getattr(contract, "tradingClass", None)):
+        # (another trading class means the book holds another series, e.g. SPX monthly on a third Friday)
+        hit = book.get(norm_key(strike, right), time.monotonic())
+        if hit is not None:
+            opt, age = hit
+            if age <= config.ORDER_MID_MAX_AGE_S and _valid_quote(opt.bid) and _valid_quote(opt.ask):
+                return (float(opt.bid) + float(opt.ask)) / 2.0
+    try:
+        stream = ib.subscribe_tick(contract, "", share="order")
+    except LineBudgetExceeded as e:
+        logger.warning(f"Mid-price lookup skipped: {e}")
+        return None
+    mid = None
+    try:
+        for _ in range(8):
+            if stream.has_quote():
+                if _valid_quote(stream.bid) and _valid_quote(stream.ask):
+                    mid = (float(stream.bid) + float(stream.ask)) / 2.0
+                    break
+            await asyncio.sleep(0.05)
+        if mid is None and _valid_quote(stream.last):
+            mid = float(stream.last)
+    finally:
+        ib.unsubscribe_tick(stream.req_id)
+    return mid
+
+
+async def _reprice_until_filled(ib, contract, order, handle, reprice_interval, next_price):
+    """Dynamic fill: wait ``reprice_interval`` for a fill, then move ``order.lmtPrice`` to
+    ``next_price(current)`` (one tick toward the market) by MODIFYING the live order, at most
+    10 times. Returns ``(handle, None)``, or ``(handle, status)`` when the order went
+    terminal without filling."""
+    original_handle = handle
+    reprice_deadline = asyncio.get_event_loop().time() + 300.0
+    max_reprice_iterations = 10
+    reprice_iteration = 0
+
+    def _filled() -> bool:
+        return handle.status == "Filled" or (handle.remaining is not None and handle.remaining <= 0)
+
+    while asyncio.get_event_loop().time() < reprice_deadline:
+        reprice_iteration += 1
+        if _filled():
+            break
+        if handle.status in _TERMINAL_STATUSES:
+            return handle, handle.status
+        try:
+            await asyncio.wait_for(handle.wait_fill(timeout=reprice_interval),
+                                   timeout=reprice_interval)
+        except asyncio.TimeoutError:
+            pass
+        if _filled():
+            break
+        if handle.status in _TERMINAL_STATUSES:
+            return handle, handle.status
+        if reprice_iteration >= max_reprice_iterations:
+            logger.warning(
+                "Dynamic fill reached max iterations (%d); stopping to avoid infinite loop",
+                max_reprice_iterations,
+            )
+            break
+        order.lmtPrice = next_price(float(order.lmtPrice))
+        # Reprice must MODIFY the live order (same orderId), not submit a new
+        # one — otherwise each iteration leaves the prior order live (N+1
+        # orders, double exposure).
+        handle = ib.place_order(contract, order, order_id=original_handle.order_id)
+    return handle, None
+
+
 async def handle_place_order(ib, state, payload: dict, ws=None,
                              refresh_fn=None) -> dict:
     """Handle a place_order WebSocket message.
@@ -189,8 +271,8 @@ async def handle_place_order(ib, state, payload: dict, ws=None,
     # Validate limit prices are present for all legs
     for leg in legs:
         if order_type == "LMT":
-            if dynamic_fill and len(legs) == 1:
-                continue
+            if dynamic_fill:
+                continue                   # the backend prices it from the mid
             if leg.get("lmtPrice") is None:
                 leg_label = f"{leg.get('symbol', '')} {leg.get('strike', '')}{leg.get('right', '')}".strip()
                 return {"type": "order_status", "data": {
@@ -211,7 +293,9 @@ async def handle_place_order(ib, state, payload: dict, ws=None,
         else:
             return await _place_multi_leg(ib, state, payload, legs,
                                           order_type, tif, outside_rth,
-                                          stop_loss_price, ws, _do_refresh)
+                                          stop_loss_price, ws, _do_refresh,
+                                          dynamic_fill=dynamic_fill,
+                                          reprice_interval=reprice_interval)
     except Exception as e:
         logger.error(f"handle_place_order exception: {e}", exc_info=True)
         return {"type": "order_status", "data": {"status": "Error", "message": str(e) or "Internal error"}}
@@ -295,49 +379,9 @@ async def _place_single_leg(ib, state, payload, leg,
         rounded = ticks * t
         return max(t, round(rounded, 2))
 
-    def _valid_quote(v) -> bool:
-        try:
-            f = float(v)
-            return f > 0
-        except Exception:
-            return False
-
-    def _book_mid() -> Optional[float]:
-        """Mid of a fresh two-sided quote in the shared quote book, or None."""
-        book = getattr(state, "quote_book", None)
-        if sec_type != "OPT" or book is None or book.expiry != leg["expiry"]:
-            return None
-        if getattr(state, "trading_class", "") != getattr(contract, "tradingClass", None):
-            return None                    # the book holds another series (e.g. SPX monthly on a third Friday)
-        hit = book.get(norm_key(strike_val, leg["right"]), time.monotonic())
-        if hit is None:
-            return None
-        opt, age = hit
-        if age > config.ORDER_MID_MAX_AGE_S or not (_valid_quote(opt.bid) and _valid_quote(opt.ask)):
-            return None
-        return _round_to_tick((float(opt.bid) + float(opt.ask)) / 2.0)
-
     async def _get_mid_price() -> Optional[float]:
-        mid = _book_mid()
-        if mid is not None:
-            return mid
-        try:
-            stream = ib.subscribe_tick(contract, "", share="order")
-        except LineBudgetExceeded as e:
-            logger.warning(f"Mid-price lookup skipped: {e}")
-            return None
-        mid = None
-        try:
-            for _ in range(8):
-                if stream.has_quote():
-                    if _valid_quote(stream.bid) and _valid_quote(stream.ask):
-                        mid = (float(stream.bid) + float(stream.ask)) / 2.0
-                        break
-                await asyncio.sleep(0.05)
-            if mid is None and _valid_quote(stream.last):
-                mid = float(stream.last)
-        finally:
-            ib.unsubscribe_tick(stream.req_id)
+        mid = await _quote_mid(ib, state, contract, leg.get("expiry"),
+                               strike_val if sec_type == "OPT" else None, leg.get("right"))
         return _round_to_tick(mid) if mid is not None else None
 
     order = Order()
@@ -427,54 +471,23 @@ async def _place_single_leg(ib, state, payload, leg,
 
     # Dynamic fill reprice loop
     if dynamic_fill and order_type == "LMT":
-        original_handle = handle
         direction = 1.0 if leg["action"] == "BUY" else -1.0
-        reprice_deadline = asyncio.get_event_loop().time() + 300.0
-        max_reprice_iterations = 10
-        reprice_iteration = 0
-        while asyncio.get_event_loop().time() < reprice_deadline:
-            reprice_iteration += 1
-            if handle.status == "Filled" or (handle.remaining is not None and handle.remaining <= 0):
-                break
-            if handle.status in _TERMINAL_STATUSES:
-                return {"type": "order_status", "data": {
-                    "status": "Error",
-                    "orderId": order.orderId,
-                    "message": f"Order became {handle.status} before fill"
-                }}
 
-            try:
-                await asyncio.wait_for(handle.wait_fill(timeout=reprice_interval),
-                                       timeout=reprice_interval)
-            except asyncio.TimeoutError:
-                pass
-
-            if handle.status == "Filled" or (handle.remaining is not None and handle.remaining <= 0):
-                break
-            if handle.status in _TERMINAL_STATUSES:
-                return {"type": "order_status", "data": {
-                    "status": "Error",
-                    "orderId": order.orderId,
-                    "message": f"Order became {handle.status} before fill"
-                }}
-
-            if reprice_iteration >= max_reprice_iterations:
-                logger.warning(
-                    "Dynamic fill reached max iterations (%d); stopping to avoid infinite loop",
-                    max_reprice_iterations,
-                )
-                break
-
-            current_price = float(order.lmtPrice)
+        def _next_price(current_price: float) -> float:
             step_tick = _effective_tick_for_price(current_price)
             next_price = _round_to_tick(current_price + direction * step_tick)
             if next_price == current_price:
                 next_price = round(current_price + direction * step_tick, 2)
-            order.lmtPrice = max(step_tick, next_price)
-            # Reprice must MODIFY the live order (same orderId), not submit a new
-            # one — otherwise each iteration leaves the prior order live (N+1
-            # orders, double exposure).
-            handle = ib.place_order(contract, order, order_id=original_handle.order_id)
+            return max(step_tick, next_price)
+
+        handle, stopped = await _reprice_until_filled(ib, contract, order, handle,
+                                                      reprice_interval, _next_price)
+        if stopped:
+            return {"type": "order_status", "data": {
+                "status": "Error",
+                "orderId": order.orderId,
+                "message": f"Order became {stopped} before fill"
+            }}
         final_status = handle.status or "Unknown"
 
     state.active_trades[order.orderId] = handle
@@ -521,8 +534,14 @@ async def _place_single_leg(ib, state, payload, leg,
 
 async def _place_multi_leg(ib, state, payload, legs,
                            order_type, tif, outside_rth,
-                           stop_loss_price, ws, refresh_fn):
-    """Handle multi-leg BAG order placement."""
+                           stop_loss_price, ws, refresh_fn,
+                           dynamic_fill=False, reprice_interval=0.3):
+    """Handle multi-leg BAG order placement.
+
+    ``dynamic_fill`` (LMT only, legs need no lmtPrice): start at the net mid of the legs'
+    mids and step the BAG limit one tick toward the market per ``reprice_interval``, as the
+    single-leg path does; this is how the Account tab closes a whole spread."""
+    dynamic_fill = bool(dynamic_fill) and order_type == "LMT"
     bag_symbol = (legs[0].get("symbol", "SPX") or "SPX").upper()
     requested_outside_rth = bool(outside_rth)
     outside_rth = requested_outside_rth
@@ -573,17 +592,25 @@ async def _place_multi_leg(ib, state, payload, legs,
             "message": f"Qualified {len(qualified) if qualified is not None else 0}/{len(legs)} legs"
         }}
 
-    # Compute net combo limit price
+    # Compute net combo limit price (signed: BUY legs add, SELL legs subtract)
     combo_price = 0.0
-    for leg in legs:
+    for qc, leg in zip(qualified, legs):
         sign = 1.0 if leg["action"] == "BUY" else -1.0
-        try:
-            leg_lmt = float(leg.get("lmtPrice", 0))
-        except (TypeError, ValueError):
-            return {"type": "order_status", "data": {
-                "status": "Error",
-                "message": f"Invalid lmtPrice in combo leg: {leg.get('lmtPrice')}"
-            }}
+        if dynamic_fill:
+            leg_lmt = await _quote_mid(ib, state, qc, leg["expiry"], float(leg["strike"]), leg["right"])
+            if leg_lmt is None:
+                return {"type": "order_status", "data": {
+                    "status": "Error",
+                    "message": f"Unable to derive midpoint for combo leg {leg['strike']}{leg['right']}"
+                }}
+        else:
+            try:
+                leg_lmt = float(leg.get("lmtPrice", 0))
+            except (TypeError, ValueError):
+                return {"type": "order_status", "data": {
+                    "status": "Error",
+                    "message": f"Invalid lmtPrice in combo leg: {leg.get('lmtPrice')}"
+                }}
         try:
             leg_ratio = int(leg.get("qty", 1) or 1)
         except (TypeError, ValueError):
@@ -598,7 +625,7 @@ async def _place_multi_leg(ib, state, payload, legs,
 
     bag_action = payload.get("comboAction") or "BUY"
     try:
-        if payload.get("comboLmtPrice") is not None:
+        if payload.get("comboLmtPrice") is not None and not dynamic_fill:
             bag_lmt = float(payload.get("comboLmtPrice"))
         else:
             bag_lmt = float(combo_price)
@@ -719,11 +746,36 @@ async def _place_multi_leg(ib, state, payload, legs,
 
     # Wait for initial IB ack (event-driven; no reqOpenOrders re-poll)
     try:
-        await handle.ack(timeout=5.0)
+        await handle.ack(timeout=3.0 if dynamic_fill else 5.0)
         _record_place_to_ack(ib, "combo_bracket" if bag_stop_handle else "combo", t_place)
     except asyncio.TimeoutError:
         pass
     bag_status = handle.status or "PendingSubmit"
+
+    if dynamic_fill:
+        # BUY pays the signed net, so more aggressive is up; a SELL bag steps down.
+        direction = 1.0 if bag_action == "BUY" else -1.0
+
+        def _next_price(current_price: float) -> float:
+            if bag_symbol != "SPX":
+                return round(current_price + direction * 0.01, 2)
+            for step in (spx_tick_for_price(current_price), 0.10):
+                raw = current_price + direction * step
+                nxt = round_signed_to_tick(raw, spx_tick_for_price(raw))
+                if (nxt - current_price) * direction > 1e-9:
+                    return nxt                 # (2.00 + 0.05 rounds back to 2.00 on the 0.10 grid: take 0.10)
+            return nxt
+
+        handle, stopped = await _reprice_until_filled(ib, bag, order, handle,
+                                                      reprice_interval, _next_price)
+        if stopped:
+            return {"type": "order_status", "data": {
+                "status": "Error",
+                "orderId": order.orderId,
+                "message": f"Order became {stopped} before fill"
+            }}
+        bag_status = handle.status or "Unknown"
+        bag_lmt = order.lmtPrice
 
     state.active_trades[order.orderId] = handle
     refresh_fn()

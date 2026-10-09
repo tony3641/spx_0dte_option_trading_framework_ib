@@ -21,11 +21,13 @@
                 qty: 1,
             });
         }
+        _limitFollowsMid();
         renderStrategy();
     }
 
     function removeLeg(legId) {
         state.strategyLegs = state.strategyLegs.filter(l => l.id !== legId);
+        _limitFollowsMid();
         renderStrategy();
     }
 
@@ -141,12 +143,46 @@
         return p > 2 ? 0.10 : 0.05;
     }
 
+    // Nearest SPX tick, halves away from zero (a credit of 0.775 is 0.80, like a debit). The epsilon
+    // absorbs float error: 0.775 / 0.05 is 15.4999... in binary.
     function _roundSpxPrice(value) {
         const p = parseFloat(value);
         if (Number.isNaN(p)) return 0.0;
         const tick = _spxTickForPrice(p);
-        const rounded = Math.round(p / tick) * tick;
-        return rounded;
+        const ticks = Math.round(Math.abs(p) / tick + 1e-9);
+        return Math.sign(p) * Number((ticks * tick).toFixed(2));
+    }
+
+    // The order's quotes in the limit-price convention (single leg positive; spreads signed, negative =
+    // credit), set by computeCombo; null when a leg has no quote.
+    let _orderQuote = null;
+
+    function _limitFollowsMid() {
+        const lmtInput = document.getElementById('stratLmtPrice');
+        if (lmtInput) lmtInput.dataset.autofilled = 'true';
+    }
+
+    function _showOrderQuotes(q) {
+        _orderQuote = q;
+        for (const side of ['bid', 'mid', 'ask']) {
+            const name = side[0].toUpperCase() + side.slice(1);
+            const btn = document.getElementById('orderQuote' + name);
+            const val = document.getElementById('orderQuote' + name + 'Val');
+            if (!btn || !val) continue;
+            const text = q ? q[side].toFixed(2) : '-';
+            if (val.textContent !== text) val.textContent = text;
+            btn.disabled = !q;
+        }
+    }
+
+    // Click on Bid / Mid / Ask: that price goes in the limit, on the tick. Bid or Ask stays put as quotes
+    // move; Mid keeps following the mid (the default).
+    function applyOrderQuote(side) {
+        const lmtInput = document.getElementById('stratLmtPrice');
+        if (!lmtInput || !_orderQuote) return;
+        lmtInput.value = _roundSpxPrice(_orderQuote[side]).toFixed(2);
+        lmtInput.dataset.autofilled = side === 'mid' ? 'true' : 'false';
+        updatePriceInputStep(lmtInput);
     }
 
     function updatePriceInputStep(input) {
@@ -181,6 +217,7 @@
             countEl.textContent = '';
             const orderRow = document.getElementById('orderEntryRow');
             if (orderRow) orderRow.style.display = 'none';
+            _showOrderQuotes(null);
             updateStrategyDockLine();
             refreshSelectionHighlights();
             return;
@@ -314,6 +351,7 @@
         }
 
         if (!allValid) {
+            _showOrderQuotes(null);
             comboBidEl.textContent = '-';
             comboAskEl.textContent = '-';
             comboMidEl.textContent = '-';
@@ -334,16 +372,14 @@
             comboAskEl.textContent = (isSingleLeg ? Math.abs(ask) : ask).toFixed(2);
             comboMidEl.textContent = (isSingleLeg ? Math.abs(mid) : mid).toFixed(2);
 
-            // Auto-fill limit price input (only if user hasn't typed yet).
-            // Single-leg: positive. Combo: signed (negative = credit).
+            // The order row's quotes and the limit's default: the mid on the SPX tick (until the user
+            // types a price or picks Bid / Ask). Single-leg: positive. Combo: signed (negative = credit).
+            const signedMid = _roundSpxPrice(isSingleLeg ? Math.abs(mid) : mid);
+            _showOrderQuotes(isSingleLeg
+                ? { bid: Math.min(Math.abs(bid), Math.abs(ask)), mid: signedMid, ask: Math.max(Math.abs(bid), Math.abs(ask)) }
+                : { bid, mid: signedMid, ask });
             const lmtInput = document.getElementById('stratLmtPrice');
             if (lmtInput && lmtInput.dataset.autofilled !== 'false') {
-                const tick = _spxTickForPrice(mid);
-                const signedMid = isSingleLeg
-                    ? Math.round(Math.abs(mid) / tick) * tick
-                    : (netCost <= 0
-                        ? -(Math.round(Math.abs(mid) / tick) * tick)
-                        : (Math.round(mid / tick) * tick));
                 lmtInput.value = signedMid.toFixed(2);
                 lmtInput.dataset.autofilled = 'true';
                 updatePriceInputStep(lmtInput);

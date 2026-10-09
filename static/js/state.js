@@ -36,6 +36,8 @@
         // Account tab state
         accountSummary: {},
         positions: [],
+        positionRows: null,     // server rows: spreads with their legs, then singles (null: list positions as is)
+        expandedSpreads: new Set(),   // spread ids whose legs are shown (kept across updates)
         openOrders: [],
         executions: [],
         // Pending order confirmation callback

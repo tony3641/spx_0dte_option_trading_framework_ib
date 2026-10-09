@@ -97,7 +97,7 @@
         <div class="chart-panel panel-price">
             <div class="chart-title"><span id="priceChartTitle">SPX Intraday</span>
                 <span class="help" tabindex="0" aria-label="Price chart info">?
-                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall, put wall, gamma flip and max pain are drawn as price lines. Times are ET.</span>
+                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall, put wall, gamma flip and max pain are drawn as price lines. The pane below is RSI(14) of the 1-minute closes (Wilder's smoothing, dashed guides at 70 and 30); it starts on the 15th bar of the session. A dashboard started mid-session still loads the bars from the open. Times are ET.</span>
                 </span>
             </div>
             <div id="priceChart"></div>
@@ -140,7 +140,7 @@
         <div class="chart-panel panel-pos" id="positionsPanel">
             <div class="chart-title"><span>Positions &amp; P&amp;L</span>
                 <span class="help" tabindex="0" aria-label="Positions help">?
-                    <span class="tooltip" role="tooltip">Net liquidation value and unrealized / realized P&amp;L from the account feed, plus your open positions with their live marks. The Account tab has the full detail and the close buttons.</span>
+                    <span class="tooltip" role="tooltip">Net liquidation value and unrealized / realized P&amp;L from the account feed, plus your open positions with their live marks. Legs filled together as one combo order today show as one spread row (quantity negative for a credit spread, mark is the price to close one spread); the arrow shows its legs. The Account tab has the full detail and the close buttons: Liquidate on a spread row closes every spread in it (2 identical spreads close together) as one combo order; Liquidate on an expanded leg closes only that leg.</span>
                 </span>
             </div>
             <div class="pos-panel-body">
@@ -247,6 +247,11 @@
             </div>
             <!-- Order entry row (only visible when strategy has legs) -->
             <div class="order-entry-row" id="orderEntryRow" style="display:none;">
+                <span class="order-quotes" id="orderQuotes" title="The order's bid, mid and ask (spreads: signed net, negative for a credit). Click one to use it as the limit price.">
+                    <button type="button" class="quote-btn quote-bid" id="orderQuoteBid" onclick="applyOrderQuote('bid')" disabled><span class="quote-label">Bid</span> <span class="quote-val num" id="orderQuoteBidVal">-</span></button>
+                    <button type="button" class="quote-btn quote-mid" id="orderQuoteMid" onclick="applyOrderQuote('mid')" disabled><span class="quote-label">Mid</span> <span class="quote-val num" id="orderQuoteMidVal">-</span></button>
+                    <button type="button" class="quote-btn quote-ask" id="orderQuoteAsk" onclick="applyOrderQuote('ask')" disabled><span class="quote-label">Ask</span> <span class="quote-val num" id="orderQuoteAskVal">-</span></button>
+                </span>
                 <span class="order-entry-label">Limit Price</span>
                 <input type="number" step="0.05" class="order-lmt-input" id="stratLmtPrice" placeholder="0.00" title="Combo limit price (negative for credit spreads; single-leg prices are positive)"
                     oninput="this.dataset.autofilled='false'; updatePriceInputStep(this)"

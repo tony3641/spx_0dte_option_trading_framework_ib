@@ -366,3 +366,32 @@ class TestExecutionTimeParsing:
         assert parsed.date() == datetime(2026, 4, 9, tzinfo=ET).date()
         assert parsed.hour == 12
         assert parsed.minute == 37
+
+    def test_parse_ib_time_with_a_zone_name(self):
+        # Current TWS builds send "YYYYMMDD HH:MM:SS <IANA zone>", in the zone TWS is set to.
+        parsed = parse_execution_time("20260820 13:30:05 US/Central")
+        assert parsed is not None
+        assert (parsed.hour, parsed.minute, parsed.second) == (14, 30, 5)    # 13:30 CDT is 14:30 EDT
+        assert parsed.tzinfo is ET
+
+    def test_a_fill_stamped_with_a_zone_name_is_listed_today(self):
+        mock = MockIBClient()
+        stamp = now_et().strftime("%Y%m%d %H:%M:%S") + " America/New_York"
+        mock.executions = [ExecutionRecord(
+            _contract(symbol="SPX"),
+            SimpleNamespace(execId="E9", time=stamp, side="BOT", shares=1, price=2.0, orderId=7),
+            None)]
+        assert [e["execId"] for e in serialize_execution(mock)] == ["E9"]
+
+    def test_ib_decimal_fill_sizes_serialize_to_json(self):
+        # ibapi reports execution.shares as a Decimal; one in the payload would drop the whole account update.
+        import json
+        from decimal import Decimal
+        mock = MockIBClient()
+        mock.executions = [ExecutionRecord(
+            _contract(symbol="SPX"),
+            SimpleNamespace(execId="E10", time=now_et().strftime("%Y%m%d %H:%M:%S") + " US/Eastern",
+                            side="BOT", shares=Decimal("2"), price=1.5, orderId=8),
+            None)]
+        rows = serialize_execution(mock)
+        assert json.loads(json.dumps(rows))[0]["shares"] == 2
