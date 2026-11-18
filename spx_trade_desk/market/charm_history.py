@@ -20,7 +20,7 @@ from spx_trade_desk.market.gex import GEXResult
 DT15_YEARS = 15.0 / (390.0 * 252.0)       # the finite-difference step charm is expressed per
 MULTIPLIER = 100.0                         # SPX option multiplier
 CHARM_BAND = 0.03                          # strikes within +-3% of spot are kept
-MAX_FRAMES = 1500
+MAX_FRAMES = 1440                          # one frame per minute for a full 24 h expiration
 
 
 def charm_exposure(result: GEXResult) -> Dict[float, float]:
@@ -66,6 +66,19 @@ class CharmHistory:
 
     def frames(self) -> List[dict]:
         return list(self._frames)
+
+    def snapshot_frames(self) -> List[dict]:
+        """The history for a snapshot: a frame whose strikes equal the previous frame's omits them (the
+        reader reuses the previous frame's strikes), so the same strike list is not sent once per minute."""
+        out: List[dict] = []
+        prev = None
+        for f in self._frames:
+            if f["strikes"] == prev:
+                out.append({"time": f["time"], "values": f["values"]})
+            else:
+                out.append(f)
+                prev = f["strikes"]
+        return out
 
     def latest(self) -> Optional[dict]:
         return self._frames[-1] if self._frames else None

@@ -83,3 +83,15 @@ def test_the_price_snapshot_carries_the_charm_history():
     st.charm_history.record(_result(call_oi={102: 100000}))
     snap = snapshot_payload(st, rth=True, today="2099-01-05")
     assert snap["charm"] == [st.charm_history.latest()] and snap["charm"][0]["time"] == "2099-01-05T11:30"
+
+
+def test_a_snapshot_sends_the_strike_list_only_when_it_changes():
+    h = CharmHistory()
+    h.record(_result(call_oi={102: 100000}, stamp="2099-01-05T11:30:00-05:00"))
+    h.record(_result(call_oi={102: 90000}, stamp="2099-01-05T11:31:00-05:00"))
+    h.record(_result(call_oi={102: 80000}, stamp="2099-01-05T11:32:00-05:00"))
+    frames = h.snapshot_frames()
+    assert [("strikes" in f) for f in frames] == [True, False, False]
+    assert [f["values"] for f in frames] == [f["values"] for f in h.frames()]
+    assert all(f["strikes"] == h.frames()[0]["strikes"] for f in h.frames())    # the axis they all share
+    assert len(h.frames()) == 3                                                  # the stored history is whole

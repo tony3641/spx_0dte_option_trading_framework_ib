@@ -182,9 +182,9 @@ Source: spx_trade_desk/core/config.py
 ### static/js/price-chart.js
 - Level step lines (dotted, width 2): Call Wall, Put Wall, Gamma Flip, Max Pain; at most `LEVEL_ROWS_MAX` (2000) change points kept; axis tags are the codes CW / PW / GF / MP and the lines and tags are `LEVEL_ALPHA` (0.7) opaque
 - static/js/gex-profile.js: `GEX_HEAD_H` (20 px caption strip), `GEX_LABEL_ROOM` (40 px kept free for a bar's value label), `GEX_BAR_FILL` (0.74 of a strike's band) and `GEX_BAR_MAX_H` (18 px), `GEX_ZOOM_BUTTON` (1.5 per `-` / `+` click), `GEX_WHEEL_RATE` (0.0016 zoom exponent per wheel unit), `GEX_MIN_SPAN` (4 index points, the closest zoom; the widest is the strike range x 1.2 or 5% of spot), `GEX_DRAG_PX` (3 px before a press is a drag), `GEX_LABELS_PER_SIDE` (4 value labels when rows are too thin to label all); `GEX_VIEW_KEY` (`spx-gex-profile-view`) remembers Split / Net; column width `--gex-profile-w` (216 px, 150 px under 700 px) in static/css/charts.css
-- Charm heatmap: `CHARM_FRAMES_MAX` (1500) frames kept; `CHARM_PREF_KEY` (`spx-charm-heatmap`) remembers the Charm button
+- Charm heatmap: `CHARM_FRAMES_MAX` (1440) frames kept; `CHARM_PREF_KEY` (`spx-charm-heatmap`) remembers the Charm button
 - static/js/charm-heatmap.js: `CHARM_MIN_RATIO` (cells under 0.5% of the scale stay clear), `CHARM_ALPHA_MIN` / `CHARM_ALPHA_SPAN` (alpha 0.06 to 0.40), `CHARM_ALPHA_STEPS`, `CHARM_MAX_GAP_S` (a column is at most 5 min wide)
-- spx_trade_desk/market/charm_history.py: `CHARM_BAND` (3% of spot), `MAX_FRAMES` (1500)
+- spx_trade_desk/market/charm_history.py: `CHARM_BAND` (3% of spot), `MAX_FRAMES` (1440)
 - Candle and line colors come from `themeColors()` (tokens in static/css/tokens.css), re-applied on `themechange`
 - A reconnect snapshot of the same session keeps the visible range (shifted by the number of new bars when the viewer was at the live edge); only the first snapshot and a new session fit the content
 - Times: ET wall-clock encoded as UTC seconds (Date.UTC)

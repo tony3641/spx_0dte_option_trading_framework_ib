@@ -14,7 +14,7 @@
     const LEVEL_ALPHA = 0.7;
     const levelColor = (c, lv) => withAlpha(c[lv.color], LEVEL_ALPHA);
     const LEVEL_ROWS_MAX = 2000;
-    const CHARM_FRAMES_MAX = 1500;
+    const CHARM_FRAMES_MAX = 1440;
     const CHARM_PREF_KEY = 'spx-charm-heatmap';          // localStorage '1' | '0'; default off
     // The model (bars, overnightPts, latest) is always current; the series are brought up to date
     // only while the Dashboard tab is visible. pending* hold what the next frame must push.
@@ -162,7 +162,11 @@
         for (const p of (data.levels || [])) recordLevelRow(_levelRow(p));
         priceChart.charmFrames = [];
         priceChart.charmVersion++;
-        for (const f of (data.charm || [])) recordCharmFrame(_charmFrame(f));
+        let charmStrikes = null;                             // a frame without strikes reuses the previous frame's
+        for (const f of (data.charm || [])) {
+            if (Array.isArray(f.strikes)) charmStrikes = f.strikes;
+            recordCharmFrame(_charmFrame(Array.isArray(f.strikes) ? f : { ...f, strikes: charmStrikes }));
+        }
         // Fit only the first snapshot and a new session: a reconnect snapshot of the same session keeps the zoom.
         priceChart.needsFit = priceChart.needsFit || !priceChart.hadSnapshot || prevSession !== priceChart.sessionDate;
         priceChart.hadSnapshot = true;
