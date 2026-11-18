@@ -130,7 +130,11 @@ def test_no_record_while_spot_is_unknown(tmp_path, app_state):
     assert not (tmp_path / "20261005.jsonl.gz").exists()
 
 
-def test_a_record_carries_cumulative_flow_and_only_the_new_minutes(tmp_path, app_state):
+def at_s(h, m, sec, day=5):
+    return datetime(2026, 10, day, h, m, sec, tzinfo=ET)
+
+
+def test_a_record_carries_cumulative_flow_and_only_completed_minutes(tmp_path, app_state):
     from spx_trade_desk.market.flow import FlowTracker
     from spx_trade_desk.sim.library import iter_records
 
@@ -146,16 +150,41 @@ def test_a_record_carries_cumulative_flow_and_only_the_new_minutes(tmp_path, app
                                keys, 7700.0, t, "20261005")
 
     rec = ChainRecorder(tmp_path)
-    tick(at(9, 59), 100)                                               # baseline
-    tick(at(10, 0), 105)                                               # 5 bought at the ask
-    assert rec.maybe_record(st, at(10, 0), now_mono=10.0)
-    tick(at(10, 2), 107)                                               # 2 more
-    assert rec.maybe_record(st, at(10, 2), now_mono=12.0)
+    tick(at_s(9, 59, 0), 100)                                          # baseline, minute 9:59
+    tick(at_s(10, 0, 10), 105)                                         # 5 bought at the ask, minute 10:00
+    assert rec.maybe_record(st, at_s(10, 0, 30), now_mono=10.0)        # 10:00 still filling: not written
+    tick(at_s(10, 0, 50), 108)                                         # 3 more, still minute 10:00
+    tick(at_s(10, 1, 20), 108)                                         # minute 10:01 starts
+    assert rec.maybe_record(st, at_s(10, 2, 30), now_mono=12.0)        # 10:00 and 10:01 are completed
+    tick(at_s(10, 2, 40), 110)                                         # 2 more, minute 10:02
+    tick(at_s(10, 3, 30), 110)                                         # minute 10:03 starts
+    assert rec.maybe_record(st, at_s(10, 4, 30), now_mono=14.0)        # 10:02 and 10:03 are completed
 
     recs = list(iter_records(tmp_path / "20261005.jsonl.gz"))
-    assert [r["v"] for r in recs] == [1, 1]
-    first, second = recs[0]["flow"], recs[1]["flow"]
-    assert first["cum"] == [[7700, "P", 5, 0, 0]]
-    assert [m["time"] for m in first["minutes"]] == ["2026-10-05T09:59", "2026-10-05T10:00"]
-    assert second["cum"] == [[7700, "P", 7, 0, 0]]
-    assert [m["time"] for m in second["minutes"]] == ["2026-10-05T10:02"]   # no minute repeated
+    assert [r["v"] for r in recs] == [1, 1, 1]
+    a, b, c = (r["flow"] for r in recs)
+    assert a["cum"] == [[7700, "P", 5, 0, 0]]
+    assert [m["time"] for m in a["minutes"]] == ["2026-10-05T09:59"]         # 10:00 is not partial
+    assert b["cum"] == [[7700, "P", 8, 0, 0]]                                 # cum is current at write time
+    put_minute = next(m for m in b["minutes"] if m["time"] == "2026-10-05T10:00")
+    assert put_minute["put_delta_usd"] == round(8 * -0.3 * 100 * 7700)        # the full minute: 8 contracts
+    assert [m["time"] for m in b["minutes"]] == ["2026-10-05T10:00", "2026-10-05T10:01"]
+    assert [m["time"] for m in c["minutes"]] == ["2026-10-05T10:02", "2026-10-05T10:03"]   # no gap, no repeat
+
+
+def test_a_failing_flow_block_still_writes_the_chain_record_without_flow(tmp_path, app_state, monkeypatch, caplog):
+    from spx_trade_desk.market.flow import FlowTracker
+    from spx_trade_desk.sim.library import iter_records
+
+    st = _state(app_state)
+    st.flow_tracker = FlowTracker()
+
+    def boom():
+        raise RuntimeError("invented flow failure")
+
+    monkeypatch.setattr(st.flow_tracker, "minutes", boom)
+    rec = ChainRecorder(tmp_path)
+    assert rec.maybe_record(st, at(10, 0), now_mono=10.0)
+    (only,) = list(iter_records(tmp_path / "20261005.jsonl.gz"))
+    assert only["v"] == 1 and "flow" not in only and len(only["rows"]) == 2
+    assert "flow block failed" in caplog.text

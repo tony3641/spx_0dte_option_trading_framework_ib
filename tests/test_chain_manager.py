@@ -505,3 +505,21 @@ async def test_monthly_gex_reports_zero_gamma(app_state, monkeypatch):
     st.spx_price = 7700.0
     await chain_manager.monthly_gex_fetch(None, st, Sink())
     assert st.monthly_latest_gex["gamma_flip_method"] == "zero_gamma"
+
+
+def test_record_flow_never_raises_even_when_the_state_has_no_failure_stamp(caplog):
+    from types import SimpleNamespace
+    from datetime import datetime as dt
+    from spx_trade_desk.market.chain_manager import record_flow
+    from spx_trade_desk.market.hours import ET
+
+    class Boom:
+        def update(self, *a):
+            raise RuntimeError("boom")
+
+    state = SimpleNamespace(flow_tracker=Boom(), chain_stream_tickers={}, spx_price=100.0, expiration="20990105")
+    now = dt(2099, 1, 5, 10, 0, tzinfo=ET)
+    record_flow(state, [], now)
+    record_flow(state, [], now)
+    assert sum("Flow tracking failed" in r.message for r in caplog.records) == 1
+    assert state.flow_failed_mono > float("-inf")

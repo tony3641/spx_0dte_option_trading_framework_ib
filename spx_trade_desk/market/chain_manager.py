@@ -339,7 +339,7 @@ def record_flow(state, rows: List[OptionData], now: datetime) -> None:
         state.flow_tracker.update(rows, set(state.chain_stream_tickers), state.spx_price, now, state.expiration)
     except Exception:
         mono = time.monotonic()
-        if mono - state.flow_failed_mono >= FLOW_LOG_INTERVAL_S:
+        if mono - getattr(state, "flow_failed_mono", float("-inf")) >= FLOW_LOG_INTERVAL_S:
             state.flow_failed_mono = mono
             logger.exception("Flow tracking failed")
 
