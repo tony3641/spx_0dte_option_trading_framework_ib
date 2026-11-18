@@ -440,7 +440,7 @@ async def test_a_failed_reconnect_boot_starts_no_loops_and_answers_500(server_st
 
 @pytest.fixture
 def lifespan_stub(monkeypatch, app_state, request):
-    """server.lifespan with no real IB, Discord, nest_asyncio patching or root log handler."""
+    """server.lifespan with no real IB, Discord or root log handler."""
     from spx_trade_desk import server
     calls = []
     handler = logging.NullHandler()
@@ -470,7 +470,6 @@ def lifespan_stub(monkeypatch, app_state, request):
     monkeypatch.setattr(server, "DiscordSettingsManager", FakeDiscord)
     monkeypatch.setattr(server, "load_initial_settings", lambda: object())
     monkeypatch.setattr(server, "LogStoreHandler", lambda state: handler)
-    monkeypatch.setattr(server, "nest_asyncio", SimpleNamespace(apply=lambda loop: None))
     monkeypatch.setattr(server, "make_broadcast_fn", lambda state: "bcast")
     monkeypatch.setattr(server, "make_ib_error_handler", lambda state, fn: error_handler)
     monkeypatch.setattr(server, "boot_session", fake_boot)

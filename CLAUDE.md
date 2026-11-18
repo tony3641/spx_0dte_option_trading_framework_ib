@@ -13,7 +13,7 @@ The user's real SPX 0DTE bull-put trades are placed **by hand** on the same prin
 
 ## Commands
 
-Python 3.10, Windows (Git Bash and PowerShell both available). No linter, formatter or CI is configured.
+Python 3.12+ (developed on 3.14), Windows (Git Bash and PowerShell both available). No linter, formatter or CI is configured.
 
 ```bash
 pip install -e "C:\TWS API\source\pythonclient"   # ibapi is not on PyPI; install it FIRST (machine-specific path)

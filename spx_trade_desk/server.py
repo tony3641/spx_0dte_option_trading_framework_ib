@@ -16,11 +16,6 @@ import signal
 import sys
 from typing import Optional
 
-# Must be BEFORE any event-loop creation
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-import nest_asyncio
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, WebSocket, HTTPException, Request
@@ -86,8 +81,6 @@ async def lifespan(_app):
     # Capture every framework log record into the Log console's ring buffer.
     logging.getLogger().addHandler(LogStoreHandler(state))
 
-    loop = asyncio.get_event_loop()
-    nest_asyncio.apply(loop)
     ib = IBClient()
     broadcast_fn = make_broadcast_fn(state)
 
@@ -453,10 +446,6 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    nest_asyncio.apply(loop)
-
     uvi_config = uvicorn.Config(
         app,
         host=config.SERVER_HOST,
@@ -497,17 +486,14 @@ if __name__ == "__main__":
     else:
         logger.info(f"  Access at       : http://{config.SERVER_HOST}:{config.SERVER_PORT}")
 
-    try:
-        loop.run_until_complete(server.serve())
-    except KeyboardInterrupt:
-        logger.info("KeyboardInterrupt received; shutting down...")
-        server.should_exit = True
-    finally:
-        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
-        logger.info("Server shutdown complete")
+    # Selector loop on Windows (the Proactor default is avoided as before). A loop_factory replaces
+    # the event-loop policy API, which is deprecated in 3.14 and removed in 3.16. Runner's exit
+    # cancels leftover tasks, shuts down async generators and the default executor, then closes.
+    loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
+    with asyncio.Runner(loop_factory=loop_factory) as runner:
+        try:
+            runner.run(server.serve())
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received; shutting down...")
+            server.should_exit = True
+    logger.info("Server shutdown complete")

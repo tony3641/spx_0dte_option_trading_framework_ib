@@ -7,7 +7,7 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
 | Layer | Technology |
 |---|---|
 | Broker API | native `ibapi` → IB TWS/Gateway (port 7497) |
-| Backend | Python 3.10, FastAPI, uvicorn |
+| Backend | Python 3.12+ (3.14 tested), FastAPI, uvicorn |
 | Real-time push | WebSocket, one send channel per browser (changed-field chain ticks, latest-wins snapshots) |
 | Frontend | Vanilla JS, no build step: Plotly 2.32 (IV smile) and TradingView Lightweight Charts 5.2.1 (SPX price chart; the GEX profile is a canvas on its price axis), both libraries from a CDN |
 
@@ -37,7 +37,7 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
    and run it. It installs to `C:\TWS` by default. Then install the client:
 
    ```
-   pip install -e "C:\TWS\source\pythonclient"
+   pip install -e "C:\TWS API\source\pythonclient"
    ```
 
    The path above is machine-specific. Edit it to match your local TWS API installation.

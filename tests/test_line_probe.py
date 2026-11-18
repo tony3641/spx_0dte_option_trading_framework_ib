@@ -82,7 +82,7 @@ def test_main_prints_a_probe_error_and_exits_nonzero(monkeypatch, capsys):
         raise line_probe.ProbeError("no contract details for SPX")
 
     monkeypatch.setattr(sys, "argv", ["line_probe"])
-    monkeypatch.setattr(asyncio, "run", boom)
+    monkeypatch.setattr(line_probe, "run_loop", boom)
     with pytest.raises(SystemExit) as e:
         line_probe.main()
     assert e.value.code == 1
@@ -100,14 +100,12 @@ def test_importing_the_module_does_not_change_the_event_loop_policy(monkeypatch)
     assert calls == []
 
 
-def test_main_installs_the_selector_policy_on_windows(monkeypatch):
-    calls = []
-    monkeypatch.setattr(asyncio, "set_event_loop_policy", lambda policy: calls.append(policy))
-    monkeypatch.setattr(asyncio, "WindowsSelectorEventLoopPolicy", asyncio.DefaultEventLoopPolicy,
-                        raising=False)
+def test_main_runs_on_a_selector_loop_on_windows_without_touching_the_policy(monkeypatch):
+    policy_calls, factories = [], []
+    monkeypatch.setattr(asyncio, "set_event_loop_policy", lambda policy: policy_calls.append(policy))
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(sys, "argv", ["line_probe"])
-    ran = []
-    monkeypatch.setattr(asyncio, "run", lambda coro: (coro.close(), ran.append(1)))
+    monkeypatch.setattr(asyncio, "run", lambda coro, *, loop_factory=None: (
+        coro.close(), factories.append(loop_factory)))
     line_probe.main()
-    assert len(calls) == 1 and ran == [1]
+    assert policy_calls == [] and factories == [asyncio.SelectorEventLoop]

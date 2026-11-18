@@ -23,10 +23,8 @@ import sys
 import time
 from typing import Dict, List, NamedTuple, Optional
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 from spx_trade_desk.core import config
+from spx_trade_desk.core.loop import run as run_loop
 from spx_trade_desk.core.app_state import AppState
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib import orders
@@ -541,7 +539,7 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _parser().parse_args()
     logging.basicConfig(level=logging.ERROR)
-    sys.exit(asyncio.run(run(args)))
+    sys.exit(run_loop(run(args)))
 
 
 if __name__ == "__main__":

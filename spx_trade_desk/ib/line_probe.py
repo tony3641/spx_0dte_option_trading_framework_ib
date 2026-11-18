@@ -17,6 +17,7 @@ import sys
 from typing import List, Tuple
 
 from spx_trade_desk.core import config
+from spx_trade_desk.core.loop import run as run_loop
 from spx_trade_desk.ib.client import IBClient
 from spx_trade_desk.ib.connection import _index_contract
 from spx_trade_desk.ib.pacing import RequestPacer
@@ -109,15 +110,13 @@ async def run(args) -> None:
 
 
 def main() -> None:
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--host", default=config.IB_HOST)
     ap.add_argument("--port", type=int, default=config.IB_PORT)
     ap.add_argument("--client-id", type=int, default=140)
     ap.add_argument("--cap", type=int, default=2000, help="never ask for more lines than this")
     try:
-        asyncio.run(run(ap.parse_args()))
+        run_loop(run(ap.parse_args()))
     except ProbeError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
