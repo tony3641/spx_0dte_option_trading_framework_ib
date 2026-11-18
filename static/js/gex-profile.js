@@ -15,6 +15,8 @@
     const GEX_MIN_SPAN = 4;                          // index points: the closest zoom
     const GEX_DRAG_PX = 3;                           // movement below this is a click, not a drag
     const GEX_LABELS_PER_SIDE = 4;                   // value labels when rows are too thin to label them all
+    const GEX_CURVE_KEY = 'spx-gex-curve';           // localStorage: '1' | '0'; the gamma curve is on by default
+    const GEX_NODE_HALF = 4;                         // px: half the width of a gamma node's diamond
 
     const gexProfile = {
         host: null, canvas: null, ctx: null, tip: null,
@@ -25,6 +27,8 @@
         draws: 0,                                     // completed draws (tests count them)
         spotY: null,                                  // y of the NOW line in the last draw, null when off screen
         summarySig: '',
+        curveOn: true,                                // the gamma curve (Curve button)
+        curveDrawn: 0, nodesDrawn: 0, voidsDrawn: 0, emDrawn: 0,   // per-draw counts of the dealer overlays
     };
 
     // ---------------------------------------------------------------- pure helpers
@@ -80,6 +84,40 @@
         if (a >= 1e3) return (n / 1e3).toFixed(a >= 1e4 ? 0 : 1) + 'K';
         return String(Math.round(n));
     }
+
+    // The gamma curve as canvas points: the value at each grid price mapped to x around the center line
+    // (half), scaled so that |maxAbs| reaches maxLen px. No scale when maxAbs is 0 (every x is the center).
+    function gexCurveXY(values, from, step, maxAbs, half, maxLen) {
+        const k = maxAbs > 0 ? maxLen / maxAbs : 0;
+        return values.map((v, i) => ({ p: from + i * step, x: half + v * k }));
+    }
+
+    // The curve's value at price x (linear between grid points), or null outside the grid.
+    function gexInterp(from, step, values, x) {
+        const n = values ? values.length : 0;
+        if (!n || !(step > 0) || !isFinite(from) || !isFinite(x)) return null;
+        const t = (x - from) / step;
+        if (t < -1e-9 || t > n - 1 + 1e-9) return null;
+        const tc = Math.min(Math.max(t, 0), n - 1);
+        const i = Math.min(Math.floor(tc), n - 1);
+        if (i >= n - 1) return values[n - 1];
+        return values[i] + (values[i + 1] - values[i]) * (tc - i);
+    }
+
+    // True when the span between two y coordinates (either order) reaches the drawn area below the caption.
+    function _gexSpanVisible(y1, y2, H) {
+        return Math.max(y1, y2) >= GEX_HEAD_H && Math.min(y1, y2) <= H;
+    }
+
+    // ---------------------------------------------------------------- gamma curve (Curve button)
+    function setGexCurve(on) {
+        gexProfile.curveOn = !!on;
+        try { localStorage.setItem(GEX_CURVE_KEY, gexProfile.curveOn ? '1' : '0'); } catch (e) { /* not remembered */ }
+        const btn = document.getElementById('gexCurveToggle');
+        if (btn) btn.classList.toggle('active', gexProfile.curveOn);
+        renderWhenVisible('dashboard', 'gex.curve', drawGexProfile);
+    }
+    function toggleGexCurve() { setGexCurve(!gexProfile.curveOn); }
 
     // ---------------------------------------------------------------- price scale access
     function _gexScale() {
@@ -145,12 +183,18 @@
             el.classList.remove('up', 'down');
             if (cls) el.classList.add(cls);
         };
+        const sgn = (v) => (v == null ? '' : (v >= 0 ? 'up' : 'down'));
+        const dl = g && g.dealer ? g.dealer : null;
         const sig = g ? [g.timestamp, g.total_net_gex, g.total_call_oi, g.total_put_oi, state.gexMode,
-                         state.monthlyExpiration, g.dealer ? g.dealer.regime : ''].join('|') : '';
+                         state.monthlyExpiration, dl ? dl.regime : '',
+                         dl ? [dl.gamma_at_spot, dl.zero_gamma_distance, dl.em && dl.em.used_pct,
+                               dl.charm && dl.charm.to_close_usd, dl.vanna && dl.vanna.usd_per_vol_down] : ''].join('|') : '';
         if (sig === gexProfile.summarySig) return;
         gexProfile.summarySig = sig;
         if (!g) {
             set('gexSumNet', '-'); set('gexSumRegime', ''); set('gexSumOi', '-'); set('gexSumPc', '-'); set('gexSumSkew', '-');
+            set('gexSumGamma', '-'); set('gexSumZgDist', '-'); set('gexSumEmUsed', '-');
+            set('gexSumCharm', '-'); set('gexSumVanna', '-');
             set('gexChartLabel', 'GEX by strike');
             return;
         }
@@ -159,6 +203,17 @@
         set('gexSumNet', fmtGex(net), net == null ? '' : (net >= 0 ? 'up' : 'down'));
         set('gexSumRegime', longGamma == null ? '' : (longGamma ? 'CONVERGING' : 'DIVERGING'),
             longGamma == null ? '' : (longGamma ? 'up' : 'down'));
+        // Dealer rows: "-" in monthly mode and whenever the profile could not be computed.
+        const gam = dl ? dl.gamma_at_spot : null;
+        set('gexSumGamma', gam == null ? '-' : `${longGamma ? 'Long γ' : 'Short γ'} ${fmtGex(gam)}`, sgn(gam));
+        const zgd = dl ? dl.zero_gamma_distance : null;
+        set('gexSumZgDist', zgd == null ? '-' : `${zgd > 0 ? '+' : ''}${zgd.toFixed(1)}`);
+        const used = dl && dl.em ? dl.em.used_pct : null;
+        set('gexSumEmUsed', used == null ? '-' : `${Math.round(used)}%`);
+        const charm = dl && dl.charm ? dl.charm.to_close_usd : null;
+        set('gexSumCharm', fmtGex(charm), sgn(charm));
+        const vanna = dl && dl.vanna ? dl.vanna.usd_per_vol_down : null;
+        set('gexSumVanna', fmtGex(vanna), sgn(vanna));
         const co = g.total_call_oi, po = g.total_put_oi;
         set('gexSumOi', (co > 0 || po > 0) ? `${gexCompact(co)} / ${gexCompact(po)}` : '-');
         if (co > 0) {
@@ -215,6 +270,10 @@
         ctx.clearRect(0, 0, W, H);
         P.rows = [];
         P.drawn = 0;
+        P.curveDrawn = 0;
+        P.nodesDrawn = 0;
+        P.voidsDrawn = 0;
+        P.emDrawn = 0;
         P.spotY = null;
         P.draws++;
         const ps = _gexScale();
@@ -225,6 +284,7 @@
 
         const c = themeColors();
         const g = currentGexData();
+        const dealer = g && g.dealer ? g.dealer : null;       // monthly mode has no dealer block: no overlays
         const toY = (p) => priceChart.candles.priceToCoordinate(p);
         const half = W / 2;
         const net = P.view === 'net';
@@ -268,6 +328,24 @@
         const maxLen = Math.max(8, half - GEX_LABEL_ROOM);
         const lenOf = (v) => (maxAbs > 0 && v ? Math.max(1, Math.abs(v) / maxAbs * maxLen) : 0);
 
+        // Gamma nodes: the rows that carry one (their value labels are drawn with the node marker).
+        const nodes = dealer ? (dealer.nodes || []) : [];
+        const nodeRows = new Set();
+        for (const n of nodes) {
+            const r = rows.find(x => Math.abs(x.strike - n.strike) < 0.005);
+            if (r) nodeRows.add(r);
+        }
+
+        // Voids: bands of strikes with little gamma between them, behind the bars.
+        for (const v of (dealer && dealer.voids) || []) {
+            const y1 = toY(v.hi), y2 = toY(v.lo);
+            if (y1 === null || y2 === null || !_gexSpanVisible(y1, y2, H)) continue;
+            const top = Math.max(GEX_HEAD_H, Math.min(y1, y2)), bot = Math.min(H, Math.max(y1, y2));
+            ctx.fillStyle = withAlpha(c.textFaint, 0.06);
+            ctx.fillRect(0, top, W, bot - top);
+            P.voidsDrawn++;
+        }
+
         // Hover band under the bars.
         const hover = P.hoverStrike === null ? null : rows.find(r => r.strike === P.hoverStrike);
         if (hover) {
@@ -284,13 +362,14 @@
         const ranked = (key) => rows.map(r => ({ r, v: Math.abs(r[key]) })).sort((a, b) => b.v - a.v)
             .slice(0, GEX_LABELS_PER_SIDE).map(x => x.r);
         const labeled = new Set(net ? ranked('net') : ranked('call').concat(ranked('put')));
+        nodeRows.forEach(r => labeled.add(r));
         ctx.font = `10px ${P.font}`;
         ctx.textBaseline = 'middle';
         for (const r of rows) {
             const bh = Math.max(1, Math.min(GEX_BAR_MAX_H, r.h * GEX_BAR_FILL));
             const top = r.y - bh / 2;
             const hi = hover === r;
-            const wantLabel = labelAll || labeled.has(r) || hi;
+            const wantLabel = (labelAll || labeled.has(r) || hi) && bh >= 6 && !nodeRows.has(r);
             if (net) {
                 const len = lenOf(r.net);
                 if (!len) continue;
@@ -298,12 +377,12 @@
                 ctx.fillStyle = pos ? (hi ? fills.callHi : fills.call) : (hi ? fills.putHi : fills.put);
                 ctx.fillRect(pos ? half : half - len, top, len, bh);
                 P.drawn++;
-                if (wantLabel && bh >= 6) _gexValue(ctx, c, r.net, pos ? half + len + 3 : half - len - 3, r.y, pos);
+                if (wantLabel) _gexValue(ctx, c, r.net, pos ? half + len + 3 : half - len - 3, r.y, pos);
             } else {
                 const cl = lenOf(r.call), pl = lenOf(r.put);
                 if (cl) { ctx.fillStyle = hi ? fills.callHi : fills.call; ctx.fillRect(half, top, cl, bh); P.drawn++; }
                 if (pl) { ctx.fillStyle = hi ? fills.putHi : fills.put; ctx.fillRect(half - pl, top, pl, bh); P.drawn++; }
-                if (wantLabel && bh >= 6) {
+                if (wantLabel) {
                     if (cl && Math.abs(r.call) >= maxAbs * 0.08) _gexValue(ctx, c, r.call, half + cl + 3, r.y, true);
                     if (pl && Math.abs(r.put) >= maxAbs * 0.08) _gexValue(ctx, c, r.put, half - pl - 3, r.y, false);
                 }
@@ -313,6 +392,71 @@
         // Center axis.
         ctx.fillStyle = c.borderStrong;
         ctx.fillRect(Math.round(half), GEX_HEAD_H, 1, H - GEX_HEAD_H);
+
+        // The gamma curve: the dealers' G(price) as a 1 px line, scaled so its largest visible value reaches
+        // the bar length. A point counts as drawn when its price is on screen.
+        const prof = dealer && dealer.profile && dealer.profile.values ? dealer.profile : null;
+        if (prof && P.curveOn) {
+            let curveMax = 0;
+            prof.values.forEach((v, i) => {
+                const y = toY(prof.from + i * prof.step);
+                if (y !== null && y >= GEX_HEAD_H && y <= H) curveMax = Math.max(curveMax, Math.abs(v || 0));
+            });
+            const pts = gexCurveXY(prof.values, prof.from, prof.step, curveMax, half, maxLen);
+            ctx.strokeStyle = c.textMuted;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            let started = false;
+            for (const pt of pts) {
+                const y = toY(pt.p);
+                if (y === null) continue;
+                if (y >= GEX_HEAD_H && y <= H) P.curveDrawn++;
+                if (started) ctx.lineTo(pt.x, y); else { ctx.moveTo(pt.x, y); started = true; }
+            }
+            ctx.stroke();
+        }
+
+        // Gamma nodes: a diamond at the outer end of the strike's bar, filled for a pin (right side) and
+        // hollow for an accel node (left side). Its label and value sit beyond the diamond.
+        for (const n of nodes) {
+            const r = rows.find(x => Math.abs(x.strike - n.strike) < 0.005);
+            if (!r) continue;
+            const pin = n.kind === 'pin';
+            const outer = pin
+                ? half + (net ? (r.net > 0 ? lenOf(r.net) : 0) : lenOf(r.call))
+                : half - (net ? (r.net < 0 ? lenOf(r.net) : 0) : lenOf(r.put));
+            _gexDiamond(ctx, outer, r.y, GEX_NODE_HALF, pin ? c.info : null, c.alt);
+            P.nodesDrawn++;
+            const bh = Math.max(1, Math.min(GEX_BAR_MAX_H, r.h * GEX_BAR_FILL));
+            if (bh >= 6) {
+                const v = net ? r.net : (pin ? r.call : r.put);
+                _gexValue(ctx, c, v, pin ? outer + GEX_NODE_HALF + 3 : outer - GEX_NODE_HALF - 3, r.y, pin, n.label);
+            }
+        }
+
+        const spot = spotLevel(g);
+
+        // Expected move on the right edge: the anchored open band (3 px) and the live straddle band (2 px).
+        const em = dealer ? dealer.em : null;
+        if (em) {
+            if (em.high != null && em.low != null) {
+                const y1 = toY(em.high), y2 = toY(em.low);
+                if (y1 !== null && y2 !== null && _gexSpanVisible(y1, y2, H)) {
+                    ctx.fillStyle = c.info;
+                    ctx.fillRect(W - 4, Math.min(y1, y2), 3, Math.abs(y2 - y1));
+                    P.emDrawn++;
+                }
+            }
+            if (em.live != null && spot > 0) {
+                const y1 = toY(spot + em.live), y2 = toY(spot - em.live);
+                if (y1 !== null && y2 !== null && _gexSpanVisible(y1, y2, H)) {
+                    ctx.fillStyle = withAlpha(c.info, 0.4);
+                    ctx.fillRect(W - 8, Math.min(y1, y2), 2, Math.abs(y2 - y1));
+                    P.emDrawn++;
+                }
+            }
+        }
 
         // Key levels: a dashed line and a tag; a level off screen gets an arrow at the edge instead.
         const edgeTags = [];
@@ -336,7 +480,6 @@
         }
 
         // The live quote.
-        const spot = spotLevel(g);
         const sy = spot > 0 ? toY(spot) : null;
         const spotColor = state.esDerived ? c.accent : c.textStrong;
         if (sy !== null && sy >= GEX_HEAD_H && sy <= H) {
@@ -373,10 +516,20 @@
         _gexHeader(ctx, W, c, net);
     }
 
-    function _gexValue(ctx, c, v, x, y, right) {
+    // A node marker: a diamond of half-size r, filled when fill is given, else stroked in stroke.
+    function _gexDiamond(ctx, x, y, r, fill, stroke) {
+        ctx.beginPath();
+        ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); return; }
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    }
+
+    function _gexValue(ctx, c, v, x, y, right, prefix) {
         ctx.fillStyle = c.textMuted;
         ctx.textAlign = right ? 'left' : 'right';
-        ctx.fillText(fmtGex(v), x, y);
+        ctx.fillText((prefix ? prefix + ' ' : '') + fmtGex(v), x, y);
     }
 
     function _gexHeader(ctx, W, c, net) {
@@ -448,10 +601,18 @@
         const title = document.createElement('div');
         title.className = 'gex-tip-title';
         title.textContent = `Strike ${_intFmt.format(row.strike)}`;
-        tip.replaceChildren(title,
+        const rowsOut = [title,
             line('Call GEX', fmtGex(row.call)), line('Put GEX', fmtGex(row.put)), line('Net GEX', fmtGex(row.net)),
             line('Call OI', _intFmt.format(row.callOi ?? 0)), line('Put OI', _intFmt.format(row.putOi ?? 0)),
-            line('Call Vol', _intFmt.format(row.callVol ?? 0)), line('Put Vol', _intFmt.format(row.putVol ?? 0)));
+            line('Call Vol', _intFmt.format(row.callVol ?? 0)), line('Put Vol', _intFmt.format(row.putVol ?? 0))];
+        // Dealer rows: the node at this strike, and the hedge flow the dealers would trade if spot moved here.
+        const dealer = (currentGexData() || {}).dealer || null;
+        const node = dealer ? (dealer.nodes || []).find(n => Math.abs(n.strike - row.strike) < 0.005) : null;
+        if (node) rowsOut.push(line('Node', `${node.label} ${node.kind}`));
+        const prof = dealer && dealer.profile ? dealer.profile : null;
+        const hedge = prof ? gexInterp(prof.from, prof.step, prof.hedge, row.strike) : null;
+        if (hedge != null) rowsOut.push(line('Hedge $ to here', fmtGex(hedge)));
+        tip.replaceChildren(...rowsOut);
         tip.classList.remove('hidden');
         const h = tip.offsetHeight;
         tip.style.top = Math.max(GEX_HEAD_H + 4, Math.min(y - h / 2, gexProfile.h - h - 4)) + 'px';
@@ -539,6 +700,11 @@
         let saved = null;
         try { saved = localStorage.getItem(GEX_VIEW_KEY); } catch (e) { /* storage blocked: default */ }
         P.view = saved === 'net' ? 'net' : 'split';
+        let savedCurve = null;
+        try { savedCurve = localStorage.getItem(GEX_CURVE_KEY); } catch (e) { /* storage blocked: default on */ }
+        P.curveOn = savedCurve !== '0';
+        const curveBtn = document.getElementById('gexCurveToggle');
+        if (curveBtn) curveBtn.classList.toggle('active', P.curveOn);
         document.querySelectorAll('#gexViewToggle .gex-mode-btn').forEach(b => {
             b.classList.toggle('active', b.dataset.view === P.view);
         });

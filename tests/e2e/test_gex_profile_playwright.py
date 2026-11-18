@@ -15,7 +15,7 @@ FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFra
 IDLE = "() => _renderJobs.size === 0 && _heavyJobs.size === 0"
 
 
-def _gex(spot=6150, call_wall=6160, put_wall=6130):
+def _gex(spot=6150, call_wall=6160, put_wall=6130, dealer=None):
     strikes = [6100 + 5 * i for i in range(20)]
     bars = []
     for s in strikes:
@@ -24,7 +24,31 @@ def _gex(spot=6150, call_wall=6160, put_wall=6130):
     return {"gex_bars": bars, "call_wall": call_wall, "put_wall": put_wall, "gamma_flip": None, "max_pain": 6140,
             "spot_price": spot, "expiration": "20990105", "timestamp": "", "total_call_gex": 3e7, "total_put_gex": -2e7,
             "total_net_gex": 1e7, "total_call_oi": 200, "total_put_oi": 400, "total_call_vol": 20, "total_put_vol": 40,
-            "smile_data": [], "es_derived": False}
+            "smile_data": [], "es_derived": False, **({"dealer": dealer} if dealer is not None else {})}
+
+
+# The dealer block as the server sends it (invented values): profile 6100 + 2.5 x i with zero at 6150,
+# a pin node R1 at 6160, an accel node S1 at 6130, a void 6170-6180, and the open band 6138-6162.
+DEALER = {
+    "model": "oi_assumed", "regime": "long_gamma", "gamma_at_spot": 200000000, "zero_gamma": 6150.0,
+    "zero_gamma_all": [6150.0], "zero_gamma_distance": 0.0,
+    "profile": {"from": 6100.0, "step": 2.5, "values": [(i - 20) * 2000000 for i in range(41)],
+                "hedge": [(i - 20) * 500000 for i in range(41)]},
+    "nodes": [
+        {"label": "R1", "strike": 6160.0, "kind": "pin", "gex": 5000000, "side": "above", "hedge_usd": 2000000, "rank": 1},
+        {"label": "S1", "strike": 6130.0, "kind": "accel", "gex": -4000000, "side": "below", "hedge_usd": -1500000, "rank": 1},
+    ],
+    "voids": [{"lo": 6170.0, "hi": 6180.0}],
+    "em": {"live": 8.0, "open": 12.0, "open_spot": 6150.0, "high": 6162.0, "low": 6138.0, "used_pct": 40.0,
+           "anchor_time": "09:31"},
+    "charm": {"flow_15m_usd": 1000000, "to_close_usd": 5000000, "path": [], "pivot": 6150.0},
+    "vanna": {"usd_per_vol_down": -3000000, "atm_iv": 14.2, "iv_change_15m": 0.0, "iv_change_30m": 0.0,
+              "flow_est_usd": 0},
+}
+
+
+def _inject_gex(pg, **kw):
+    pg.evaluate("m => window.__benchInject(m)", {"type": "gex", "data": _gex(**kw)})
 
 
 def _snapshot(lo=6095, hi=6200):
@@ -119,6 +143,21 @@ def test_pan_range_follows_the_pointer_and_levels_range_covers_what_it_is_given(
     lv = out["levels"]
     assert lv["from"] < 6090 and lv["to"] > 6210 and lv["to"] - lv["from"] < 160
     assert out["none"] is None
+
+
+def test_levels_range_ignores_the_levels_that_stay_off_the_profile(page):
+    out = page.evaluate("""() => ({
+        base: gexLevelsRange({call_wall: 6200, put_wall: 6100, gamma_flip: null, max_pain: 6150}, 6140, []),
+        withOff: gexLevelsRange({call_wall: 6200, put_wall: 6100, gamma_flip: null, max_pain: 6150,
+                                 em_high: 9999, em_low: 1, node_r1: 9999, node_s1: 1}, 6140, []),
+    })""")
+    assert out["withOff"] == out["base"]
+
+
+def test_curve_helpers_map_values_and_interpolate(page):
+    out = page.evaluate("() => ({xy: gexCurveXY([-2, 0, 4], 100, 2.5, 4, 50, 40), mid: gexInterp(100, 2.5, [0, 10, 20], 101.25), off: gexInterp(100, 2.5, [0, 10], 90)})")
+    assert out["xy"] == [{"p": 100, "x": 30}, {"p": 102.5, "x": 50}, {"p": 105, "x": 90}]
+    assert out["mid"] == 5 and out["off"] is None
 
 
 def test_bands_run_halfway_to_each_neighbour(page):
@@ -289,3 +328,51 @@ def test_strikes_outside_the_visible_range_are_not_drawn(page):
     _settle(page)
     rows = page.evaluate("() => gexProfile.rows.map(r => r.strike)")
     assert rows and min(rows) >= 6145 and max(rows) <= 6195 and len(rows) < 20
+
+
+# --- dealer overlays: curve, nodes, voids, expected-move brackets, summary rows -------------------
+
+def test_dealer_overlays_are_painted_and_the_curve_toggle_is_remembered(page):
+    _inject_gex(page, dealer=DEALER)
+    _settle(page)
+    c = page.evaluate("() => [gexProfile.curveDrawn > 0, gexProfile.nodesDrawn, gexProfile.voidsDrawn, gexProfile.emDrawn]")
+    assert c == [True, 2, 1, 2]
+    page.click("#gexCurveToggle")
+    _settle(page)
+    assert page.evaluate("() => [gexProfile.curveDrawn, localStorage.getItem('spx-gex-curve')]") == [0, "0"]
+    assert page.evaluate("() => document.getElementById('gexCurveToggle').classList.contains('active')") is False
+    page.click("#gexCurveToggle")
+    _settle(page)
+    assert page.evaluate("() => gexProfile.curveDrawn > 0") and page.evaluate("() => localStorage.getItem('spx-gex-curve')") == "1"
+
+
+def test_the_summary_shows_regime_zero_gamma_distance_em_used_charm_and_vanna(page):
+    dealer = dict(DEALER, gamma_at_spot=200000000, zero_gamma_distance=-4.5,
+                  em=dict(DEALER["em"], used_pct=62), charm=dict(DEALER["charm"], to_close_usd=12000000),
+                  vanna=dict(DEALER["vanna"], usd_per_vol_down=-3000000))
+    _inject_gex(page, dealer=dealer)
+    _settle(page)
+    assert page.inner_text("#gexSumGamma").startswith("Long γ")
+    assert page.inner_text("#gexSumZgDist") == "-4.5"
+    assert page.inner_text("#gexSumEmUsed") == "62%" and page.inner_text("#gexSumCharm") == "+$12.0M"
+    assert page.inner_text("#gexSumVanna") == "-$3.0M"
+
+
+def test_hovering_a_node_strike_lists_the_node_and_the_hedge_to_there(page):
+    _inject_gex(page, dealer=DEALER)
+    _settle(page)
+    page.evaluate("""() => {
+        const cv = gexProfile.canvas, rect = cv.getBoundingClientRect();
+        const row = gexProfile.rows.find(r => r.strike === 6160);
+        cv.dispatchEvent(new PointerEvent('pointermove', {clientX: rect.left + 100, clientY: rect.top + row.y, pointerId: 4, bubbles: true}));
+    }""")
+    text = page.evaluate("() => document.getElementById('gexProfileTip').textContent")
+    assert "Node" in text and "R1 pin" in text and "Hedge $ to here" in text
+
+
+def test_monthly_mode_draws_no_dealer_overlays(page):
+    _inject_gex(page, dealer=DEALER)
+    page.evaluate("m => window.__benchInject(m)", {"type": "monthly_gex", "data": _gex()})
+    page.evaluate("() => setGexMode('monthly')")
+    _settle(page)
+    assert page.evaluate("() => [gexProfile.curveDrawn, gexProfile.nodesDrawn, gexProfile.voidsDrawn, gexProfile.emDrawn]") == [0, 0, 0, 0]
