@@ -521,14 +521,69 @@ def test_rsi_uses_wilder_smoothing(page):
     assert page.evaluate("() => rsiValues([1, 1, 1, 1], 3)") == [None, None, None, 50]   # a flat market is 50
 
 
+# --- hedge-flow pane ---------------------------------------------------------------------------
+
+def _flow_minute(hhmm, call, put):
+    return {"time": f"{S}T{hhmm}", "call_delta_usd": call, "put_delta_usd": put,
+            "hedge_pressure_usd": call + put, "coverage_lo": 96, "coverage_hi": 104}
+
+
+def test_the_flow_pane_draws_the_snapshot_series_and_appends_the_published_minute(page):
+    bars = [_bar("09:30", 100), _bar("09:31", 101)]
+    flow = [_flow_minute("09:30", 500, -200), _flow_minute("09:31", -100, -400)]
+    _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": [], "flow": flow})
+    page.evaluate(FRAMES)
+    up, down = page.evaluate("() => [themeColors().up, themeColors().down]")
+    assert page.evaluate("() => priceChart.flowSeries.data().map(p => [p.value, p.color])") == [[300, up], [-500, down]]
+    assert page.evaluate("() => priceChart.flowCum.data().map(p => p.value)") == [300, -200]
+    # a published minute (later than the snapshot's last) is appended; the cumulative line ends at the day's sum
+    page.evaluate("g => updatePriceLevels(g)", {"timestamp": f"{S}T09:32:10-05:00", "expiration": "20990105",
+                                                "call_wall": 110, "put_wall": 90, "gamma_flip": 100, "max_pain": 105,
+                                                "dealer": {"flow": {"minute": _flow_minute("09:32", 700, 300)}}})
+    page.evaluate(FRAMES)
+    assert page.evaluate("() => priceChart.flowSeries.data().map(p => p.value)") == [300, -500, 1000]
+    cum = page.evaluate("() => priceChart.flowCum.data().map(p => p.value)")
+    assert cum == [300, -200, 800] and cum[-1] == 300 - 500 + 1000
+
+
+def test_the_flow_button_removes_and_restores_the_pane_and_is_remembered(page):
+    try:
+        assert page.evaluate("() => priceChart.chart.panes().length") == 3
+        page.click("#flowToggle")
+        assert page.evaluate("() => priceChart.chart.panes().length") == 2
+        assert page.evaluate("() => localStorage.getItem('spx-flow-pane')") == "0"
+        assert page.evaluate("() => document.getElementById('flowToggle').classList.contains('active')") is False
+        page.click("#flowToggle")
+        assert page.evaluate("() => priceChart.chart.panes().length") == 3
+        assert page.evaluate("() => localStorage.getItem('spx-flow-pane')") == "1"
+    finally:
+        page.evaluate("() => setFlowPane(true)")
+
+
+def test_the_flow_badge_shows_the_30_minute_hedge_pressure(page):
+    gex = {"call_wall": 110, "put_wall": 90, "gamma_flip": 100, "max_pain": 105, "total_net_gex": 1e8,
+           "spot_price": 101, "expiration": "20990105", "timestamp": f"{S}T10:00:00-05:00",
+           "dealer": {"regime": "long_gamma", "flow": {"hedge_pressure_15m_usd": 800000,
+                                                       "hedge_pressure_30m_usd": 1500000,
+                                                       "hedge_pressure_day_usd": 2000000,
+                                                       "minute": {"time": f"{S}T10:00", "call_delta_usd": 900000,
+                                                                  "put_delta_usd": 600000,
+                                                                  "hedge_pressure_usd": 1500000}}}}
+    _inject(page, "gex", gex)
+    page.evaluate(FRAMES)
+    assert page.inner_text("#flow30Badge") == "+$1.5M"
+    assert page.is_visible("#flow30BadgeBox") and "badge-converging" in page.get_attribute("#flow30BadgeBox", "class")
+    page.wait_for_function("() => document.getElementById('gexSumFlow30').textContent === '+$1.5M'", timeout=5000)
+
+
 def test_the_rsi_pane_follows_the_bars(page):
     bars = [_bar(f"10:{m:02d}", 100 + (m % 3)) for m in range(20)]
     _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": []})
     page.evaluate(FRAMES)
-    assert page.evaluate("() => priceChart.chart.panes().length") == 2
+    assert page.evaluate("() => priceChart.chart.panes().length") == 3      # price, RSI, hedge flow (on by default)
     share = page.evaluate("() => { const h = priceChart.chart.panes().map(p => p.getHeight());"
-                          " return h[1] / (h[0] + h[1]); }")
-    assert 0.2 <= share <= 0.3                                              # a readable strip, not a sliver
+                          " return h[1] / (h[0] + h[1] + h[2]); }")
+    assert 0.15 <= share <= 0.25                                            # a readable strip, not a sliver
     assert page.evaluate("() => priceChart.rsi.data().length") == 6            # 20 bars, the first 14 warm up
     assert page.evaluate("() => priceChart.rsi.data()[0].time") == _utc_seconds(2099, 1, 5, 10, 14)
     assert sorted(page.evaluate("() => priceChart.rsiGuides.map(l => l.options().price)")) == [30, 70]

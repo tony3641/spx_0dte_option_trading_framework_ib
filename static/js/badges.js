@@ -103,6 +103,11 @@
             const vanna = dealer ? dealer.vanna : null;
             _setFlowBadge('vannaBadgeBox', 'vannaBadge', vanna ? vanna.usd_per_vol_down : null,
                 'Vanna: the underlying the dealers buy (+) or sell (-) if implied vol falls one point, at constant spot.');
+            // Customer flow the dealers hedged over the last 30 minutes (hidden until the flow tracker has data)
+            const flow = dealer ? dealer.flow : null;
+            const flowSince = flow && flow.coverage_start ? `; coverage from ${flow.coverage_start} ET` : '';
+            _setFlowBadge('flow30BadgeBox', 'flow30Badge', flow ? flow.hedge_pressure_30m_usd : null,
+                `Hedge flow 30m: the underlying the dealers bought (+) or sold (-) against customer trades in the last 30 minutes${flowSince}.`);
         }
     }
 

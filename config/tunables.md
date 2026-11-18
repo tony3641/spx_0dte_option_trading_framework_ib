@@ -179,7 +179,7 @@ Source: spx_trade_desk/core/config.py
 - flow.VOLUME_HISTORY_MINUTES = 120 (per-minute volume snapshots kept for `vol_15m`)
 - flow.FlowTracker maxlen = 1440 (minute records kept per expiration, one per ET minute)
 - chain_manager.FLOW_LOG_INTERVAL_S = 60.0 (the "Flow tracking failed" log is rate-limited to this)
-- no new `localStorage` keys and no new settings in this phase
+- no new settings in this phase; the browser switches of the flow UI are listed under static/js below
 
 ## 3) Frontend hardcoded tunables (static/js)
 
@@ -217,6 +217,8 @@ Source: spx_trade_desk/core/config.py
 ### static/js/price-chart.js
 - Level step lines, the entries of `PRICE_LEVELS` in `static/js/price-chart.js`: Call Wall, Put Wall, Zero Gamma and Max Pain (`style` dotted, `width` 2); Expected move high / low (`style` dashed, `width` 1, `profile: false`); the nearest pin above / below as R / S (`style` solid, `width` 1, `alpha` 0.45, `profile: false`). `profile: false` keeps an entry off the GEX profile. Each entry's `alpha` defaults to `LEVEL_ALPHA` (0.7, opaque share of the line and its tag). At most `LEVEL_ROWS_MAX` (2000) change points kept. Axis tags are the codes CW / PW / ZG / MP / EM+ / EM- / R / S.
 - static/js/gex-profile.js: `GEX_HEAD_H` (20 px caption strip), `GEX_LABEL_ROOM` (40 px kept free for a bar's value label), `GEX_BAR_FILL` (0.74 of a strike's band) and `GEX_BAR_MAX_H` (18 px), `GEX_ZOOM_BUTTON` (1.5 per `-` / `+` click), `GEX_WHEEL_RATE` (0.0016 zoom exponent per wheel unit), `GEX_MIN_SPAN` (4 index points, the closest zoom; the widest is the strike range x 1.2 or 5% of spot), `GEX_DRAG_PX` (3 px before a press is a drag), `GEX_LABELS_PER_SIDE` (4 value labels when rows are too thin to label all); `GEX_VIEW_KEY` (`spx-gex-profile-view`) remembers Split / Net; `GEX_CURVE_KEY` (`spx-gex-curve`: `'1'` on, the default, or `'0'` off) remembers the Curve button; `GEX_NODE_HALF` (4 px, half the width of a node diamond); column width `--gex-profile-w` (216 px, 150 px under 700 px) in static/css/charts.css
+- static/js/gex-profile.js (flow UI): `GEX_HOT_GUTTER` (10 px left gutter; the hot dots sit at x = 5), `GEX_HOT_STALE_FRAC` (0.05: a hot strike whose `vol_15m` is under 5% of its day call + put volume gets a ring), hot dot radius `min(4, 1.5 + vol_oi)` px, the stale ring 2 px outside it, the flow tick 2 px wide in `textMuted`, the flow bar outline 1 px; `GEX_HOT_KEY` (`spx-gex-hot`: `'1'` on, the default, or `'0'`) remembers the Hot button and `GEX_TICK_KEY` (`spx-gex-flow-ticks`, same values) the Ticks button; `GEX_VIEW_KEY` (`spx-gex-profile-view`) also takes `'flow'`; the coverage bracket is 1 px wide in `textFaint`, with 7 px caps
+- static/js/price-chart.js (flow UI): `FLOW_PANE_KEY` (`spx-flow-pane`: `'1'` on, the default, or `'0'`) remembers the Flow button; the hedge-flow pane is pane 2 under RSI with stretch factor 1, its histogram colored `up` / `down` by sign, its day total a `textMuted` line on the hidden `left` scale; the Flow 30m badge and summary row take the same `up` / `down` colors by sign
 - Charm heatmap: `CHARM_FRAMES_MAX` (1440) frames kept; `CHARM_PREF_KEY` (`spx-charm-heatmap`) remembers the Charm button
 - static/js/charm-heatmap.js: `CHARM_MIN_RATIO` (cells under 0.5% of the scale stay clear), `CHARM_ALPHA_MIN` / `CHARM_ALPHA_SPAN` (alpha 0.06 to 0.40), `CHARM_ALPHA_STEPS`, `CHARM_MAX_GAP_S` (a column is at most 5 min wide)
 - spx_trade_desk/market/charm_history.py: `CHARM_BAND` (3% of spot), `MAX_FRAMES` (1440)
