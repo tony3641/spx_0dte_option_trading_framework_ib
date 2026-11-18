@@ -162,11 +162,11 @@ def compute_gex(options: List[OptionData], spot_price: float,
     Compute GEX metrics from a list of option data.
 
     GEX per strike formula (dealer perspective), in dollars of underlying dealers must trade per 1% move:
-      Call GEX = gamma_C × OI_C × 100 × spot² × 0.01
-      Put GEX  = -1 × gamma_P × OI_P × 100 × spot² × 0.01
+      Call GEX = gamma_C × OI_C × spot²
+      Put GEX  = -1 × gamma_P × OI_P × spot²
       Net GEX  = Call GEX + Put GEX
-    (100 is the option multiplier. gamma × OI × 100 × spot × 0.01 is the change in the dealers' delta, in
-    index units, for a 1% move; the second spot converts those units to dollars.)
+    (Derivation: gamma × OI × 100 (option multiplier) × 1% of spot is the dealers' delta change in index
+    units for a 1% move; pricing those units at spot gives dollars. The 100 and the 1% cancel.)
 
     Args:
         options: List of OptionData for all strikes/rights in the chain.
@@ -215,10 +215,7 @@ def compute_gex(options: List[OptionData], spot_price: float,
     max_put_gex_val = 0.0
     max_put_gex_strike = None
 
-    multiplier = 100.0  # SPX option multiplier
-    # Dollars of underlying per 1% move: gamma x OI x multiplier x (1% of spot) shares, priced at spot.
-    # The 100 multiplier and the 1% cancel, so this is spot squared.
-    dollar_scale = spot_price * spot_price
+    dollar_scale = spot_price * spot_price      # dollars per 1% move per unit of gamma x OI (see docstring)
 
     for strike in all_strikes:
         c_gex = 0.0
