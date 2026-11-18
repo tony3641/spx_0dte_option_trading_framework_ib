@@ -537,6 +537,7 @@ Real-time status indicators:
 Key strike prices and conditions:
 - **SPX** — current spot price
 - **Call Wall / Put Wall** — the strike with the largest call GEX at or above spot (resistance) and the one with the largest put GEX at or below spot (support). An in-the-money strike on the other side of spot is never a wall, so a wall changes when spot crosses a strike; a side with no GEX on its side of spot shows `-`.
+- **Net GEX / GEX bars** — dollars of SPX the dealers must trade per 1% move: gamma x open interest x 100 (option multiplier) x spot x spot x 1%, calls positive and puts negative (dealer view). Shown as `$` with K / M / B.
 - **Gamma Flip** — price level where net gamma crosses zero
 - **Max Pain** — strike minimizing option holder payoff
 - **Net GEX** — total gamma exposure (with regime label)

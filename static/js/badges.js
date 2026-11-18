@@ -1,10 +1,10 @@
     // Badge updates
     // ======================================================================
     function fmtGex(val) {
-        // Format GEX in billions (B) or millions (M) for readability
+        // GEX is dollars of SPX dealers trade per 1% move; show it as $ in billions (B), millions (M) or thousands (K)
         if (val == null) return '-';
         const abs = Math.abs(val);
-        const sign = val < 0 ? '-' : '+';
+        const sign = val < 0 ? '-$' : '+$';
         if (abs >= 1e9)  return sign + (abs / 1e9).toFixed(2) + 'B';
         if (abs >= 1e6)  return sign + (abs / 1e6).toFixed(1) + 'M';
         if (abs >= 1e3)  return sign + (abs / 1e3).toFixed(0) + 'K';

@@ -161,10 +161,12 @@ def compute_gex(options: List[OptionData], spot_price: float,
     """
     Compute GEX metrics from a list of option data.
 
-    GEX per strike formula (dealer perspective):
-      Call GEX = gamma_C × OI_C × 100 × spot × 0.01
-      Put GEX  = -1 × gamma_P × OI_P × 100 × spot × 0.01
+    GEX per strike formula (dealer perspective), in dollars of underlying dealers must trade per 1% move:
+      Call GEX = gamma_C × OI_C × 100 × spot² × 0.01
+      Put GEX  = -1 × gamma_P × OI_P × 100 × spot² × 0.01
       Net GEX  = Call GEX + Put GEX
+    (100 is the option multiplier. gamma × OI × 100 × spot × 0.01 is the change in the dealers' delta, in
+    index units, for a 1% move; the second spot converts those units to dollars.)
 
     Args:
         options: List of OptionData for all strikes/rights in the chain.
@@ -214,6 +216,9 @@ def compute_gex(options: List[OptionData], spot_price: float,
     max_put_gex_strike = None
 
     multiplier = 100.0  # SPX option multiplier
+    # Dollars of underlying per 1% move: gamma x OI x multiplier x (1% of spot) shares, priced at spot.
+    # The 100 multiplier and the 1% cancel, so this is spot squared.
+    dollar_scale = spot_price * spot_price
 
     for strike in all_strikes:
         c_gex = 0.0
@@ -229,7 +234,7 @@ def compute_gex(options: List[OptionData], spot_price: float,
                     gamma = _bsm_gamma(spot_price, strike, time_to_expiry_years,
                                        risk_free_rate, c.implied_vol)
                 if gamma is not None:
-                    c_gex = gamma * c.open_interest * multiplier * spot_price * 0.01
+                    c_gex = gamma * c.open_interest * dollar_scale
 
         # Put GEX (negative contribution - dealers short puts hedge by selling)
         if strike in puts_by_strike:
@@ -241,7 +246,7 @@ def compute_gex(options: List[OptionData], spot_price: float,
                     gamma = _bsm_gamma(spot_price, strike, time_to_expiry_years,
                                        risk_free_rate, p.implied_vol)
                 if gamma is not None:
-                    p_gex = -1.0 * gamma * p.open_interest * multiplier * spot_price * 0.01
+                    p_gex = -1.0 * gamma * p.open_interest * dollar_scale
 
         call_gex[strike] = c_gex
         put_gex[strike] = p_gex

@@ -253,7 +253,7 @@ def test_compute_gex_uses_bsm_gamma_when_ib_gamma_missing():
     call = _make_option(6800, 'C', oi=1000, gamma=None, iv=0.20)
     put  = _make_option(6800, 'P', oi=1000, gamma=None, iv=0.20)
 
-    result = compute_gex([call, put], spot, time_to_expiry_years=tte)
+    result = compute_gex([call, put], spot, time_to_expiry_years=tte, risk_free_rate=0.053)
 
     assert result.total_call_gex != 0.0, "Call GEX must be non-zero when BSM fallback is used"
     assert result.total_put_gex != 0.0, "Put GEX must be non-zero when BSM fallback is used"
@@ -262,7 +262,7 @@ def test_compute_gex_uses_bsm_gamma_when_ib_gamma_missing():
     # Verify the BSM gamma formula is plausible
     bsm_g = _bsm_gamma(spot, 6800, tte, 0.053, 0.20)
     assert bsm_g is not None and bsm_g > 0
-    expected_call_gex = bsm_g * 1000 * 100 * spot * 0.01
+    expected_call_gex = bsm_g * 1000 * 100 * spot * spot * 0.01
     assert abs(result.total_call_gex - expected_call_gex) < 0.01
 
 
@@ -275,7 +275,7 @@ def test_compute_gex_ib_gamma_takes_precedence_over_bsm():
 
     result = compute_gex([call], spot, time_to_expiry_years=tte)
 
-    expected = ib_gamma * 100 * 100 * spot * 0.01
+    expected = ib_gamma * 100 * 100 * spot * spot * 0.01     # dollars per 1% move
     assert abs(result.total_call_gex - expected) < 0.01
 
 

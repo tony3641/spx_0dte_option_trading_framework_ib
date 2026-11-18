@@ -277,7 +277,7 @@ def test_the_summary_reports_net_gex_open_interest_and_the_expiration(page):
         regime: document.getElementById('gexSumRegime').textContent,
         oi: document.getElementById('gexSumOi').textContent, pc: document.getElementById('gexSumPc').textContent,
         skew: document.getElementById('gexSumSkew').textContent, exp: document.getElementById('gexChartLabel').textContent})""")
-    assert text["net"] == "+10.0M" and text["regime"] == "CONVERGING"
+    assert text["net"] == "+$10.0M" and text["regime"] == "CONVERGING"
     assert text["oi"] == "200 / 400" and text["pc"] == "2.00" and text["skew"] == "60%"
     assert text["exp"] == "Exp 2099-01-05"
     assert page.evaluate("() => document.getElementById('gexSumNet').classList.contains('up')")

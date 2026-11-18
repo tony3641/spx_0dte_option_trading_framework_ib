@@ -7,7 +7,7 @@
     // ======================================================================
     const GEX_VIEW_KEY = 'spx-gex-profile-view';     // localStorage: 'split' | 'net'
     const GEX_HEAD_H = 20;                           // px: the PUT | CALL caption strip at the top
-    const GEX_LABEL_ROOM = 40;                       // px kept free at the outer end of a bar for its value
+    const GEX_LABEL_ROOM = 46;                       // px kept free at the outer end of a bar for its value
     const GEX_BAR_FILL = 0.74;                       // share of a strike's band the bar occupies
     const GEX_BAR_MAX_H = 18;
     const GEX_ZOOM_BUTTON = 1.5;                     // one click of + / - changes the visible range by this factor
