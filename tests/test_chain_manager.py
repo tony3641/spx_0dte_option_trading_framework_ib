@@ -507,6 +507,47 @@ async def test_monthly_gex_reports_zero_gamma(app_state, monkeypatch):
     assert st.monthly_latest_gex["gamma_flip_method"] == "zero_gamma"
 
 
+@pytest.mark.asyncio
+async def test_monthly_gex_keeps_the_cumulative_flip_when_zero_gamma_fails(app_state, monkeypatch):
+    from spx_trade_desk.market import chain_manager
+    from spx_trade_desk.market.gex import OptionData
+
+    class Sink:
+        def __init__(self):
+            self.msgs = []
+
+        async def __call__(self, msg):
+            self.msgs.append(msg)
+
+    options = []     # puts heavy below the spot, calls heavy above: the cumulative flip sits near 7786
+    for k in range(7600, 7810, 10):
+        lo = k < 7700
+        options.append(OptionData(k, "C", implied_vol=0.15, open_interest=500 if lo else 3000, bid=1.0, ask=1.2))
+        options.append(OptionData(k, "P", implied_vol=0.15, open_interest=3000 if lo else 500, bid=1.0, ask=1.2))
+
+    async def fake_fetch(**kwargs):
+        return options
+
+    def boom(*a, **kw):
+        raise RuntimeError("profile failed")
+
+    monkeypatch.setattr(chain_manager, "fetch_option_chain", fake_fetch)
+    monkeypatch.setattr(chain_manager, "profile_levels", boom)
+    st = app_state
+    st.connected = True
+    st.monthly_expiration = "20991120"
+    st.spx_price = 7700.0
+    sink = Sink()
+    await chain_manager.monthly_gex_fetch(None, st, sink)
+    published = [m for m in sink.msgs if m.get("type") == "monthly_gex"]
+    assert len(published) == 1
+    data = published[0]["data"]
+    assert data["gamma_flip_method"] == "cumulative"
+    assert data["gamma_flip"] == data["gamma_flip_cumulative"]
+    assert data["gamma_flip_cumulative"] is not None
+    assert data["call_wall"] is not None and data["put_wall"] is not None
+
+
 def test_record_flow_never_raises_even_when_the_state_has_no_failure_stamp(caplog):
     from types import SimpleNamespace
     from datetime import datetime as dt

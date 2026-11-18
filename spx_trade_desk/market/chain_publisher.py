@@ -102,7 +102,7 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     state.latest_gex["dealer"] = dealer
     state.latest_gex["gamma_flip_method"] = gamma_flip_method
     state.latest_gex["gamma_flip_cumulative"] = cumulative
-    state.latest_gex.update(level_fields(dealer))
+    state.latest_gex.update(level_fields(dealer, state.em_anchor))
     _flow_outputs(state, gex, options, dealer, now, T)
     state.latest_dealer = dealer
     signals = _publish_signals(state, now, dealer)

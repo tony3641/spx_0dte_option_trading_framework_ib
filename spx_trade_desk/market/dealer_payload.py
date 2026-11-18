@@ -116,10 +116,15 @@ def _open_band(anchor: ExpectedMoveAnchor) -> Tuple[Optional[float], Optional[fl
     return _px(lo), _px(hi)
 
 
-def level_fields(dealer: Optional[dict]) -> dict:
-    """Top-level values the level history and the price chart read: the open band and the nearest pin above/below."""
+def level_fields(dealer: Optional[dict], anchor: Optional[ExpectedMoveAnchor] = None) -> dict:
+    """Top-level values the level history and the price chart read: the open band and the nearest pin above/below.
+
+    Without a dealer block (a failed profile) the open band still comes from ``anchor`` when one is given, so the
+    EM lines do not drop out for a cycle; the pins stay None.
+    """
     if dealer is None:
-        return {"em_high": None, "em_low": None, "node_r1": None, "node_s1": None}
+        em_low, em_high = _open_band(anchor) if anchor is not None else (None, None)   # band() is (low, high)
+        return {"em_high": em_high, "em_low": em_low, "node_r1": None, "node_s1": None}
     em = dealer["em"]
     pins = [n for n in dealer["nodes"] if n["kind"] == "pin"]
     above = [n["strike"] for n in pins if n["side"] == "above"]

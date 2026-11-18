@@ -99,3 +99,38 @@ def test_main_writes_the_summary_files(tmp_path):
     assert (out / "summary.md").is_file()
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert set(summary) >= {"levels", "flows"}
+
+
+def test_main_returns_1_for_a_missing_bars_file(tmp_path, capsys):
+    lib = tmp_path / "library"
+    lib.mkdir()
+    rc = main(["--date", DAY, "--bars", str(tmp_path / "nope.csv"), "--library", str(lib),
+               "--out", str(tmp_path / "out")])
+    assert rc == 1
+    assert "--bars" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("body", [
+    "ts,open,high,low,close\nnot-a-time,1,1,1,1\n",          # ValueError: bad timestamp
+    "ts,open,high,low\n2099-01-05T10:00:00,1,1,1\n",          # KeyError: missing close column
+])
+def test_main_returns_1_for_a_malformed_bars_csv(tmp_path, capsys, body):
+    lib = tmp_path / "library"
+    lib.mkdir()
+    write_record(lib / f"{DAY}.jsonl.gz", _record("10:00"))
+    bars = tmp_path / "bars.csv"
+    bars.write_text(body, encoding="utf-8")
+    rc = main(["--date", DAY, "--bars", str(bars), "--library", str(lib), "--out", str(tmp_path / "out")])
+    assert rc == 1
+    assert "--bars" in capsys.readouterr().err
+
+
+def test_main_returns_1_for_an_empty_library_dir(tmp_path, capsys):
+    lib = tmp_path / "library"
+    lib.mkdir()
+    bars = tmp_path / "bars.csv"
+    bars.write_text("ts,open,high,low,close\n2099-01-05T10:00:00,1,1,1,1\n", encoding="utf-8")
+    rc = main(["--date", DAY, "--bars", str(bars), "--library", str(lib), "--out", str(tmp_path / "out")])
+    assert rc == 1
+    assert "nothing to replay" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()

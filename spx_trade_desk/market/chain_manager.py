@@ -541,8 +541,14 @@ async def monthly_gex_fetch(ib, state, broadcast_fn):
         gex_result.timestamp = now_et().isoformat()
         # Monthly has no dealer block (no ATM anchor or flow history), but zero gamma still applies.
         cumulative = gex_result.gamma_flip
-        levels = profile_levels(gex_result, positions_from_oi(gex_result), tte, state.risk_free_rate, em=None)
-        gex_result.gamma_flip, gamma_flip_method = resolve_gamma_flip(gex_result, levels)
+        gamma_flip_method = "cumulative"
+        try:
+            levels = profile_levels(gex_result, positions_from_oi(gex_result), tte, state.risk_free_rate, em=None)
+            gex_result.gamma_flip, gamma_flip_method = resolve_gamma_flip(gex_result, levels)
+        except Exception as e:
+            # Zero gamma is an extra; the monthly GEX is still published with the cumulative flip.
+            logger.warning(f"Monthly zero gamma failed, keeping cumulative flip: {e}", exc_info=True)
+            gex_result.gamma_flip = cumulative
 
         state.monthly_gex_result = gex_result
         state.monthly_latest_gex = gex_result_to_dict(gex_result)

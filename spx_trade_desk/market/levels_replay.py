@@ -46,7 +46,6 @@ HORIZONS = (15, 30, 60)         # forward return horizons, minutes
 TOD_BUCKETS = (("open", "09:30", "11:00"), ("mid", "11:00", "14:00"), ("late", "14:00", "16:00"))
 MIN_CORR_SAMPLES = 10           # fewer paired samples than this: no correlation
 FLOW_METRICS = ("charm_flow_15m_usd", "charm_to_close_usd", "vanna_flow_est_usd")
-OUTCOMES = ("hold", "break", "touch_only", "untouched")
 
 
 def _et(ts: datetime) -> datetime:
@@ -311,7 +310,11 @@ def main(argv=None) -> int:
         dates.append(d)
     dates = sorted(set(dates))
 
-    bars = load_bars_csv(args.bars)
+    try:
+        bars = load_bars_csv(args.bars)
+    except (OSError, KeyError, ValueError) as e:
+        print(f"cannot read --bars {args.bars}: {e}", file=sys.stderr)
+        return 1
     library = Path(args.library)
     days, used = [], []
     for d in dates:

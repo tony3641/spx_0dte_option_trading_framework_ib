@@ -191,10 +191,16 @@ Source: spx_trade_desk/core/config.py
 - signals.SURGE_MIN_SAMPLES = 10 (minutes of hedge pressure needed before a surge can fire)
 - signals.SURGE_WINDOW_MIN = 30 (the rolling window of the surge's standard deviation)
 - signals.DIV_WINDOW_MIN = 30 (flow divergence: the 30-minute high / low window; the price feed also passes the tracker this many bars of prior history)
-- signals.VANNA_IV_PTS = 1.5 (vanna shift: the ATM IV change over 15 minutes, in vol points, either way)
+- signals.VANNA_IV_PTS = 1.5 (vanna shift: the ATM IV change over 15 minutes, in vol points, either way) A vanna shift repeats every SIGNAL_COOLDOWN_MIN minutes while |iv_change_15m| stays above VANNA_IV_PTS, and it has no RTH guard (the thresholds are placeholders).
 - signals.CHARM_WINDOW_ET = 14:00 (the charm window opens here, once per session; it closes at 16:00)
 - signals.CHARM_MIN_USD = 100_000_000 (charm window: the charm to close must be at least this size)
 - signals.MAX_SIGNALS = 500 (records kept and sent with the snapshot; cleared on an expiration change)
+- All of the above are placeholders until the Phase 5 replay (Task 14) calibrates them; they are not validated values.
+- A null `charm.to_close_usd` does not consume the 14:00 window: the signal can fire later, before 16:00, once the value appears.
+- static/js/price-chart.js: `SIGNAL_MARKERS_KEY` (`spx-signal-markers`: `'1'` on, `'0'` off; default off) remembers the Signals button; `SIGNALS_MAX` (500) bounds the records the browser holds.
+- static/js/price-chart.js pane stretch: price pane 3, RSI 1, hedge-flow pane 1 (candles 60%, RSI and flow 20% each); RSI keeps a quarter while the flow pane is off.
+- static/css/charts.css: `.panel-price .chart-title .help .tooltip` has `max-height: calc(100vh - 180px)` and scrolls, so a short window keeps the whole help on screen.
+- price_bars.py: no constants of its own; a bar closes once (`_last_closed`), and the bars loaded when a session starts are history.
 
 ### Levels replay (Phase 5): market/levels_replay.py (offline CLI)
 - levels_replay.TOUCH_PTS = 2.0 (a bar within this of a level touches it)
@@ -204,12 +210,6 @@ Source: spx_trade_desk/core/config.py
 - levels_replay.HORIZONS = (15, 30, 60) (forward SPX return horizons, minutes)
 - levels_replay.TOD_BUCKETS = open 09:30-11:00, mid 11:00-14:00, late 14:00-16:00 (time-of-day buckets for the flow correlations)
 - levels_replay.MIN_CORR_SAMPLES = 10 (fewer paired samples than this gives no correlation)
-- All of the above are placeholders until the Phase 5 replay (Task 14) calibrates them; they are not validated values.
-- A null `charm.to_close_usd` does not consume the 14:00 window: the signal can fire later, before 16:00, once the value appears.
-- static/js/price-chart.js: `SIGNAL_MARKERS_KEY` (`spx-signal-markers`: `'1'` on, `'0'` off; default off) remembers the Signals button; `SIGNALS_MAX` (500) bounds the records the browser holds.
-- static/js/price-chart.js pane stretch: price pane 3, RSI 1, hedge-flow pane 1 (candles 60%, RSI and flow 20% each); RSI keeps a quarter while the flow pane is off.
-- static/css/charts.css: `.panel-price .chart-title .help .tooltip` has `max-height: calc(100vh - 180px)` and scrolls, so a short window keeps the whole help on screen.
-- price_bars.py: no constants of its own; a bar closes once (`_last_closed`), and the bars loaded when a session starts are history.
 
 ## 3) Frontend hardcoded tunables (static/js)
 

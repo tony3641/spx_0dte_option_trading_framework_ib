@@ -102,6 +102,14 @@ def test_level_fields_are_all_none_without_a_dealer_block():
     assert level_fields(None) == {"em_high": None, "em_low": None, "node_r1": None, "node_s1": None}
 
 
+def test_level_fields_keep_the_open_band_from_the_anchor_when_the_dealer_block_is_missing():
+    anchor = ExpectedMoveAnchor()
+    anchor.update(EXPIRATION, OPEN, SPOT, 20.0)                        # the 10:00 anchor exists
+    assert level_fields(None, anchor) == {"em_high": 7720.0, "em_low": 7680.0, "node_r1": None, "node_s1": None}
+    early = ExpectedMoveAnchor()                                       # no anchor yet: still None
+    assert level_fields(None, early) == {"em_high": None, "em_low": None, "node_r1": None, "node_s1": None}
+
+
 def test_atm_iv_is_in_vol_points_and_the_vanna_flow_follows_the_iv_trend():
     anchor, iv_history = ExpectedMoveAnchor(), AtmIvHistory()
     first, *_ = _build(_chain(iv=0.15), anchor=anchor, iv_history=iv_history)
