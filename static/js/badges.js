@@ -11,41 +11,98 @@
         return sign + abs.toFixed(0);
     }
 
+    // The dealers' regime: true = long gamma (converging), false = short (diverging), null = unknown. The
+    // dealer block's regime (gamma at spot) wins; without it, the sign of the total net GEX decides.
+    function gexLongGamma(g) {
+        if (!g) return null;
+        const regime = g.dealer ? g.dealer.regime : null;
+        if (regime === 'long_gamma') return true;
+        if (regime === 'short_gamma') return false;
+        const net = g.total_net_gex;
+        return net == null ? null : net >= 0;
+    }
+
+    // A dollar badge (Charm to close, Vanna): converging when the value is >= 0, diverging below; hidden when null.
+    function _setFlowBadge(boxId, valId, val, title) {
+        const box = document.getElementById(boxId);
+        if (!box) return;
+        if (val == null) { box.style.display = 'none'; return; }
+        box.style.display = '';
+        box.classList.toggle('badge-converging', val >= 0);
+        box.classList.toggle('badge-diverging', val < 0);
+        box.title = title;
+        document.getElementById(valId).textContent = fmtGex(val);
+    }
+
     function updateBadges() {
         const spot = priceChart.latest ? priceChart.latest.close : null;   // latest bar of the shown series
         document.getElementById('spotBadge').textContent = spot ? spot.toFixed(2) : '-';
 
         if (state.gex) {
+            const g = state.gex;
+            const dealer = g.dealer || null;
             document.getElementById('callWallBadge').textContent =
-                state.gex.call_wall != null ? state.gex.call_wall.toFixed(0) : '-';
+                g.call_wall != null ? g.call_wall.toFixed(0) : '-';
             document.getElementById('putWallBadge').textContent =
-                state.gex.put_wall != null ? state.gex.put_wall.toFixed(0) : '-';
+                g.put_wall != null ? g.put_wall.toFixed(0) : '-';
             document.getElementById('gammaFlipBadge').textContent =
-                state.gex.gamma_flip != null ? state.gex.gamma_flip.toFixed(1) : '-';
+                g.gamma_flip != null ? g.gamma_flip.toFixed(1) : '-';
+            const zgTitle = 'Zero gamma (ZG): the spot where total dealer gamma changes sign, searched within +/-5% of spot; "-" when there is none.';
+            document.querySelector('.badge-gamma-flip').title = g.gamma_flip_cumulative != null
+                ? `${zgTitle} Old cumulative flip: ${Number(g.gamma_flip_cumulative).toFixed(1)}`
+                : zgTitle;
             document.getElementById('maxPainBadge').textContent =
-                state.gex.max_pain != null ? state.gex.max_pain.toFixed(0) : '-';
+                g.max_pain != null ? g.max_pain.toFixed(0) : '-';
 
             // Net GEX value
-            const netGex = state.gex.total_net_gex;
+            const netGex = g.total_net_gex;
             document.getElementById('netGexBadge').textContent = fmtGex(netGex);
 
             // MM Hedging regime
             const regimeBadge = document.getElementById('mmRegimeBadge');
             const regimeText  = document.getElementById('mmRegimeText');
-            if (netGex != null) {
+            const longGamma = gexLongGamma(g);
+            if (longGamma != null) {
                 regimeBadge.style.display = '';
-                if (netGex >= 0) {
+                if (longGamma) {
                     regimeBadge.className = 'level-badge badge-converging';
                     regimeText.innerHTML  = '- MM: CONVERGING';
-                    regimeText.title      = 'Positive GEX: dealers are net long gamma. They sell into rallies and buy dips - market-stabilising.';
+                    regimeText.title      = dealer
+                        ? 'Dealer gamma at spot from the gamma profile (G(spot)) is positive: dealers are net long gamma. They sell into rallies and buy dips - market-stabilising.'
+                        : 'Positive GEX: dealers are net long gamma. They sell into rallies and buy dips - market-stabilising.';
                 } else {
                     regimeBadge.className = 'level-badge badge-diverging';
                     regimeText.innerHTML  = '- MM: DIVERGING';
-                    regimeText.title      = 'Negative GEX: dealers are net short gamma. They chase moves in the same direction - market-amplifying.';
+                    regimeText.title      = dealer
+                        ? 'Dealer gamma at spot from the gamma profile (G(spot)) is negative: dealers are net short gamma. They chase moves in the same direction - market-amplifying.'
+                        : 'Negative GEX: dealers are net short gamma. They chase moves in the same direction - market-amplifying.';
                 }
             } else {
                 regimeBadge.style.display = 'none';
             }
+
+            // Expected move (ATM straddle at the open): the badge shows the open half-width; the title the anchored band
+            const em = dealer ? dealer.em : null;
+            const emBox = document.getElementById('emBadgeBox');
+            if (em && em.open != null) {
+                emBox.style.display = '';
+                document.getElementById('emBadge').textContent = '±' + Math.round(em.open);
+                const band = (em.high != null && em.low != null)
+                    ? `anchored band ${Number(em.low).toFixed(2)} to ${Number(em.high).toFixed(2)}` : 'anchored band not set';
+                const anchor = em.anchor_time ? `anchored at ${em.anchor_time} ET` : 'not anchored yet';
+                const live = em.live != null ? `live ±${Number(em.live).toFixed(1)}` : 'live not known';
+                emBox.title = `Expected move: ±${Number(em.open).toFixed(1)} from the ATM straddle at the open (${band}; ${anchor}; ${live}).`;
+            } else {
+                emBox.style.display = 'none';
+            }
+
+            // Charm to close and vanna (dollar flows of the dealers; see the signal rules in the README)
+            const charm = dealer ? dealer.charm : null;
+            _setFlowBadge('charmCloseBadgeBox', 'charmCloseBadge', charm ? charm.to_close_usd : null,
+                'Charm to close: the underlying the dealers buy (+) or sell (-) by the close as time passes, at constant spot and vol.');
+            const vanna = dealer ? dealer.vanna : null;
+            _setFlowBadge('vannaBadgeBox', 'vannaBadge', vanna ? vanna.usd_per_vol_down : null,
+                'Vanna: the underlying the dealers buy (+) or sell (-) if implied vol falls one point, at constant spot.');
         }
     }
 

@@ -52,7 +52,8 @@
     // The range that shows the spot, the four levels and every price in ``extra`` with a margin, or null
     // when there is nothing to show.
     function gexLevelsRange(g, spot, extra) {
-        const vals = [spot, g && g.call_wall, g && g.put_wall, g && g.gamma_flip, g && g.max_pain]
+        const levelVals = PRICE_LEVELS.filter(lv => lv.profile !== false).map(lv => g && g[lv.key]);
+        const vals = [spot].concat(levelVals)
             .concat(extra || []).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
         if (!vals.length) return null;
         const lo = Math.min(...vals), hi = Math.max(...vals);
@@ -145,7 +146,7 @@
             if (cls) el.classList.add(cls);
         };
         const sig = g ? [g.timestamp, g.total_net_gex, g.total_call_oi, g.total_put_oi, state.gexMode,
-                         state.monthlyExpiration].join('|') : '';
+                         state.monthlyExpiration, g.dealer ? g.dealer.regime : ''].join('|') : '';
         if (sig === gexProfile.summarySig) return;
         gexProfile.summarySig = sig;
         if (!g) {
@@ -154,9 +155,10 @@
             return;
         }
         const net = g.total_net_gex;
-        const pos = net != null && net >= 0;
-        set('gexSumNet', fmtGex(net), net == null ? '' : (pos ? 'up' : 'down'));
-        set('gexSumRegime', net == null ? '' : (pos ? 'CONVERGING' : 'DIVERGING'), net == null ? '' : (pos ? 'up' : 'down'));
+        const longGamma = gexLongGamma(g);
+        set('gexSumNet', fmtGex(net), net == null ? '' : (net >= 0 ? 'up' : 'down'));
+        set('gexSumRegime', longGamma == null ? '' : (longGamma ? 'CONVERGING' : 'DIVERGING'),
+            longGamma == null ? '' : (longGamma ? 'up' : 'down'));
         const co = g.total_call_oi, po = g.total_put_oi;
         set('gexSumOi', (co > 0 || po > 0) ? `${gexCompact(co)} / ${gexCompact(po)}` : '-');
         if (co > 0) {
@@ -315,6 +317,7 @@
         // Key levels: a dashed line and a tag; a level off screen gets an arrow at the edge instead.
         const edgeTags = [];
         for (const lv of PRICE_LEVELS) {
+            if (lv.profile === false) continue;              // expected move and pins have their own profile layer
             const v = g[lv.key];
             if (v == null) continue;
             const y = toY(v);

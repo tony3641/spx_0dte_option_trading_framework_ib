@@ -3,16 +3,23 @@
     // ======================================================================
     // Each level is a dotted step line: it starts at the first bar (or when the level first appeared),
     // moves up or down at the minute GEX published a different value, and runs on to the latest bar.
+    // style: 'dotted' (default) | 'dashed' | 'solid'; width defaults to 2; alpha to LEVEL_ALPHA; profile: false
+    // keeps the entry off the GEX profile (the profile draws the expected move and the pins its own way).
     const PRICE_LEVELS = [
         { key: 'call_wall', color: 'up', name: 'Call Wall', tag: 'CW' },
         { key: 'put_wall', color: 'down', name: 'Put Wall', tag: 'PW' },
-        { key: 'gamma_flip', color: 'accent', name: 'Gamma Flip', tag: 'GF' },
+        { key: 'gamma_flip', color: 'accent', name: 'Zero Gamma', tag: 'ZG' },
         { key: 'max_pain', color: 'info', name: 'Max Pain', tag: 'MP' },
+        { key: 'em_high', color: 'textFaint', name: 'Expected move high', tag: 'EM+', style: 'dashed', width: 1, profile: false },
+        { key: 'em_low', color: 'textFaint', name: 'Expected move low', tag: 'EM-', style: 'dashed', width: 1, profile: false },
+        { key: 'node_r1', color: 'down', name: 'Nearest pin above', tag: 'R', style: 'solid', width: 1, alpha: 0.45, profile: false },
+        { key: 'node_s1', color: 'up', name: 'Nearest pin below', tag: 'S', style: 'solid', width: 1, alpha: 0.45, profile: false },
     ];
     // The axis tag of a level is its two-letter code, and the line and tag are translucent so the candles
     // behind them stay readable (the full names are in the "?" help and the Levels strip).
     const LEVEL_ALPHA = 0.7;
-    const levelColor = (c, lv) => withAlpha(c[lv.color], LEVEL_ALPHA);
+    const levelColor = (c, lv) => withAlpha(c[lv.color], lv.alpha ?? LEVEL_ALPHA);
+    const LEVEL_LINE_STYLE = { dotted: 'Dotted', dashed: 'Dashed', solid: 'Solid' };
     const LEVEL_ROWS_MAX = 2000;
     const CHARM_FRAMES_MAX = 1440;
     const CHARM_PREF_KEY = 'spx-charm-heatmap';          // localStorage '1' | '0'; default off
@@ -103,7 +110,8 @@
             const levelSeries = {};
             for (const lv of PRICE_LEVELS) {
                 levelSeries[lv.key] = chart.addSeries(LC.LineSeries, {
-                    color: levelColor(c, lv), lineWidth: 2, lineStyle: LC.LineStyle.Dotted, lineType: LC.LineType.WithSteps,
+                    color: levelColor(c, lv), lineWidth: lv.width ?? 2,
+                    lineStyle: LC.LineStyle[LEVEL_LINE_STYLE[lv.style] || 'Dotted'], lineType: LC.LineType.WithSteps,
                     priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title: lv.tag,
                     autoscaleInfoProvider: () => null,       // a far wall must not squash the candles
                 });

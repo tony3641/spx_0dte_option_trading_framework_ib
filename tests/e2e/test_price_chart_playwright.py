@@ -198,6 +198,34 @@ def test_level_change_moves_the_line_and_a_new_bar_extends_it(page):
     assert page.evaluate("() => priceChart.levelRows.length") == 1         # a new expiration starts a new history
 
 
+def test_zero_gamma_em_and_pin_lines_draw_from_the_level_history(page):
+    snap = {"session_date": S, "mode": "live", "bars": [_bar("09:30", 100), _bar("09:31", 101)], "overnight": [],
+            "levels": [{**_level_row("09:30", 110, 90, 100, None), "em_high": 104, "em_low": 96,
+                        "node_r1": 106, "node_s1": 94}]}
+    _inject(page, "price_snapshot", snap)
+    page.evaluate(FRAMES)
+    assert {"gamma_flip", "em_high", "em_low", "node_r1", "node_s1"} <= set(_drawn_levels(page))
+    titles = page.evaluate("() => Object.fromEntries(Object.entries(priceChart.levelSeries).map(([k, s]) => [k, s.options().title]))")
+    assert (titles["gamma_flip"], titles["em_high"], titles["em_low"], titles["node_r1"], titles["node_s1"]) == \
+        ("ZG", "EM+", "EM-", "R", "S")
+
+
+def test_the_strip_reads_the_dealer_regime_and_the_new_badges(page):
+    gex = {"call_wall": 110, "put_wall": 90, "gamma_flip": 100, "max_pain": None, "total_net_gex": -5e8,
+           "spot_price": 101, "expiration": "20990105", "timestamp": f"{S}T10:00:00-05:00",
+           "gamma_flip_cumulative": 97.5,
+           "dealer": {"regime": "long_gamma", "gamma_at_spot": 2e8,
+                      "em": {"open": 18.2, "high": 119.2, "low": 82.8, "live": 12.3, "anchor_time": "09:31"},
+                      "charm": {"to_close_usd": 12e6}, "vanna": {"usd_per_vol_down": -3e6}}}
+    _inject(page, "gex", gex)
+    page.evaluate(FRAMES)
+    assert "CONVERGING" in page.inner_text("#mmRegimeText")            # dealer regime wins over the negative net GEX
+    assert page.inner_text("#emBadge") == "±18"
+    assert page.inner_text("#charmCloseBadge") == "+$12.0M" and "badge-converging" in page.get_attribute("#charmCloseBadgeBox", "class")
+    assert page.inner_text("#vannaBadge") == "-$3.0M" and "badge-diverging" in page.get_attribute("#vannaBadgeBox", "class")
+    assert page.inner_text(".badge-gamma-flip .label") == "Zero Gamma" and "97.5" in page.get_attribute(".badge-gamma-flip", "title")
+
+
 def _charm_frame(hhmm, scale=1):
     strikes = [96, 98, 100, 102, 104]
     return {"time": f"{S}T{hhmm}", "strikes": strikes, "values": [-300 * scale, -100 * scale, 50 * scale, 200 * scale, 400 * scale]}
