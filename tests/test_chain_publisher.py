@@ -293,3 +293,20 @@ async def test_flow_blend_positions_net_out_the_customer_volume(app_state, monke
     await publish_chain(st, sink, now_mono=0.0)
     assert seen["pos"].model == "flow_blend"
     assert seen["pos"].calls[7710.0] == 1000 - 10       # OI 1000 less the 10 contracts customers bought
+
+
+@pytest.mark.asyncio
+async def test_a_failing_flow_blend_keeps_the_oi_positions_and_still_publishes(app_state, monkeypatch, caplog):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("invented flow-blend failure")
+
+    monkeypatch.setattr(pub, "positions_flow_blend", boom)
+    st, sink = _state(app_state, *_chain()), Sink()
+    st.dealer_model = "flow_blend"
+    assert await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    assert any(m["type"] == "chain_quotes" for m in sink.msgs)
+    assert gex["dealer"] is not None and gex["dealer"]["model"] == "oi_assumed"
+    assert "Flow-blend positions failed" in caplog.text

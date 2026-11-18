@@ -74,7 +74,11 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     gex.timestamp = now.isoformat()
     pos = positions_from_oi(gex)
     if state.dealer_model == "flow_blend":
-        pos = positions_flow_blend(pos, *state.flow_tracker.net_volumes())
+        try:
+            pos = positions_flow_blend(pos, *state.flow_tracker.net_volumes())
+        except Exception:
+            # Keep the OI positions for this cycle: the profile still renders and the GEX / chain publish is never dropped.
+            logger.exception("Flow-blend positions failed; using OI-assumed positions this cycle")
     try:
         dealer, levels = build_dealer(gex, options, pos, T, state.risk_free_rate, now, state.em_anchor,
                                       state.atm_iv_history, state.price_history, state.price_session_date)
