@@ -195,6 +195,15 @@ Source: spx_trade_desk/core/config.py
 - signals.CHARM_WINDOW_ET = 14:00 (the charm window opens here, once per session; it closes at 16:00)
 - signals.CHARM_MIN_USD = 100_000_000 (charm window: the charm to close must be at least this size)
 - signals.MAX_SIGNALS = 500 (records kept and sent with the snapshot; cleared on an expiration change)
+
+### Levels replay (Phase 5): market/levels_replay.py (offline CLI)
+- levels_replay.TOUCH_PTS = 2.0 (a bar within this of a level touches it)
+- levels_replay.HOLD_PTS = 5.0 (a close this far back on the original side holds; this far through the level breaks)
+- levels_replay.WINDOW_MIN = 30 (bars after a record, and after a touch, that can score a level)
+- levels_replay.DEDUPE_MIN = 30 (a (type, round(level)) pair is evaluated at most once per this many minutes)
+- levels_replay.HORIZONS = (15, 30, 60) (forward SPX return horizons, minutes)
+- levels_replay.TOD_BUCKETS = open 09:30-11:00, mid 11:00-14:00, late 14:00-16:00 (time-of-day buckets for the flow correlations)
+- levels_replay.MIN_CORR_SAMPLES = 10 (fewer paired samples than this gives no correlation)
 - All of the above are placeholders until the Phase 5 replay (Task 14) calibrates them; they are not validated values.
 - A null `charm.to_close_usd` does not consume the 14:00 window: the signal can fire later, before 16:00, once the value appears.
 - static/js/price-chart.js: `SIGNAL_MARKERS_KEY` (`spx-signal-markers`: `'1'` on, `'0'` off; default off) remembers the Signals button; `SIGNALS_MAX` (500) bounds the records the browser holds.

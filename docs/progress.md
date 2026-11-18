@@ -2,6 +2,13 @@
 
 All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboard.
 
+## Session: November 18, 2026 - Intraday options flow (phase 5): levels replay tooling
+
+- **What changed:** `market/levels_replay.py` is an offline CLI that replays recorded chain-library days through the same computation the live publisher runs (`compute_gex`, `positions_from_oi`, `build_dealer`, a fresh expected-move anchor and ATM IV history per day). It scores each level (zero gamma, call and put walls, gamma nodes, the open expected-move band) for touch, hold and break against a mirrored baseline at the same distance, and pairs the charm and vanna flow estimates with the SPX return over 15, 30 and 60 minutes by time-of-day bucket. Output is `summary.json` and `summary.md` in the gitignored `docs/experiments/`.
+- **Tooling only:** no replay has been run for this entry, and no results are recorded here. The thresholds (touch 2 points, hold 5 points, 30-bar windows, 30-minute dedupe, 10 correlation samples) are the untested defaults in `config/tunables.md`. The signal thresholds that Phase 3 shipped as placeholders are still uncalibrated until a replay has been read.
+- **Data handling:** the replay reads the local chain library and a bars CSV that the user supplies. Neither is tracked, and the tests use invented chains, bars and 2099 dates written to `tmp_path`.
+- **Tests:** `tests/test_levels_replay.py` (outcome scoring, a replayed day with a dedupe check, the correlation sample floor, the CLI writing its files). `tests/test_sim_library.py` also passes, since the replay reuses its record reader. The full suite was not run.
+
 ## Session: November 18, 2026 - Intraday options flow (phase 3): signals and chart markers
 
 - **What changed:** `market/signals.py` (`SignalTracker`) is wired into the live loop. `PriceBarFeed` evaluates each closed minute once (zero gamma, nodes, expected move, flow surge and divergence, with the previous bars and the flow minutes), and `publish_chain` evaluates the publish-time rules (vanna shift, charm window). Records are kept per expiration (500 at most, cleared on an expiration change), sent in the price snapshot as `signals`, and streamed as `signal` messages (publish-time ones right after their `gex` message).
