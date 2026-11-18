@@ -18,7 +18,9 @@ from spx_trade_desk.core.config import CHAIN_STREAM_UPDATE_INTERVAL, MONTHLY_CAC
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import now_et, is_cboe_options_open
 from spx_trade_desk.market.chain_fetcher import fetch_option_chain
+from spx_trade_desk.market.dealer_model import positions_from_oi
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict, GEXResult, OptionData
+from spx_trade_desk.market.levels import profile_levels, resolve_gamma_flip
 from spx_trade_desk.market.qualification import norm_key, unknown_retry_due  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
@@ -506,28 +508,28 @@ async def monthly_gex_fetch(ib, state, broadcast_fn):
             for o in options:
                 o.open_interest = o.volume
 
-        # Compute time to expiry
-        exp_date = datetime.strptime(state.monthly_expiration, "%Y%m%d").date()
+        # Time to expiry: the same rule as the 0DTE publisher (imported here: chain_publisher imports this module)
+        from spx_trade_desk.market.chain_publisher import tte_years
         now = now_et()
-        if exp_date == now.date():
-            close_dt = now.replace(hour=16, minute=0, second=0, microsecond=0)
-            mins_left = max((close_dt - now).total_seconds() / 60.0, 1.0)
-            tte_years = mins_left / (390.0 * 252.0)
-        else:
-            days_left = (exp_date - now.date()).days
-            tte_years = max(days_left, 1) / 252.0
+        tte = tte_years(state.monthly_expiration, now)
 
         gex_result = compute_gex(
             options, state.spx_price,
-            time_to_expiry_years=tte_years,
+            time_to_expiry_years=tte,
             risk_free_rate=state.risk_free_rate,
         )
         gex_result.expiration = state.monthly_expiration
         gex_result.timestamp = now_et().isoformat()
+        # Monthly has no dealer block (no ATM anchor or flow history), but zero gamma still applies.
+        cumulative = gex_result.gamma_flip
+        levels = profile_levels(gex_result, positions_from_oi(gex_result), tte, state.risk_free_rate, em=None)
+        gex_result.gamma_flip, gamma_flip_method = resolve_gamma_flip(gex_result, levels)
 
         state.monthly_gex_result = gex_result
         state.monthly_latest_gex = gex_result_to_dict(gex_result)
         state.monthly_latest_gex["es_derived"] = state.es_derived
+        state.monthly_latest_gex["gamma_flip_method"] = gamma_flip_method
+        state.monthly_latest_gex["gamma_flip_cumulative"] = cumulative
         state.monthly_chain_data = options
         state.monthly_last_fetch_ts = _time.monotonic()
 

@@ -2,6 +2,15 @@
 
 All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboard.
 
+## Session: November 17, 2026 - Dealer gamma levels: zero gamma, nodes, voids and expected move (phase 1)
+
+- **What changed:** the chain publisher builds a dealer gamma profile from the 0DTE quote book every cycle (`market/dealer_model.py`, `market/levels.py`, `market/atm.py`, `market/dealer_flows.py`, `market/dealer_payload.py`). The `gex` message gains a `dealer` block (zero gamma and regime, a +/-2% curve with hedge dollars, the top gamma nodes per side with their hedge flow, voids, the expected-move band and its session range, charm flow and vanna) and `state.latest_dealer` holds it.
+- **Gamma flip is zero gamma:** `gamma_flip` (also the GF level and `chain_quotes.gamma_flip`) is now the sign change of the dealer gamma curve nearest spot, searched on spot +/- 5%. `gamma_flip` is `null` when the curve has no crossing in range. The old cumulative flip is used only when the profile cannot be computed (no time or no IV) and is sent as `gamma_flip_cumulative` for comparison. `gamma_flip_method` says which one applies. The monthly view reports zero gamma too (no `dealer` block).
+- **Level history:** `em_high` / `em_low` (the anchored open band) and `node_r1` / `node_s1` (the nearest pin above and below) join the walls, zero gamma and max pain in `LEVEL_KEYS`.
+- **Not changed:** call and put wall semantics (pinned by `tests/test_gex_walls.py`); the UI still says "Gamma Flip" until the later phase that draws the profile.
+- **Known limits, recorded for the calibration phase:** the dealer model is open interest based (`oi_assumed`) and IB's open interest normally updates once a day; a strike with no position is absent from the per-strike GEX, so a node or void next to a missing strike can be misjudged; the node and void thresholds are placeholders until the replay calibrates them.
+- **Tests:** `tests/test_dealer_payload.py` (new) and the updated `tests/test_chain_publisher.py`, `tests/test_level_history.py`, `tests/test_chain_manager.py`. The full suite was not run.
+
 ---
 
 ## Session: November 18, 2026 - GEX in dollars

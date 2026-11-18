@@ -1,4 +1,5 @@
 """Publisher: the quote book becomes GEX + chain payload + state every cycle."""
+import json
 import os
 import time
 from datetime import datetime
@@ -110,3 +111,70 @@ async def test_publish_tick_does_not_touch_the_heartbeat_when_the_publish_failed
 async def test_publish_tick_without_a_recorder_just_publishes(app_state):
     st = _state(app_state, OptionData(7690, "P", bid=1.0))
     assert await pub.publish_tick(st, Sink(), None, now_mono=1.0)
+
+
+def _chain(iv=0.15):
+    """Invented chain: strikes 7600..7800; dealers' OI sits on calls above 7700 and puts below it."""
+    opts = []
+    for k in range(7600, 7810, 10):
+        for right in ("C", "P"):
+            oi = 1000 if (right == "C" and k > 7700) or (right == "P" and k < 7700) else 0
+            bid, ask = (9.8, 10.2) if k == 7700 else (1.0, 1.2)
+            opts.append(OptionData(k, right, implied_vol=iv, open_interest=oi, bid=bid, ask=ask))
+    return opts
+
+
+def _chain_200_strikes():
+    """Invented chain with 200 strikes per right, for the payload size check."""
+    opts = []
+    for k in range(7000, 9000, 10):
+        for right in ("C", "P"):
+            oi = 1000 if (right == "C" and k > 7700) or (right == "P" and k < 7700) else 0
+            opts.append(OptionData(k, right, implied_vol=0.15, open_interest=oi, bid=1.0, ask=1.2))
+    return opts
+
+
+@pytest.mark.asyncio
+async def test_publish_adds_the_dealer_block_and_zero_gamma_replaces_the_flip(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+    await publish_chain(st, sink, now_mono=0.0)
+    gex = sink.msgs[0]["data"]
+    d = gex["dealer"]
+    assert {"model", "regime", "gamma_at_spot", "zero_gamma", "zero_gamma_all", "zero_gamma_distance",
+            "profile", "nodes", "voids", "em", "charm", "vanna"} <= set(d)
+    assert d["model"] == "oi_assumed" and gex["gamma_flip"] == d["zero_gamma"]
+    assert gex["gamma_flip_method"] == "zero_gamma"
+    assert "gamma_flip_cumulative" in gex
+    assert st.latest_gex["dealer"] == d and st.latest_dealer == d
+    assert st.chain_quotes_cache["gamma_flip"] == gex["gamma_flip"]
+    assert d["em"]["live"] == pytest.approx(20.0) and d["em"]["anchor_time"] == "10:00"
+    assert (gex["em_low"], gex["em_high"]) == (7680.0, 7720.0)
+
+
+@pytest.mark.asyncio
+async def test_without_any_iv_there_is_no_dealer_block_and_the_flip_is_cumulative(app_state):
+    st = _state(app_state, OptionData(7690, "P", gamma=0.01, open_interest=100, bid=1.0, ask=1.2))
+    sink = Sink()
+    await publish_chain(st, sink, now_mono=0.0)
+    assert sink.msgs[0]["data"]["dealer"] is None
+    assert sink.msgs[0]["data"]["gamma_flip_method"] == "cumulative"
+
+
+@pytest.mark.asyncio
+async def test_the_level_history_records_the_em_band_and_the_nearest_pins(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st = _state(app_state, *_chain())
+    await publish_chain(st, Sink(), now_mono=0.0)
+    point = st.level_history.points()[-1]
+    assert {"em_high", "em_low", "node_r1", "node_s1"} <= set(point)
+    assert point["em_high"] == 7720.0 and point["em_low"] == 7680.0
+
+
+@pytest.mark.asyncio
+async def test_the_dealer_block_stays_compact(app_state, monkeypatch):      # sent to every browser every 10 s
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st = _state(app_state, *_chain_200_strikes())
+    await publish_chain(st, Sink(), now_mono=0.0)
+    assert st.latest_dealer is not None
+    assert len(json.dumps(st.latest_dealer)) < 6000

@@ -476,3 +476,32 @@ async def test_a_new_browser_makes_the_next_cycle_resend_whole_rows(app_state, m
     assert len(resent) == 10 and all(TICK_FIELDS <= set(t) for t in resent)
     assert st.chain_resync_requested is False
     assert sent[2]["data"]["ticks"] == [{"strike": 5200.0, "right": "C", "ask": 1.3}]    # back to the diff
+
+
+@pytest.mark.asyncio
+async def test_monthly_gex_reports_zero_gamma(app_state, monkeypatch):
+    from spx_trade_desk.market import chain_manager
+    from spx_trade_desk.market.gex import OptionData
+
+    class Sink:
+        def __init__(self):
+            self.msgs = []
+
+        async def __call__(self, msg):
+            self.msgs.append(msg)
+
+    options = []
+    for k in range(7600, 7810, 10):
+        for right in ("C", "P"):
+            options.append(OptionData(k, right, implied_vol=0.15, open_interest=1000, bid=1.0, ask=1.2))
+
+    async def fake_fetch(**kwargs):
+        return options
+
+    monkeypatch.setattr(chain_manager, "fetch_option_chain", fake_fetch)
+    st = app_state
+    st.connected = True
+    st.monthly_expiration = "20991120"
+    st.spx_price = 7700.0
+    await chain_manager.monthly_gex_fetch(None, st, Sink())
+    assert st.monthly_latest_gex["gamma_flip_method"] == "zero_gamma"

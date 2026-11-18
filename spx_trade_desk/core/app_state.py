@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Set
 from spx_trade_desk.core import config
 from spx_trade_desk.ib.contracts import ContractRegistry
 from spx_trade_desk.market.gex import GEXResult, OptionData
+from spx_trade_desk.market.atm import AtmIvHistory, ExpectedMoveAnchor
 from spx_trade_desk.market.charm_history import CharmHistory
 from spx_trade_desk.market.level_history import LevelHistory
 from spx_trade_desk.market.quote_book import QuoteBook
@@ -34,7 +35,10 @@ class AppState:
 
         # GEX
         self.latest_gex: Optional[dict] = None
+        self.latest_dealer: Optional[dict] = None    # the dealer block of latest_gex (levels, nodes, flows)
         self.gex_result: Optional[GEXResult] = None
+        self.em_anchor = ExpectedMoveAnchor()        # open band: the spot and ATM straddle at the first eligible publish
+        self.atm_iv_history = AtmIvHistory()         # per-minute ATM IV of the expiration (vanna IV trend)
         self.level_history = LevelHistory()          # wall / flip / max-pain changes, for the price chart
         self.charm_history = CharmHistory()          # per-minute charm exposure by strike (charm heatmap)
 

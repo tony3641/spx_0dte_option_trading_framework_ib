@@ -146,6 +146,30 @@ Source: spx_trade_desk/core/config.py
 - keepalive error sleep: 0.5 s
 - websocket receive timeout: 30 s
 
+### Dealer gamma profile (Phase 1): market/dealer_model.py, levels.py, atm.py, dealer_flows.py, dealer_payload.py
+- dealer_model.MULTIPLIER = 100.0 (contract multiplier of the dealer share-equivalent delta)
+- dealer_model.IV_FLOOR = 1e-4 (lowest implied vol the greeks use, so a zero IV cannot divide by zero)
+- levels.ZERO_GAMMA_BAND = 0.05 (zero gamma is searched on spot +/- 5%; this is the search range, not the sent curve)
+- levels.PROFILE_BAND = 0.02 (the curve sent to the browser: spot +/- 2%; also the node band when no straddle exists)
+- levels.PROFILE_STEP = 1.0 (search grid step, index points)
+- levels.PROFILE_SEND_STEP = 2.5 (sent profile values and hedge step, index points)
+- levels.NODES_PER_SIDE = 3 (nodes kept above and below spot: R1..R3, S1..S3)
+- levels.NODE_RANGE_EM = 2.0 (node band: spot +/- 2.0 x the live expected move)
+- levels.NODE_MIN_PROMINENCE = 0.15 (a node's prominence must reach 15% of the band's largest |GEX|)
+- levels.VOID_FRAC = 0.10 (a void strike has |GEX| under 10% of the band's largest)
+- levels.VOID_MIN_STRIKES = 2 (a void is at least this many consecutive quiet strikes)
+- atm.EM_MAX_GAP = 10.0 points (a straddle or ATM IV bracket wider than this gives no value)
+- atm.EM_ANCHOR_TIME = 09:31 ET (the open band anchors at the first eligible publish at or after this time)
+- atm.SESSION_CLOSE = 16:00 ET (no anchor at or after the close; GTH publishes for another expiration never anchor)
+- dealer_flows.VOL_POINT = 0.01 (one vol point, absolute IV, for vanna)
+- dealer_flows.YEAR_MINUTES = 390 x 252 (trading minutes per year, the GEX time unit)
+- dealer_flows.T_END_YEARS = 1 / YEAR_MINUTES (the charm-to-close end: one minute before the close)
+- dealer_flows.CLOSE_HOUR = 16 (the close used by the charm path, ET)
+- dealer_flows charm path marks: every :00 and :30 ET before the close, plus the final minute before the close
+- dealer_payload IV change windows: 15 and 30 minutes (`iv_change_15m`, `iv_change_30m`); the ATM IV history is kept per minute and reset on each expiration
+- charm_history.DT15_YEARS = 15 / (390 x 252) (existing; the 15-minute charm step that charm_flow_15m_usd uses)
+- dealer_payload rounding: prices 2 decimals, USD whole dollars (int), profile values and hedge int, ATM IV in vol points at 2 decimals (not configurable)
+
 ## 3) Frontend hardcoded tunables (static/js)
 
 ### static/js/state.js

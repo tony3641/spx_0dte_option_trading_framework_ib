@@ -12,8 +12,11 @@ from datetime import datetime
 
 from spx_trade_desk.core.config import CHAIN_QUOTE_MAX_AGE_S, CHAIN_REFRESH_SECONDS
 from spx_trade_desk.market.chain_manager import build_chain_quotes
+from spx_trade_desk.market.dealer_model import positions_from_oi
+from spx_trade_desk.market.dealer_payload import build_dealer, level_fields
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict
 from spx_trade_desk.market.hours import is_cboe_options_open, now_et
+from spx_trade_desk.market.levels import resolve_gamma_flip
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +46,24 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
         for o in gex_opts:
             o.open_interest = o.volume
     now = now_et()
+    T = tte_years(state.expiration, now)
     gex = compute_gex(gex_opts, state.spx_price,
-                      time_to_expiry_years=tte_years(state.expiration, now),
+                      time_to_expiry_years=T,
                       risk_free_rate=state.risk_free_rate)
     gex.expiration = state.expiration
     gex.timestamp = now.isoformat()
+    pos = positions_from_oi(gex)
+    dealer, levels = build_dealer(gex, options, pos, T, state.risk_free_rate, now, state.em_anchor,
+                                  state.atm_iv_history, state.price_history, state.price_session_date)
+    cumulative = gex.gamma_flip
+    gex.gamma_flip, gamma_flip_method = resolve_gamma_flip(gex, levels)   # zero gamma when the profile exists
     state.gex_result = gex
     state.latest_gex = gex_result_to_dict(gex)
+    state.latest_gex["dealer"] = dealer
+    state.latest_gex["gamma_flip_method"] = gamma_flip_method
+    state.latest_gex["gamma_flip_cumulative"] = cumulative
+    state.latest_gex.update(level_fields(dealer))
+    state.latest_dealer = dealer
     state.level_history.record(state.latest_gex)
     state.charm_history.record(gex)
     state.last_chain_update = now.strftime("%H:%M:%S")
