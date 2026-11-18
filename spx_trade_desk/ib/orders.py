@@ -204,14 +204,14 @@ async def _reprice_until_filled(ib, contract, order, handle, reprice_interval, n
     10 times. Returns ``(handle, None)``, or ``(handle, status)`` when the order went
     terminal without filling."""
     original_handle = handle
-    reprice_deadline = asyncio.get_event_loop().time() + 300.0
+    reprice_deadline = asyncio.get_running_loop().time() + 300.0
     max_reprice_iterations = 10
     reprice_iteration = 0
 
     def _filled() -> bool:
         return handle.status == "Filled" or (handle.remaining is not None and handle.remaining <= 0)
 
-    while asyncio.get_event_loop().time() < reprice_deadline:
+    while asyncio.get_running_loop().time() < reprice_deadline:
         reprice_iteration += 1
         if _filled():
             break

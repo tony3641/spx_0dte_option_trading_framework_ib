@@ -19,47 +19,11 @@
     document.addEventListener('DOMContentLoaded', () => {
         syncShellHeight();
         initPriceChart();
-        initGexChart();
+        initGexProfile();               // needs the price chart: it shares its price axis
         initSmileChart();
 
-        // Sync horizontal zoom between GEX chart (xaxis) and Smile chart (xaxis + xaxis2)
-        // Guard flag prevents the two handlers from triggering each other infinitely.
-        let syncingZoom = false;
-
-        document.getElementById('gexChart').on('plotly_relayout', (data) => {
-            if (syncingZoom) return;
-            if (data['xaxis.range[0]'] !== undefined && data['xaxis.range[1]'] !== undefined) {
-                const xRange = [data['xaxis.range[0]'], data['xaxis.range[1]']];
-                syncingZoom = true;
-                Plotly.relayout('smileChart', {
-                    'xaxis.range': xRange,
-                    'xaxis2.range': xRange,
-                }).finally(() => { syncingZoom = false; });
-            } else if (data['xaxis.autorange'] !== undefined) {
-                syncingZoom = true;
-                Plotly.relayout('smileChart', {
-                    'xaxis.autorange': data['xaxis.autorange'],
-                    'xaxis2.autorange': data['xaxis.autorange'],
-                }).finally(() => { syncingZoom = false; });
-            }
-        });
-
-        document.getElementById('smileChart').on('plotly_relayout', (data) => {
-            if (syncingZoom) return;
-            if (data['xaxis.range[0]'] !== undefined && data['xaxis.range[1]'] !== undefined) {
-                const xRange = [data['xaxis.range[0]'], data['xaxis.range[1]']];
-                syncingZoom = true;
-                Plotly.relayout('gexChart', { 'xaxis.range': xRange })
-                    .finally(() => { syncingZoom = false; });
-            } else if (data['xaxis.autorange'] !== undefined) {
-                syncingZoom = true;
-                Plotly.relayout('gexChart', { 'xaxis.autorange': data['xaxis.autorange'] })
-                    .finally(() => { syncingZoom = false; });
-            }
-        });
-
-        // Size the Plotly charts from their containers: a chart is resized only while its container has
-        // a real size (never while the tab is hidden, which draws it squashed), one chart per frame.
+        // Size the Plotly chart from its container: it is resized only while the container has a real
+        // size (never while the tab is hidden, which draws it squashed).
         const chartObserver = new ResizeObserver(entries => {
             for (const e of entries) {
                 const el = e.target;
@@ -70,17 +34,10 @@
                 }
             }
         });
-        ['gexChart', 'smileChart'].forEach(id => chartObserver.observe(document.getElementById(id)));
+        chartObserver.observe(document.getElementById('smileChart'));
 
-        // Window resize only swaps the margins and font sizes for mobile/desktop transitions
+        // Window resize only swaps the margins for mobile/desktop transitions
         window.addEventListener('resize', () => {
-            const fs = mobileAxisFontSize();
-            Plotly.relayout('gexChart', {
-                margin: mobileGexMargin(),
-                'xaxis.title.font.size': fs,
-                'yaxis.title.font.size': fs,
-                'legend.font.size': fs,
-            });
             Plotly.relayout('smileChart', { margin: mobileSmileMargin() });
             if (state.activeTab === 'chain') {
                 reportChainViewportCenter(true);

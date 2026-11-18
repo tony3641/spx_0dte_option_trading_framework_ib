@@ -16,11 +16,6 @@ import signal
 import sys
 from typing import Optional
 
-# Must be BEFORE any event-loop creation
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-import nest_asyncio
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, WebSocket, HTTPException, Request
@@ -33,6 +28,7 @@ from spx_trade_desk.ib.session import boot_session, start_background_loops
 from spx_trade_desk.core import config
 from spx_trade_desk.resources import CHAIN_LIBRARY_DIR, STATIC_DIR
 from spx_trade_desk.core.app_state import AppState
+from spx_trade_desk.core.loop import loop_factory
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.account import (
     refresh_account_state, build_account_payload,
@@ -86,8 +82,6 @@ async def lifespan(_app):
     # Capture every framework log record into the Log console's ring buffer.
     logging.getLogger().addHandler(LogStoreHandler(state))
 
-    loop = asyncio.get_event_loop()
-    nest_asyncio.apply(loop)
     ib = IBClient()
     broadcast_fn = make_broadcast_fn(state)
 
@@ -452,11 +446,20 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    nest_asyncio.apply(loop)
+def run_server(server: uvicorn.Server) -> None:
+    """Serve on the project's event loop (selector on Windows, via core.loop). Only this entry point
+    selects the loop: `uvicorn spx_trade_desk.server:app` runs on uvicorn's own loop (Proactor on
+    Windows). Runner's exit cancels leftover tasks and shuts down async generators and the default
+    executor before closing."""
+    with asyncio.Runner(loop_factory=loop_factory()) as runner:
+        try:
+            runner.run(server.serve())
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received; shutting down...")
+            server.should_exit = True
 
+
+if __name__ == "__main__":
     uvi_config = uvicorn.Config(
         app,
         host=config.SERVER_HOST,
@@ -497,17 +500,5 @@ if __name__ == "__main__":
     else:
         logger.info(f"  Access at       : http://{config.SERVER_HOST}:{config.SERVER_PORT}")
 
-    try:
-        loop.run_until_complete(server.serve())
-    except KeyboardInterrupt:
-        logger.info("KeyboardInterrupt received; shutting down...")
-        server.should_exit = True
-    finally:
-        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
-        logger.info("Server shutdown complete")
+    run_server(server)
+    logger.info("Server shutdown complete")

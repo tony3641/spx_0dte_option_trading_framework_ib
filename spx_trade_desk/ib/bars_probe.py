@@ -14,6 +14,7 @@ import sys
 import time
 
 from spx_trade_desk.core import config
+from spx_trade_desk.core.loop import run as run_loop
 from spx_trade_desk.ib.client import IBClient
 from spx_trade_desk.ib.connection import _index_contract
 
@@ -74,10 +75,8 @@ def main(argv=None) -> int:
         raise SystemExit(f"refusing to run: port {args.port} is a live-account port "
                          f"(paper TWS is 7497, paper Gateway 4002)")
     logging.basicConfig(level=logging.ERROR)              # IB errors on the request print via on_error
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
-        return asyncio.run(_run(args.host, args.port, args.client_id, args.seconds))
+        return run_loop(_run(args.host, args.port, args.client_id, args.seconds))
     except ConnectionError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -1,23 +1,28 @@
         /* Charts container */
+        /* The SPX chart takes the whole upper part of the screen; the gamma exposure profile is a column
+           inside it, on the chart's price axis. The IV smile and Positions & P&L sit side by side under it.
+           The two rows together fill the viewport: --dash-h is the room left after the header, strip, tab
+           bar, the container's padding and the gap between the rows. */
         .charts-container {
+            --dash-h: calc(100vh - var(--shell-h, 134px) - 24px);
             display: grid;
             grid-template-columns: 1fr 1fr;
-            grid-template-rows: 1fr 1fr;
-            grid-template-areas: "price smile" "gex pos";
+            grid-template-rows: calc(var(--dash-h) * 0.72) calc(var(--dash-h) * 0.28);
+            grid-template-areas: "price price" "smile pos";
             height: calc(100vh - var(--shell-h, 134px));
+            overflow-y: auto;
             padding: 8px;
             gap: 8px;
         }
         .chart-panel { min-width: 0; min-height: 0; }
         .panel-price { grid-area: price; }
         .panel-smile { grid-area: smile; }
-        .panel-gex   { grid-area: gex; }
         .panel-pos   { grid-area: pos; }
         @media (max-width: 1100px) {
             .charts-container {
                 grid-template-columns: 1fr;
                 grid-template-rows: none;
-                grid-template-areas: "price" "smile" "gex" "pos";
+                grid-template-areas: "price" "smile" "pos";
                 grid-auto-rows: minmax(320px, 1fr);
                 height: auto;
                 overflow-y: auto;
@@ -122,8 +127,17 @@
         .chart-title .help:focus .tooltip {
             display: block;
         }
+        /* The price chart's help explains the levels, the charm heatmap and the GEX profile: a wide box
+           anchored at the left, so it stays on screen and short enough to fit under the title. */
+        .panel-price .chart-title .help .tooltip {
+            left: 0;
+            transform: none;
+            width: 460px;
+            max-width: min(460px, calc(100vw - 24px));
+        }
+        .panel-price .chart-title .help .tooltip::after { left: 12px; transform: none; }
 
-        #priceChart, #gexChart, #smileChart {
+        #priceChart, #smileChart {
             width: 100%;
             height: 100%;
             border-radius: inherit;
@@ -131,6 +145,92 @@
             position: relative;
             z-index: 0;                             /* own stacking context: the price chart's pane separator (z 50) stays under the title's help tooltip */
         }
+
+        /* The price chart and the GEX profile column share the panel's height; the profile's canvas is as
+           tall as the chart's price pane, so its bars line up with the candles. */
+        .price-body { display: flex; width: 100%; height: 100%; border-radius: inherit; overflow: hidden; }
+        .price-body #priceChart { flex: 1 1 auto; width: auto; min-width: 0; border-radius: var(--r-lg) 0 0 var(--r-lg); }
+        .gex-profile {
+            position: relative;
+            z-index: 1;
+            flex: 0 0 var(--gex-profile-w, 216px);
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: var(--bg-panel);
+            border-left: 1px solid var(--border);
+        }
+        .gex-profile[hidden] { display: none; }
+        #gexProfileCanvas {
+            display: block;
+            flex: 0 0 auto;
+            width: 100%;
+            height: 0;                              /* set from the price pane's height */
+            cursor: ns-resize;
+            touch-action: none;                     /* a vertical drag pans the price scale, not the page */
+            user-select: none;
+        }
+        #gexProfileCanvas.dragging { cursor: grabbing; }
+        .gex-profile-foot {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            padding: 6px 8px 4px;
+            border-top: 1px solid var(--border);
+            scrollbar-width: thin;
+        }
+        .gex-foot-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+        .gex-profile .gex-mode-toggle { margin-left: 0; flex: 0 0 auto; }
+        .gex-profile .gex-mode-btn { font-size: 10px; padding: 2px 7px; }
+        .gex-zoom { gap: 4px; }
+        .gex-zoom-btn {
+            flex: 1 1 0;
+            min-width: 0;
+            background: var(--bg-raised);
+            color: var(--text-muted);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--r-sm);
+            font: inherit;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.5;
+            padding: 1px 4px;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .gex-zoom-btn:hover, .gex-zoom-btn:focus-visible { color: var(--text-strong); border-color: var(--accent); }
+        .gex-zoom-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+        .gex-summary { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+        .gex-sum-label { color: var(--text-faint); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+        .gex-sum-row { display: flex; justify-content: space-between; gap: 6px; }
+        .gex-sum-row .k { color: var(--text-muted); }
+        .gex-sum-row .v { color: var(--text-strong); font-family: var(--font-num); font-variant-numeric: tabular-nums; text-align: right; }
+        .gex-sum-row .up, .gex-sum-regime.up { color: var(--up); }
+        .gex-sum-row .down, .gex-sum-regime.down { color: var(--down); }
+        .gex-sum-regime { font-family: var(--font-ui); font-size: 9px; font-weight: 700; letter-spacing: .06em; }
+        .gex-profile-tip {
+            position: absolute;
+            right: calc(100% - 6px);                /* just over the price axis, on the chart side */
+            z-index: 30;
+            min-width: 138px;
+            padding: 6px 8px;
+            background: var(--bg-overlay);
+            color: var(--text-strong);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--r-md);
+            box-shadow: var(--shadow-float);
+            font-size: 11px;
+            pointer-events: none;
+        }
+        .gex-profile-tip.hidden { display: none; }
+        .gex-tip-title { font-weight: 700; margin-bottom: 3px; }
+        .gex-tip-row { display: flex; justify-content: space-between; gap: 12px; }
+        .gex-tip-row span:first-child { color: var(--text-muted); }
+        .gex-tip-row span:last-child { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+        @media (max-width: 700px) { .gex-profile { --gex-profile-w: 150px; } }
         .price-chart-error { color: var(--down); padding: 40px 16px 16px; font-size: 13px; }
 
         /* GEX chain-fetch loading overlay */

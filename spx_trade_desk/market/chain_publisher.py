@@ -50,6 +50,8 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     gex.timestamp = now.isoformat()
     state.gex_result = gex
     state.latest_gex = gex_result_to_dict(gex)
+    state.level_history.record(state.latest_gex)
+    state.charm_history.record(gex)
     state.last_chain_update = now.strftime("%H:%M:%S")
     state.chain_data = options
     state.chain_quotes_cache = build_chain_quotes(
@@ -62,6 +64,7 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     state.chain_quotes_cache["built_mono"] = time.monotonic()
     payload = dict(state.latest_gex)
     payload["es_derived"] = state.es_derived
+    payload["charm_frame"] = state.charm_history.latest()     # the chart appends it to the snapshot's history
     await broadcast_fn({"type": "gex", "data": payload})
     await broadcast_fn({"type": "chain_quotes", "data": state.chain_quotes_cache})
     if state.chain_fetching:

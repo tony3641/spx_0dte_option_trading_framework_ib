@@ -178,21 +178,30 @@ def _price_bg(page):
     return page.evaluate("() => priceChart.chart.options().layout.background.color")
 
 
+def _profile_bg(page):
+    """The GEX profile's caption strip is painted in the panel color: read a pixel of it."""
+    return page.evaluate("() => Array.from(gexProfile.canvas.getContext('2d').getImageData(1, 1, 1, 1).data)")
+
+
+DARK_PANEL, LIGHT_PANEL = [13, 17, 23, 255], [255, 255, 255, 255]
+
+
 def test_charts_recolor_when_the_theme_flips(browser_env):
     p, url = browser_env
     browser, _ctx, page = _open(p, url, "dark")
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     try:
-        page.wait_for_function("() => document.getElementById('gexChart')._fullLayout && document.getElementById('smileChart')._fullLayout")
-        assert _plotly_bg(page, "gexChart") == "#0d1117"
+        page.wait_for_function("() => gexProfile.draws > 0 && document.getElementById('smileChart')._fullLayout")
+        assert _profile_bg(page) == DARK_PANEL
         assert _plotly_bg(page, "smileChart") == "#0d1117"
         assert _price_bg(page) == "#0d1117"
         page.click("#themeToggle")
         page.evaluate(FRAMES)
         page.evaluate(FRAMES)
         page.evaluate(FRAMES)
-        assert _plotly_bg(page, "gexChart") == "#ffffff"
+        page.wait_for_function("() => Array.from(gexProfile.canvas.getContext('2d').getImageData(1, 1, 1, 1).data)[0] === 255")
+        assert _profile_bg(page) == LIGHT_PANEL
         assert _plotly_bg(page, "smileChart") == "#ffffff"
         assert _price_bg(page) == "#ffffff"
         assert errors == []
@@ -212,7 +221,8 @@ def test_a_flip_while_the_dashboard_is_hidden_shows_the_new_colors_on_return(bro
         page.evaluate("() => switchTab('dashboard')")
         for _ in range(4):
             page.evaluate(FRAMES)
-        assert _plotly_bg(page, "gexChart") == "#ffffff"
+        page.wait_for_function("() => Array.from(gexProfile.canvas.getContext('2d').getImageData(1, 1, 1, 1).data)[0] === 255")
+        assert _profile_bg(page) == LIGHT_PANEL
         assert _plotly_bg(page, "smileChart") == "#ffffff"
         assert _price_bg(page) == "#ffffff"
         assert errors == []
@@ -238,23 +248,34 @@ def _rect(page, selector):
 
 
 @pytest.mark.parametrize("size", [(1920, 1080), (1440, 900)])
-def test_dashboard_is_a_quad_that_fits_the_screen(browser_env, size):
+def test_dashboard_has_the_price_chart_on_top_with_the_gex_profile_inside_and_smile_and_positions_below(browser_env, size):
     p, url = browser_env
     browser, _ctx, page = _open(p, url, "dark", viewport=size)
     try:
         for _ in range(3):
             page.evaluate(FRAMES)
         assert page.evaluate("() => document.documentElement.scrollHeight <= window.innerHeight + 1")
-        price, smile = _rect(page, ".panel-price"), _rect(page, ".panel-smile")
-        gex, pos = _rect(page, ".panel-gex"), _rect(page, ".panel-pos")
-        for r in (price, smile, gex, pos):
-            assert r["w"] > 250 and r["h"] > 150
-            assert r["b"] <= size[1] + 1 and r["r"] <= size[0] + 1
-        assert abs(price["t"] - smile["t"]) < 2 and price["l"] < smile["l"]
-        assert gex["t"] > price["t"] + 100 and abs(gex["l"] - price["l"]) < 2
-        assert abs(pos["l"] - smile["l"]) < 2 and abs(pos["t"] - gex["t"]) < 2
+        price, smile, pos = _rect(page, ".panel-price"), _rect(page, ".panel-smile"), _rect(page, ".panel-pos")
+        for r in (price, smile, pos):
+            assert r["w"] > 250 and r["h"] > 120
+            assert r["b"] <= size[1] + 1 and r["r"] <= size[0] + 1          # both rows fit the screen: no scrolling
+        assert price["w"] > 0.9 * size[0]                                  # the SPX chart spans the whole upper part
+        assert price["h"] > 1.8 * smile["h"]                               # and is by far the biggest panel
+        assert smile["t"] > price["b"] - 1                                 # the smile and Positions sit under it ...
+        assert abs(smile["t"] - pos["t"]) < 2 and smile["l"] < pos["l"]    # ... side by side, the smile on the left
+        assert abs(smile["h"] - pos["h"]) < 2
+        assert page.evaluate("() => { const c = document.getElementById('dashboardTab'); return c.scrollHeight <= c.clientHeight + 1; }")
         assert page.evaluate("() => document.querySelectorAll('#priceChart canvas').length") > 0
-        assert page.evaluate("() => !!document.querySelector('#gexChart .main-svg')")
+        # The GEX profile is a column at the right edge of the price panel; its canvas starts where the chart
+        # does and is as tall as the chart's price pane, so strikes line up with prices.
+        prof = _rect(page, "#gexProfile")
+        chart = _rect(page, "#priceChart")
+        assert prof["l"] >= chart["r"] - 1 and prof["r"] <= price["r"] + 1 and prof["w"] > 150
+        cv = _rect(page, "#gexProfileCanvas")
+        assert abs(cv["t"] - chart["t"]) < 1
+        page.wait_for_function("() => gexProfile.drawn > 0", timeout=5000)
+        assert page.evaluate("() => Math.abs(gexProfile.h - priceChart.chart.panes()[0].getHeight()) <= 1")
+        assert page.evaluate("() => !document.getElementById('gexChart')")      # the old horizontal chart is gone
     finally:
         browser.close()
 
@@ -391,10 +412,10 @@ def test_reduced_motion_disables_flash_and_cross_fade(browser_env):
     assert dur in ("0.001s", "1e-06s", "0s")
 
 
-COUNT_REACTS = """() => { window.__reacts = {gexChart: 0, smileChart: 0}; const orig = Plotly.react;
+COUNT_REACTS = """() => { window.__reacts = {smileChart: 0}; const orig = Plotly.react;
                           Plotly.react = function (id, ...rest) { if (id in window.__reacts) window.__reacts[id]++; return orig.call(this, id, ...rest); }; }"""
 REACTS = "() => ({...window.__reacts})"
-GEX_X = "() => document.getElementById('gexChart').data[0].x"
+SMILE_X = "() => document.getElementById('smileChart').data[0].x"
 
 
 def _resend_gex(page, mutate="g => g"):
@@ -404,22 +425,22 @@ def _resend_gex(page, mutate="g => g"):
         page.evaluate(FRAMES)
 
 
-def test_gex_shows_the_strikes_near_spot_and_all_on_demand(browser_env):
+def test_the_smile_shows_the_strikes_near_spot_and_all_on_demand(browser_env):
     p, url = browser_env
     browser, _ctx, page = _open(p, url, "dark")
     try:
         for _ in range(3):
             page.evaluate(FRAMES)
-        xs = page.evaluate(GEX_X)
+        xs = page.evaluate(SMILE_X)
         assert 80 <= len(xs) <= 82 and min(xs) >= 5950 and max(xs) <= 6350       # spot 6150, 40 steps of 5
         page.click("#gexRangeToggle [data-range=all]")
         for _ in range(3):
             page.evaluate(FRAMES)
-        assert len(page.evaluate(GEX_X)) == 120
+        assert len(page.evaluate(SMILE_X)) == 120
         page.click("#gexRangeToggle [data-range=near]")
         for _ in range(3):
             page.evaluate(FRAMES)
-        assert len(page.evaluate(GEX_X)) < 120
+        assert len(page.evaluate(SMILE_X)) < 120
     finally:
         browser.close()
 
@@ -429,23 +450,24 @@ def test_the_window_falls_back_to_every_strike_without_a_usable_spot(browser_env
     p, url = browser_env
     browser, _ctx, page = _open(p, url, "dark")
     try:
-        page.evaluate(f"() => {{ state.currentSpot = 0; }}")
+        page.evaluate(f"() => {{ state.currentSpot = 0; state.smileMinIntervalMs = 0; }}")
         _resend_gex(page, f"g => {{ g.spot_price = {spot}; }}")
-        assert len(page.evaluate(GEX_X)) == 120
+        assert len(page.evaluate(SMILE_X)) == 120
     finally:
         browser.close()
 
 
-def test_an_unchanged_gex_is_not_redrawn_and_a_changed_one_is(browser_env):
+def test_an_unchanged_smile_is_not_redrawn_and_a_changed_one_is(browser_env):
     p, url = browser_env
     browser, _ctx, page = _open(p, url, "dark")
     try:
+        page.evaluate("() => { state.smileMinIntervalMs = 0; }")        # the throttle has its own test
         page.evaluate(FRAMES)
         page.evaluate(COUNT_REACTS)
         _resend_gex(page)                                               # same data
-        assert page.evaluate(REACTS)["gexChart"] == 0
-        _resend_gex(page, "g => { g.gex_bars[60].call_gex += 5e6; }")  # one bar changed
-        assert page.evaluate(REACTS)["gexChart"] == 1
+        assert page.evaluate(REACTS)["smileChart"] == 0
+        _resend_gex(page, "g => { g.smile_data[60].call_iv += 1; }")   # one point changed
+        assert page.evaluate(REACTS)["smileChart"] == 1
     finally:
         browser.close()
 
@@ -494,7 +516,7 @@ def test_help_tooltips_are_not_clipped_by_their_panel(browser_env):
     p, url = browser_env
     browser, _ctx, page = _open(p, url, "dark", viewport=(1440, 900))
     try:
-        for i in range(4):
+        for i in range(3):          # price chart (with the GEX profile), IV smile, Positions
             page.evaluate("i => document.querySelectorAll('#dashboardTab .chart-title .help')[i].focus()", i)
             visible = page.evaluate("""i => { const t = document.querySelectorAll('#dashboardTab .chart-title .help .tooltip')[i];
                 const r = t.getBoundingClientRect(); const el = document.elementFromPoint(r.right - 4, r.bottom - 4);

@@ -3,8 +3,8 @@ GEX (Gamma Exposure) calculator.
 
 Computes:
   - GEX per strike (call/put/net)
-  - Call Wall (highest call gamma × OI strike)
-  - Put Wall (highest put gamma × OI strike)
+  - Call Wall (highest call gamma × OI strike at or above spot: resistance)
+  - Put Wall (highest put gamma × OI strike at or below spot: support)
   - Gamma Flip Point (where cumulative net GEX crosses zero)
   - Max Pain (strike minimizing total option holder payout)
   - IV smile data with charm and delta-decay efficiency
@@ -161,10 +161,12 @@ def compute_gex(options: List[OptionData], spot_price: float,
     """
     Compute GEX metrics from a list of option data.
 
-    GEX per strike formula (dealer perspective):
-      Call GEX = gamma_C × OI_C × 100 × spot × 0.01
-      Put GEX  = -1 × gamma_P × OI_P × 100 × spot × 0.01
+    GEX per strike formula (dealer perspective), in dollars of underlying dealers must trade per 1% move:
+      Call GEX = gamma_C × OI_C × spot²
+      Put GEX  = -1 × gamma_P × OI_P × spot²
       Net GEX  = Call GEX + Put GEX
+    (Derivation: gamma × OI × 100 (option multiplier) × 1% of spot is the dealers' delta change in index
+    units for a 1% move; pricing those units at spot gives dollars. The 100 and the 1% cancel.)
 
     Args:
         options: List of OptionData for all strikes/rights in the chain.
@@ -213,7 +215,7 @@ def compute_gex(options: List[OptionData], spot_price: float,
     max_put_gex_val = 0.0
     max_put_gex_strike = None
 
-    multiplier = 100.0  # SPX option multiplier
+    dollar_scale = spot_price * spot_price      # dollars per 1% move per unit of gamma x OI (see docstring)
 
     for strike in all_strikes:
         c_gex = 0.0
@@ -229,7 +231,7 @@ def compute_gex(options: List[OptionData], spot_price: float,
                     gamma = _bsm_gamma(spot_price, strike, time_to_expiry_years,
                                        risk_free_rate, c.implied_vol)
                 if gamma is not None:
-                    c_gex = gamma * c.open_interest * multiplier * spot_price * 0.01
+                    c_gex = gamma * c.open_interest * dollar_scale
 
         # Put GEX (negative contribution - dealers short puts hedge by selling)
         if strike in puts_by_strike:
@@ -241,7 +243,7 @@ def compute_gex(options: List[OptionData], spot_price: float,
                     gamma = _bsm_gamma(spot_price, strike, time_to_expiry_years,
                                        risk_free_rate, p.implied_vol)
                 if gamma is not None:
-                    p_gex = -1.0 * gamma * p.open_interest * multiplier * spot_price * 0.01
+                    p_gex = -1.0 * gamma * p.open_interest * dollar_scale
 
         call_gex[strike] = c_gex
         put_gex[strike] = p_gex
@@ -275,12 +277,14 @@ def compute_gex(options: List[OptionData], spot_price: float,
                 if ch is not None:
                     put_charm_map[strike] = ch
 
-        # Track walls (absolute magnitudes)
-        if c_gex > max_call_gex_val:
+        # Walls are where hedging pushes back against a move toward them: the call wall is the largest
+        # call GEX at or above spot (resistance), the put wall the largest put GEX at or below spot
+        # (support). An in-the-money strike on the far side of spot is not a wall, however large.
+        if strike >= spot_price and c_gex > max_call_gex_val:
             max_call_gex_val = c_gex
             max_call_gex_strike = strike
 
-        if abs(p_gex) > max_put_gex_val:
+        if strike <= spot_price and abs(p_gex) > max_put_gex_val:
             max_put_gex_val = abs(p_gex)
             max_put_gex_strike = strike
 

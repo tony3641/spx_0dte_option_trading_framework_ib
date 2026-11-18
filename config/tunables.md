@@ -153,8 +153,8 @@ Source: spx_trade_desk/core/config.py
 - VALID_TABS: dashboard, chain, account
 - CHAIN_VIEWPORT_SEND_THROTTLE_MS: 200
 - CHAIN_VIEWPORT_CENTER_THRESHOLD: 30
-- state.gexWindowStrikes: 40 (the GEX and smile charts draw this many strike steps each side of spot; the step is the median gap between strikes)
-- state.gexShowAll: false (true draws every strike; the Near / All toggle sets it)
+- state.gexWindowStrikes: 40 (the IV smile draws this many strike steps each side of spot; the step is the median gap between strikes)
+- state.gexShowAll: false (true draws every strike in the smile; the Near / All toggle sets it)
 - state.smileMinIntervalMs: 5000 (a changed IV smile redraws at most this often, with a trailing draw)
 - state.chainFlashMax: 40 (most tick flashes started per chain flush; 0 turns the flash off)
 - Theme storage key: `spx-theme` (`light` or `dark`; absent = follow the OS), set from static/js/theme.js
@@ -168,19 +168,23 @@ Source: spx_trade_desk/core/config.py
 - Chain age update interval: 1000 ms (also toggles the chain table's quote-stale marks)
 
 ### static/js/tabs.js
-- (the 50 ms Dashboard resize timer is gone: a ResizeObserver in main.js sizes the GEX and smile charts)
+- (the 50 ms Dashboard resize timer is gone: a ResizeObserver in main.js sizes the smile chart, and the price chart and GEX profile size themselves)
 - Chain viewport recenter delay after switch: 80 ms
 
 ### static/js/render-loop.js
 - Frame batching: one requestAnimationFrame flush per frame for light jobs
-- HEAVY_MAX_WAIT_FLUSHES: 4 (a heavy job, such as a GEX or smile Plotly draw, runs one per frame after the light jobs; after waiting behind this many busy flushes it runs in a frame that also has light jobs)
+- HEAVY_MAX_WAIT_FLUSHES: 4 (a heavy job, such as the smile's Plotly draw, runs one per frame after the light jobs; after waiting behind this many busy flushes it runs in a frame that also has light jobs)
 
 ### static/js/perf.js
 - PERF_REPORT_MS: 10000 (browser perf_report interval)
 - PERF_MAX_SAMPLES: 200 (per span name and report; the server keeps at most 50 names and 200 samples per name, and drops samples outside 0..60000 ms)
 
 ### static/js/price-chart.js
-- Level price lines: Call Wall, Put Wall (solid), Gamma Flip, Max Pain (dashed)
+- Level step lines (dotted, width 2): Call Wall, Put Wall, Gamma Flip, Max Pain; at most `LEVEL_ROWS_MAX` (2000) change points kept; axis tags are the codes CW / PW / GF / MP and the lines and tags are `LEVEL_ALPHA` (0.7) opaque
+- static/js/gex-profile.js: `GEX_HEAD_H` (20 px caption strip), `GEX_LABEL_ROOM` (40 px kept free for a bar's value label), `GEX_BAR_FILL` (0.74 of a strike's band) and `GEX_BAR_MAX_H` (18 px), `GEX_ZOOM_BUTTON` (1.5 per `-` / `+` click), `GEX_WHEEL_RATE` (0.0016 zoom exponent per wheel unit), `GEX_MIN_SPAN` (4 index points, the closest zoom; the widest is the strike range x 1.2 or 5% of spot), `GEX_DRAG_PX` (3 px before a press is a drag), `GEX_LABELS_PER_SIDE` (4 value labels when rows are too thin to label all); `GEX_VIEW_KEY` (`spx-gex-profile-view`) remembers Split / Net; column width `--gex-profile-w` (216 px, 150 px under 700 px) in static/css/charts.css
+- Charm heatmap: `CHARM_FRAMES_MAX` (1440) frames kept; `CHARM_PREF_KEY` (`spx-charm-heatmap`) remembers the Charm button
+- static/js/charm-heatmap.js: `CHARM_MIN_RATIO` (cells under 0.5% of the scale stay clear), `CHARM_ALPHA_MIN` / `CHARM_ALPHA_SPAN` (alpha 0.06 to 0.40), `CHARM_ALPHA_STEPS`, `CHARM_MAX_GAP_S` (a column is at most 5 min wide)
+- spx_trade_desk/market/charm_history.py: `CHARM_BAND` (3% of spot), `MAX_FRAMES` (1440)
 - Candle and line colors come from `themeColors()` (tokens in static/css/tokens.css), re-applied on `themechange`
 - A reconnect snapshot of the same session keeps the visible range (shifted by the number of new bars when the viewer was at the live edge); only the first snapshot and a new session fit the content
 - Times: ET wall-clock encoded as UTC seconds (Date.UTC)
@@ -191,7 +195,7 @@ Source: spx_trade_desk/core/config.py
 
 ### static/js/charts.js
 - Mobile breakpoint: 600 px
-- state.spotLineMinIntervalMs: 2000 (at most one spot-line relayout per GEX / smile chart in this window; set in state.js)
+- state.spotLineMinIntervalMs: 2000 (at most one spot-line relayout of the smile chart in this window; set in state.js; the GEX profile's NOW line is not throttled)
 - Chart colors come from `themeColors()` (static/js/theme-colors.js), which reads the tokens in static/css/tokens.css; `chartTheme()` / `patchChartTheme()` re-theme the Plotly charts on `themechange`
 - Axis/title legend default font sizes: 9, 10, 11
 - Common line widths used for overlays/traces: 1.5, 2

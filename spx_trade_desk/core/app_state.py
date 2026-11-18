@@ -12,6 +12,8 @@ from typing import Dict, List, Optional, Set
 from spx_trade_desk.core import config
 from spx_trade_desk.ib.contracts import ContractRegistry
 from spx_trade_desk.market.gex import GEXResult, OptionData
+from spx_trade_desk.market.charm_history import CharmHistory
+from spx_trade_desk.market.level_history import LevelHistory
 from spx_trade_desk.market.quote_book import QuoteBook
 from spx_trade_desk.strategy.models import RuntimeState
 
@@ -33,6 +35,8 @@ class AppState:
         # GEX
         self.latest_gex: Optional[dict] = None
         self.gex_result: Optional[GEXResult] = None
+        self.level_history = LevelHistory()          # wall / flip / max-pain changes, for the price chart
+        self.charm_history = CharmHistory()          # per-minute charm exposure by strike (charm heatmap)
 
         # Chain parameters
         self.expiration: str = ""

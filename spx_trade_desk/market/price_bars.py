@@ -41,7 +41,8 @@ def snapshot_payload(state, rth: bool, today: Optional[str] = None) -> dict:
     today = today or now_et().date().isoformat()
     live = rth and state.price_session_date == today
     return {"session_date": state.price_session_date, "mode": "live" if live else "historical",
-            "bars": list(state.price_history), "overnight": list(state.price_overnight)}
+            "bars": list(state.price_history), "overnight": list(state.price_overnight),
+            "levels": state.level_history.points(), "charm": state.charm_history.snapshot_frames()}
 
 
 def _apply_bar(history, d: dict) -> bool:

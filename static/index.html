@@ -73,7 +73,7 @@
             <span class="label">Max Pain</span>
             <span id="maxPainBadge">-</span>
         </div>
-        <div class="level-badge badge-net-gex">
+        <div class="level-badge badge-net-gex" title="Net gamma exposure in dollars of SPX the dealers must trade per 1% move (gamma x open interest x 100 x spot x spot x 1%)">
             <span class="label">Net GEX</span>
             <span id="netGexBadge">-</span>
         </div>
@@ -96,36 +96,56 @@
     <div class="charts-container active" id="dashboardTab">
         <div class="chart-panel panel-price">
             <div class="chart-title"><span id="priceChartTitle">SPX Intraday</span>
+                <span class="gex-mode-toggle" id="charmToggleGroup">
+                    <button class="gex-mode-btn" id="charmToggle" onclick="toggleCharmHeatmap()" title="Charm heatmap behind the candles: blue = supportive, amber = suppressive">Charm</button>
+                </span>
                 <span class="help" tabindex="0" aria-label="Price chart info">?
-                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall, put wall, gamma flip and max pain are drawn as price lines. The pane below is RSI(14) of the 1-minute closes (Wilder's smoothing, dashed guides at 70 and 30); it starts on the 15th bar of the session. A dashboard started mid-session still loads the bars from the open. Times are ET.</span>
+                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall (CW), put wall (PW), gamma flip (GF) and max pain (MP) are translucent dotted step lines tagged with those codes on the price axis: each starts at the first bar, moves up or down at the minute GEX published a new value and runs on to the latest bar, so you can see how the levels moved alongside SPX. The Charm button shows a heatmap behind the candles: one column per minute, one cell per strike within 3% of spot, colored by the dealers' charm exposure at that strike (the delta their options positions lose or gain as 15 minutes pass, as dollars of underlying, assuming dealers are long calls and short puts). Blue is supportive (dealers buy the underlying back as time passes), amber is suppressive (they sell); a stronger color is a larger value, scaled to the day's 95th percentile. It builds up from when the server started. The pane below is RSI(14) of the 1-minute closes (Wilder's smoothing, dashed guides at 70 and 30); it starts on the 15th bar of the session. A dashboard started mid-session still loads the bars from the open. Times are ET. The column on the right is the gamma exposure (GEX) by strike on the same price axis: each bar sits at the height of its strike on the candles, put GEX to the left and call GEX to the right of the center line (Net shows one net bar per strike), with the live quote as the NOW line and the call wall, put wall, gamma flip and max pain as dashed lines (CW, PW, GF, MP; a level outside the view shows as an arrow at the edge). Peaks are where dealer hedging concentrates; net positive GEX means dealers dampen moves (converging), net negative means they amplify them (diverging). Bars are scaled to the strikes on screen. Zoom vertically with the wheel over the profile (or - / +, which keeps the live quote in place), drag the profile up or down to pan, drag the price axis to stretch it, and use Fit (or double-click the profile) to fit the candles again or Levels to see the quote, the four levels and the whole session. 0DTE / Monthly picks the expiration for the profile and the IV smile.</span>
                 </span>
             </div>
-            <div id="priceChart"></div>
+            <div class="price-body">
+                <div id="priceChart"></div>
+                <aside class="gex-profile" id="gexProfile" aria-label="Gamma exposure by strike, on the chart's price axis">
+                    <canvas id="gexProfileCanvas"></canvas>
+                    <div class="gex-profile-tip hidden" id="gexProfileTip" role="tooltip"></div>
+                    <div class="gex-profile-foot">
+                        <div class="gex-foot-row">
+                            <span class="gex-mode-toggle" id="gexModeToggle" title="Which expiration the GEX is for">
+                                <button class="gex-mode-btn active" data-mode="0dte" onclick="setGexMode('0dte')">0DTE</button>
+                                <button class="gex-mode-btn" data-mode="monthly" onclick="setGexMode('monthly')">Monthly</button>
+                            </span>
+                            <span class="gex-mode-toggle" id="gexViewToggle">
+                                <button class="gex-mode-btn active" data-view="split" onclick="setGexView('split')" title="Put and call GEX side by side: puts left, calls right">Split</button>
+                                <button class="gex-mode-btn" data-view="net" onclick="setGexView('net')" title="One bar per strike: net GEX">Net</button>
+                            </span>
+                        </div>
+                        <div class="gex-foot-row gex-zoom" id="gexZoom" role="group" aria-label="Vertical zoom">
+                            <button class="gex-zoom-btn" id="gexZoomOut" onclick="gexZoomOut()" title="Zoom out the price scale (wheel over the profile also zooms)" aria-label="Zoom out">&minus;</button>
+                            <button class="gex-zoom-btn" id="gexZoomIn" onclick="gexZoomIn()" title="Zoom in, keeping the live quote in place" aria-label="Zoom in">+</button>
+                            <button class="gex-zoom-btn" id="gexZoomFit" onclick="gexZoomFit()" title="Fit the candles (double-click the profile does the same)">Fit</button>
+                            <button class="gex-zoom-btn" id="gexZoomLevels" onclick="gexZoomLevels()" title="Show the quote, the four levels and the whole session">Levels</button>
+                        </div>
+                        <div class="gex-summary">
+                            <div class="gex-sum-label" id="gexChartLabel">GEX by strike</div>
+                            <div class="gex-sum-row"><span class="k">Net GEX</span><span class="v"><span id="gexSumNet">-</span> <span class="gex-sum-regime" id="gexSumRegime"></span></span></div>
+                            <div class="gex-sum-row"><span class="k">Call / Put OI</span><span class="v" id="gexSumOi">-</span></div>
+                            <div class="gex-sum-row"><span class="k" title="Put OI / call OI, and the call share of gross GEX">P/C &middot; Call GEX</span><span class="v"><span id="gexSumPc">-</span> &middot; <span id="gexSumSkew">-</span></span></div>
+                        </div>
+                    </div>
+                    <div class="gex-loading hidden" id="gexLoading">
+                        <div class="gex-loading-spinner"></div>
+                        <div class="gex-loading-text" id="gexLoadingText">Fetching option chain...</div>
+                        <div class="gex-loading-sub" id="gexLoadingSub"></div>
+                    </div>
+                </aside>
+            </div>
         </div>
-        <div class="chart-panel panel-gex">
-            <div class="chart-title">
-                <span id="gexChartLabel">Gamma Exposure (GEX) by Strike</span>
-                <span class="gex-mode-toggle" id="gexModeToggle">
-                    <button class="gex-mode-btn active" data-mode="0dte" onclick="setGexMode('0dte')">0DTE</button>
-                    <button class="gex-mode-btn" data-mode="monthly" onclick="setGexMode('monthly')">Monthly</button>
-                </span>
+        <div class="chart-panel panel-smile">
+            <div class="chart-title"><span id="smileChartLabel">IV Smile & Delta-Decay Efficiency</span>
                 <span class="gex-mode-toggle" id="gexRangeToggle">
                     <button class="gex-mode-btn active" data-range="near" onclick="setGexRange(false)" title="Strikes within 40 steps of spot">Near</button>
                     <button class="gex-mode-btn" data-range="all" onclick="setGexRange(true)" title="Every strike in the data">All</button>
                 </span>
-                <span class="help" tabindex="0" aria-label="GEX chart info">?
-                    <span class="tooltip" role="tooltip">Use this chart to see where gamma exposure accumulates by strike. Peaks show levels where option dealer hedging is concentrated; net line direction indicates whether overall market makers are long (positive) or short (negative) gamma. By default the chart shows the strikes within 40 steps of spot; "All" shows every strike.</span>
-                </span>
-            </div>
-            <div class="gex-loading hidden" id="gexLoading">
-                <div class="gex-loading-spinner"></div>
-                <div class="gex-loading-text" id="gexLoadingText">Fetching option chain...</div>
-                <div class="gex-loading-sub" id="gexLoadingSub"></div>
-            </div>
-            <div id="gexChart"></div>
-        </div>
-        <div class="chart-panel panel-smile">
-            <div class="chart-title"><span id="smileChartLabel">IV Smile & Delta-Decay Efficiency</span>
                 <span class="help" tabindex="0" aria-label="IV Smile help">?
                     <span class="tooltip" role="tooltip">Delta-decay efficiency = |charm| - |delta|.<br>Computed from short finite-difference decay (15-minute step) of option delta; it represents the rate at which an option's delta changes relative to its current delta magnitude.<br>Higher values indicate faster delta erosion per unit delta - useful for assessing hedging sensitivity to time decay and short-term rebalancing cost.</span>
                 </span>
@@ -712,7 +732,9 @@
     <script src="/static/js/render-loop.js"></script>
     <script src="/static/js/theme-colors.js"></script>
     <script src="/static/js/charts.js"></script>
+    <script src="/static/js/charm-heatmap.js"></script>
     <script src="/static/js/price-chart.js"></script>
+    <script src="/static/js/gex-profile.js"></script>
     <script src="/static/js/badges.js"></script>
     <script src="/static/js/ws.js"></script>
     <script src="/static/js/perf.js"></script>
