@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from spx_trade_desk.market.dealer_model import (
+    IV_FLOOR,
     dealer_book,
     dealer_delta,
     fill_ivs,
@@ -71,3 +72,18 @@ def test_a_book_without_positions_or_ivs_is_none():
     assert dealer_book(positions_from_oi(_result()), _result()) is None
     res = _result(call_oi={102: 100}, iv=None)
     assert dealer_book(positions_from_oi(res), res) is None
+
+def test_iv_shift_raises_an_otm_call_delta_and_lowers_an_itm_call_delta():
+    otm = _result(call_oi={102: 100}); otm_book = dealer_book(positions_from_oi(otm), otm)
+    up, base, down = (dealer_delta(otm_book, np.array([SPOT]), TTE, R, iv_shift=s)[0] for s in (0.05, 0.0, -0.05))
+    assert down < base < up
+    itm = _result(call_oi={98: 100}); itm_book = dealer_book(positions_from_oi(itm), itm)
+    assert dealer_delta(itm_book, np.array([SPOT]), TTE, R, iv_shift=0.05)[0] < \
+        dealer_delta(itm_book, np.array([SPOT]), TTE, R)[0]
+
+def test_a_very_large_negative_iv_shift_stays_finite_because_iv_is_floored():
+    res = _result(call_oi={100: 1000, 102: 1000}, put_oi={98: 1000}); book = dealer_book(positions_from_oi(res), res)
+    spots = np.array([95.0, 100.0, 105.0])
+    floored = dealer_delta(book, spots, TTE, R, iv_shift=-10.0)
+    assert np.isfinite(floored).all()
+    assert floored == pytest.approx(dealer_delta(book, spots, TTE, R, iv_shift=IV_FLOOR - 0.2), rel=1e-6)
