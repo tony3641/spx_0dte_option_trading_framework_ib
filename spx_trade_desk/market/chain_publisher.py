@@ -53,8 +53,13 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     gex.expiration = state.expiration
     gex.timestamp = now.isoformat()
     pos = positions_from_oi(gex)
-    dealer, levels = build_dealer(gex, options, pos, T, state.risk_free_rate, now, state.em_anchor,
-                                  state.atm_iv_history, state.price_history, state.price_session_date)
+    try:
+        dealer, levels = build_dealer(gex, options, pos, T, state.risk_free_rate, now, state.em_anchor,
+                                      state.atm_iv_history, state.price_history, state.price_session_date)
+    except Exception:
+        # The dealer block is an extra: a failure here must not stop the GEX, chain and strategy publish.
+        logger.exception("Dealer profile failed; publishing this cycle with the cumulative gamma flip")
+        dealer, levels = None, None
     cumulative = gex.gamma_flip
     gex.gamma_flip, gamma_flip_method = resolve_gamma_flip(gex, levels)   # zero gamma when the profile exists
     state.gex_result = gex

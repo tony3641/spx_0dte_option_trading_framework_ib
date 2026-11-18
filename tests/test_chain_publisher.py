@@ -178,3 +178,19 @@ async def test_the_dealer_block_stays_compact(app_state, monkeypatch):      # se
     await publish_chain(st, Sink(), now_mono=0.0)
     assert st.latest_dealer is not None
     assert len(json.dumps(st.latest_dealer)) < 6000
+
+
+@pytest.mark.asyncio
+async def test_a_failing_dealer_build_still_publishes_the_gex_with_the_cumulative_flip(
+        app_state, monkeypatch, caplog):
+    def boom(*args, **kwargs):
+        raise RuntimeError("invented profile failure")
+
+    monkeypatch.setattr(pub, "build_dealer", boom)
+    st, sink = _state(app_state, *_chain()), Sink()
+    assert await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    assert gex["dealer"] is None and gex["gamma_flip_method"] == "cumulative"
+    assert any(m["type"] == "chain_quotes" for m in sink.msgs)
+    assert st.latest_dealer is None
+    assert "Dealer profile failed" in caplog.text

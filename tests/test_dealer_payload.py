@@ -71,12 +71,22 @@ def test_before_the_open_band_exists_the_anchor_fields_are_none_and_nothing_cras
     assert dealer["em"]["high"] is None and dealer["em"]["low"] is None and dealer["em"]["used_pct"] is None
 
 
-def test_session_range_and_used_pct_come_from_the_bars_of_the_session():
+def test_em_high_and_low_are_the_anchored_open_band_and_match_the_level_fields():
     bars = [{"time": "2026-10-05T10:00:00-04:00", "high": 7725.0, "low": 7690.0},
             {"time": "2026-10-05T10:01:00-04:00", "high": 7712.0, "low": 7695.0},
             {"time": "2026-10-02T10:01:00-04:00", "high": 9999.0, "low": 1.0}]   # another day: ignored
     dealer, *_ = _build(_chain(), bars=bars)
-    assert dealer["em"]["high"] == 7725.0 and dealer["em"]["low"] == 7690.0
+    # open spot 7700 +/- open straddle 20.0: the band, not the session range
+    assert dealer["em"]["high"] == 7720.0 and dealer["em"]["low"] == 7680.0
+    fields = level_fields(dealer)
+    assert dealer["em"]["high"] == fields["em_high"] and dealer["em"]["low"] == fields["em_low"]
+
+
+def test_used_pct_is_the_session_range_over_the_open_band_width():
+    bars = [{"time": "2026-10-05T10:00:00-04:00", "high": 7725.0, "low": 7690.0},
+            {"time": "2026-10-05T10:01:00-04:00", "high": 7712.0, "low": 7695.0},
+            {"time": "2026-10-02T10:01:00-04:00", "high": 9999.0, "low": 1.0}]   # another day: ignored
+    dealer, *_ = _build(_chain(), bars=bars)
     assert dealer["em"]["used_pct"] == pytest.approx((7725.0 - 7690.0) / (2 * 20.0) * 100.0, abs=0.01)
 
 

@@ -6,8 +6,8 @@ Everything is computed from one ``DealerPositions`` through ``dealer_model`` / `
 (int), profile values and hedge as ints. The block is sent every publish cycle, so it stays compact
 (the profile is downsampled to PROFILE_SEND_STEP and the lists are short).
 
-``em_high`` / ``em_low`` in ``level_fields`` are the anchored open band (open spot +/- open straddle),
-not the session range; the session range is ``dealer["em"]["high"]`` / ``["low"]``.
+``dealer["em"]["high"]`` / ``["low"]`` are the anchored open band (open spot +/- open straddle), the same
+values ``level_fields`` sends as ``em_high`` / ``em_low``. The session range only feeds ``em.used_pct``.
 """
 
 from datetime import datetime
@@ -59,7 +59,8 @@ def build_dealer(result: GEXResult, options: list[OptionData], pos: DealerPositi
     book = dealer_book(pos, result)
 
     zero = levels.zero_gamma
-    high, low = session_range(bars, session_date)
+    session_high, session_low = session_range(bars, session_date)
+    band_low, band_high = _open_band(anchor)
     iv_change_15 = iv_history.change(15)
     iv_change_30 = iv_history.change(30)
     vanna_per_vol = vanna_usd_per_vol_down(book, spot, T, r)
@@ -87,9 +88,9 @@ def build_dealer(result: GEXResult, options: list[OptionData], pos: DealerPositi
             "live": _px(straddle),
             "open": _px(anchor.open_straddle),
             "open_spot": _px(anchor.open_spot),
-            "high": _px(high),
-            "low": _px(low),
-            "used_pct": _px(em_used_pct(high, low, anchor.open_straddle)),
+            "high": band_high,
+            "low": band_low,
+            "used_pct": _px(em_used_pct(session_high, session_low, anchor.open_straddle)),
             "anchor_time": anchor.anchor_time,
         },
         "charm": {
@@ -109,20 +110,23 @@ def build_dealer(result: GEXResult, options: list[OptionData], pos: DealerPositi
     return dealer, levels
 
 
+def _open_band(anchor: ExpectedMoveAnchor) -> Tuple[Optional[float], Optional[float]]:
+    """Anchored open band (low, high) = open spot -/+ open straddle, 2 decimals; (None, None) before the anchor."""
+    lo, hi = anchor.band()
+    return _px(lo), _px(hi)
+
+
 def level_fields(dealer: Optional[dict]) -> dict:
     """Top-level values the level history and the price chart read: the open band and the nearest pin above/below."""
     if dealer is None:
         return {"em_high": None, "em_low": None, "node_r1": None, "node_s1": None}
     em = dealer["em"]
-    open_spot, open_straddle = em["open_spot"], em["open"]
-    band = (None, None) if open_spot is None or open_straddle is None else (
-        _px(open_spot - open_straddle), _px(open_spot + open_straddle))
     pins = [n for n in dealer["nodes"] if n["kind"] == "pin"]
     above = [n["strike"] for n in pins if n["side"] == "above"]
     below = [n["strike"] for n in pins if n["side"] == "below"]
     return {
-        "em_high": band[1],
-        "em_low": band[0],
+        "em_high": em["high"],
+        "em_low": em["low"],
         "node_r1": min(above) if above else None,
         "node_s1": max(below) if below else None,
     }
