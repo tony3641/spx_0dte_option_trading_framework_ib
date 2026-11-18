@@ -47,12 +47,32 @@ def _inject(pg, msg_type, data):
     return pg.evaluate("m => window.__benchInject(m)", {"type": msg_type, "data": data})
 
 
-def _gex_x(pg):
-    return pg.evaluate("() => (document.getElementById('gexChart')._fullData || [{x: []}])[0].x.length")
+def _snapshot(lo=6095, hi=6200):
+    """One session bar spanning the strikes: the price chart's axis covers them without further setup."""
+    return {"session_date": "2099-01-05", "mode": "live", "overnight": [],
+            "bars": [{"time": "2099-01-05T09:30:00-05:00", "time_short": "09:30", "open": 6150, "high": hi,
+                      "low": lo, "close": 6150}]}
 
 
-def _gex_shape_xs(pg, chart="gexChart"):
-    return pg.evaluate("id => document.getElementById(id).layout.shapes.map(s => s.x0)", chart)
+def _smile_x(pg):
+    return pg.evaluate("() => (document.getElementById('smileChart')._fullData || [{x: []}])[0].x.length")
+
+
+def _smile_shape_xs(pg):
+    return pg.evaluate("() => document.getElementById('smileChart').layout.shapes.map(s => s.x0)")
+
+
+def _spot_drawn_at(pg, spot):
+    """The profile's NOW line is where the candles' own price axis puts ``spot``."""
+    return pg.evaluate("""s => gexProfile.spotY !== null
+        && Math.abs(gexProfile.spotY - priceChart.candles.priceToCoordinate(s)) < 1""", spot)
+
+
+# Counts the profile's own work: how many data jobs run, and in which frame (needs COUNT_PLOTLY's __log).
+COUNT_PROFILE = """() => {
+    const job = updateGexProfile;
+    window.updateGexProfile = function () { window.__log.push(['profile.job', document.timeline.currentTime]); return job.apply(this, arguments); };
+}"""
 
 
 def _toast(pg):
@@ -113,44 +133,56 @@ def page_on_dashboard(browser_env):
 
 def test_gex_received_on_chain_tab_renders_sized_on_show(page_on_chain):
     pg = page_on_chain
+    _inject(pg, "price_snapshot", _snapshot())
     _inject(pg, "gex", _gex())
-    assert _gex_x(pg) == 0
+    assert pg.evaluate("() => gexProfile.draws") == 0                 # nothing is drawn while the tab is hidden
     pg.evaluate("() => switchTab('dashboard')")
-    pg.wait_for_function("() => document.getElementById('gexChart')._fullData[0].x.length === 20", timeout=5000)
-    assert pg.evaluate("() => document.getElementById('gexChart')._fullLayout.width") > 200
+    pg.wait_for_function("() => gexProfile.rows.length === 20", timeout=5000)
+    assert pg.evaluate("() => gexProfile.w > 100 && gexProfile.h > 100")
     assert pg.evaluate("() => document.getElementById('smileChart')._fullLayout.width") > 200
 
 
 def test_hidden_dashboard_never_redraws_and_the_show_draws_each_chart_once(page_on_chain):
     pg = page_on_chain
     pg.evaluate(COUNT_PLOTLY)
+    _inject(pg, "price_snapshot", _snapshot())
     _inject(pg, "gex", _gex(6150))
     _inject(pg, "gex", _gex(6155))
     _inject(pg, "status", {"connected": False, "spot_price": 6160.5})
     assert pg.evaluate(CALLS) == {"react": 0, "relayout": 0, "resize": 0}
+    assert pg.evaluate("() => gexProfile.draws") == 0
     pg.evaluate("() => switchTab('dashboard')")
-    pg.wait_for_function("() => window.__calls.react >= 2", timeout=5000)
+    pg.wait_for_function("() => window.__calls.react >= 1 && gexProfile.rows.length === 20", timeout=5000)
     pg.evaluate(FRAMES)
     calls = pg.evaluate(CALLS)
-    assert calls["react"] == 2                       # one GEX and one smile draw for all three messages
-    assert calls["relayout"] == 0                    # the draws paint the latest spot: no redundant spot relayout
-    assert 6160.5 in _gex_shape_xs(pg)               # drawn with the latest spot, not the first one
+    assert calls["react"] == 1                       # one smile draw for all three messages
+    assert calls["relayout"] == 0                    # the draw paints the latest spot: no redundant spot relayout
+    assert 6160.5 in _smile_shape_xs(pg)             # drawn with the latest spot, not the first one
+    assert _spot_drawn_at(pg, 6160.5)                # and so is the profile's NOW line
 
 
 def test_two_gex_messages_in_one_frame_draw_once(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
+    _settle(pg)
     pg.evaluate(COUNT_PLOTLY)
+    pg.evaluate(COUNT_PROFILE)
     pg.evaluate("g => window.__benchInject([{type: 'gex', data: g}, {type: 'gex', data: g}])", _gex())
-    pg.wait_for_function("() => window.__calls.react >= 2", timeout=5000)
-    pg.evaluate(FRAMES)
-    assert pg.evaluate(CALLS)["react"] == 2
+    pg.wait_for_function("() => window.__calls.react >= 1", timeout=5000)
+    _settle(pg)
+    assert pg.evaluate(CALLS)["react"] == 1
+    assert [n for n, _ in pg.evaluate(LOG)].count("profile.job") == 1
+    assert pg.evaluate("() => gexProfile.rows.length") == 20
 
 
 def test_resize_follows_the_container_and_a_hidden_chart_is_left_alone(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
+    _inject(pg, "gex", _gex())
+    _settle(pg)
     pg.set_viewport_size({"width": 1000, "height": 800})
     pg.wait_for_function("""() => {
-        const g = document.getElementById('gexChart');
+        const g = document.getElementById('smileChart');
         return Math.abs(g._fullLayout.width - g.clientWidth) <= 1 && g.clientWidth < 1000;
     }""", timeout=5000)
     pg.evaluate("() => switchTab('chain')")
@@ -160,45 +192,47 @@ def test_resize_follows_the_container_and_a_hidden_chart_is_left_alone(page_on_d
     assert pg.evaluate(CALLS)["resize"] == 0        # a hidden chart is never resized (it would draw squashed)
     pg.evaluate("() => switchTab('dashboard')")
     pg.wait_for_function("""() => {
-        const g = document.getElementById('gexChart');
+        const g = document.getElementById('smileChart');
         return g.clientWidth > 500 && Math.abs(g._fullLayout.width - g.clientWidth) <= 1;   // two columns at 1300 px
     }""", timeout=5000)
+    # the profile's canvas is as tall as the chart's price pane and as wide as its column
+    pg.wait_for_function("""() => Math.abs(gexProfile.h - priceChart.chart.panes()[0].getHeight()) <= 1
+        && Math.abs(gexProfile.w - document.getElementById('gexProfile').clientWidth) <= 1""", timeout=5000)
 
 
 def test_window_resize_still_switches_the_mobile_margins(page_on_dashboard):
     pg = page_on_dashboard
-    left = "[gexChart.layout.margin.l, smileChart.layout.margin.l]"
-    assert pg.evaluate(f"() => {left}") == [60, 60]
+    left = "[smileChart.layout.margin.l]"
+    assert pg.evaluate(f"() => {left}") == [60]
     pg.set_viewport_size({"width": 500, "height": 800})
     pg.wait_for_function(f"() => {left}[0] === 40", timeout=5000)
-    assert pg.evaluate(f"() => {left}") == [40, 40]
+    assert pg.evaluate(f"() => {left}") == [40]
     pg.set_viewport_size({"width": 1000, "height": 800})
     pg.wait_for_function(f"() => {left}[0] === 60", timeout=5000)
-    assert pg.evaluate(f"() => {left}") == [60, 60]
+    assert pg.evaluate(f"() => {left}") == [60]
 
 
 # --- the spot line moves without a redraw --------------------------------------------------------
 
 def test_spot_only_change_relayouts_shapes(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
     _inject(pg, "gex", _gex())
     _settle(pg)
-    pg.evaluate("() => Plotly.relayout('gexChart', {'xaxis.range': [6120, 6160]})")
-    pg.evaluate(FRAMES)                                                         # the zoom sync to the smile chart settles
+    pg.evaluate("() => Plotly.relayout('smileChart', {'xaxis.range': [6120, 6160], 'xaxis2.range': [6120, 6160]})")
+    pg.evaluate(FRAMES)
     pg.evaluate(COUNT_PLOTLY)
     _inject(pg, "status", {"connected": False, "spot_price": 6157.25})
     _settle(pg)
-    assert 6157.25 in _gex_shape_xs(pg) and pg.evaluate(CALLS)["react"] == 0
-    smile_xs = _gex_shape_xs(pg, "smileChart")
-    assert smile_xs.count(6157.25) == 2                                      # the spot, on both subplots
-    assert pg.evaluate("() => document.getElementById('gexChart').layout.xaxis.range") == [6120, 6160]
-    texts = pg.evaluate("() => document.getElementById('gexChart').layout.annotations.map(a => a.text)")
-    assert "SPX: 6157.25" in texts and any(t.startswith("Net GEX") for t in texts)
-    assert "CW" in texts                                                       # the key levels stay
+    assert pg.evaluate(CALLS)["react"] == 0
+    assert _smile_shape_xs(pg).count(6157.25) == 2                           # the spot, on both subplots
+    assert pg.evaluate("() => document.getElementById('smileChart').layout.xaxis.range") == [6120, 6160]   # the zoom stays
+    assert _spot_drawn_at(pg, 6157.25)                                       # and the profile's NOW line moved too
 
 
 def test_spot_change_in_the_frame_of_a_gex_message_is_drawn_by_the_gex_render(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
     _inject(pg, "gex", _gex())
     _settle(pg)
     pg.evaluate(COUNT_PLOTLY)
@@ -211,11 +245,13 @@ def test_spot_change_in_the_frame_of_a_gex_message_is_drawn_by_the_gex_render(pa
                 changed)
     _settle(pg)
     assert pg.evaluate(CALLS)["relayout"] == 0
-    assert 6162 in _gex_shape_xs(pg)
+    assert 6162 in _smile_shape_xs(pg)
+    assert _spot_drawn_at(pg, 6162)
 
 
 def test_a_gex_message_with_unchanged_data_only_moves_the_spot_line(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
     _inject(pg, "gex", _gex())
     _settle(pg)
     pg.evaluate(COUNT_PLOTLY)
@@ -224,76 +260,62 @@ def test_a_gex_message_with_unchanged_data_only_moves_the_spot_line(page_on_dash
                 _gex(6155))
     _settle(pg)
     calls = pg.evaluate(CALLS)
-    assert calls["react"] == 0                               # nothing new to paint: no full draw
-    assert calls["relayout"] == 2                            # one spot-line relayout per chart
-    assert 6162 in _gex_shape_xs(pg)
+    assert calls["react"] == 0                               # nothing new to paint: no full smile draw
+    assert calls["relayout"] == 1                            # the smile's spot-line relayout
+    assert 6162 in _smile_shape_xs(pg)
+    assert _spot_drawn_at(pg, 6162)
 
 
 def test_spot_change_while_hidden_lands_on_show(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
     _inject(pg, "gex", _gex())
     _settle(pg)
     pg.evaluate("() => switchTab('chain')")
     _inject(pg, "status", {"connected": False, "spot_price": 6171})
-    assert 6171 not in _gex_shape_xs(pg)
+    assert 6171 not in _smile_shape_xs(pg)
+    assert not _spot_drawn_at(pg, 6171)
     pg.evaluate("() => switchTab('dashboard')")
-    pg.wait_for_function("() => gexChart.layout.shapes.some(s => s.x0 === 6171)", timeout=5000)
+    pg.wait_for_function("() => smileChart.layout.shapes.some(s => s.x0 === 6171)", timeout=5000)
+    pg.wait_for_function("s => gexProfile.spotY !== null && Math.abs(gexProfile.spotY - priceChart.candles.priceToCoordinate(s)) < 1",
+                         arg=6171, timeout=5000)
 
 
 def test_gex_mode_switch_draws_the_monthly_data_and_the_spot_line_follows_it(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
     _inject(pg, "gex", _gex())
     _inject(pg, "monthly_gex", _gex(6150, n=10, call_wall=6190, put_wall=6105))
-    assert _gex_x(pg) == 20                                                    # still the 0DTE data
+    _settle(pg)
+    assert pg.evaluate("() => gexProfile.rows.length") == 20                   # still the 0DTE data
     try:
         pg.evaluate("() => setGexMode('monthly')")
-        # The smile draw runs in the heavy lane one frame after the GEX draw: wait for both.
-        pg.wait_for_function("""() => gexChart._fullData[0].x.length === 10
+        # The profile draws in the light lane, the smile in the heavy lane a frame later: wait for both.
+        pg.wait_for_function("""() => gexProfile.rows.length === 10
             && document.getElementById('smileChart')._fullData[0].x.length === 10""", timeout=5000)
         _settle(pg)
         _inject(pg, "status", {"connected": False, "spot_price": 6140.5})
         _settle(pg)
-        xs = _gex_shape_xs(pg)
-        assert 6140.5 in xs and 6190 in xs                                     # monthly walls, new spot
+        assert 6140.5 in _smile_shape_xs(pg) and 6190 in _smile_shape_xs(pg)    # monthly walls, new spot
+        assert _spot_drawn_at(pg, 6140.5)
     finally:
         pg.evaluate("() => setGexMode('0dte')")    # the server keeps the mode: do not leak it into later pages
         _settle(pg)
 
 
-def test_gex_draw_and_smile_draw_never_share_a_frame(page_on_dashboard):
+def test_the_profile_draws_in_the_light_lane_and_the_smile_in_a_later_frame(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
+    _settle(pg)
     pg.evaluate(COUNT_PLOTLY)
+    pg.evaluate(COUNT_PROFILE)
     _inject(pg, "gex", _gex())
     _settle(pg)
-    frames = _first_frames(pg.evaluate(LOG), "react")
-    assert set(frames) == {"react:gexChart", "react:smileChart"}
-    assert frames["react:gexChart"] != frames["react:smileChart"]
+    frames = _first_frames(pg.evaluate(LOG))
+    assert frames["profile.job"] < frames["react:smileChart"]
 
 
-def test_spot_line_relayouts_of_the_two_charts_never_share_a_frame(page_on_dashboard):
-    pg = page_on_dashboard
-    _inject(pg, "gex", _gex())
-    _settle(pg)
-    pg.evaluate(COUNT_PLOTLY)
-    _inject(pg, "status", {"connected": False, "spot_price": 6157.25})
-    _settle(pg)
-    frames = _first_frames(pg.evaluate(LOG), "relayout")
-    assert set(frames) == {"relayout:gexChart", "relayout:smileChart"}
-    assert frames["relayout:gexChart"] != frames["relayout:smileChart"]
-
-
-def test_chart_resizes_never_share_a_frame(page_on_dashboard):
-    pg = page_on_dashboard
-    pg.evaluate(COUNT_PLOTLY)
-    pg.set_viewport_size({"width": 1100, "height": 800})
-    pg.wait_for_function("""() => ['resize:gexChart', 'resize:smileChart'].every(n => window.__log.some(e => e[0] === n))""",
-                         timeout=5000)
-    _settle(pg)
-    frames = _first_frames(pg.evaluate(LOG), "resize")
-    assert frames["resize:gexChart"] != frames["resize:smileChart"]
-
-
-def test_a_price_bar_arriving_with_the_gex_publish_is_drawn_before_either_chart_draw(page_on_dashboard):
+def test_a_price_bar_arriving_with_the_gex_publish_is_drawn_before_the_smile_draw(page_on_dashboard):
     pg = page_on_dashboard
     snap = {"session_date": "2099-01-05", "mode": "live", "overnight": [],
             "bars": [{"time": "2099-01-05T09:30:00-05:00", "time_short": "09:30", "open": 100, "high": 101, "low": 99, "close": 100}]}
@@ -310,7 +332,7 @@ def test_a_price_bar_arriving_with_the_gex_publish_is_drawn_before_either_chart_
                 [_gex(), bar])
     _settle(pg)
     frames = _first_frames(pg.evaluate(LOG))
-    assert frames["bar"] < frames["react:gexChart"] < frames["react:smileChart"]
+    assert frames["bar"] < frames["react:smileChart"]
 
 
 # --- the render loop's heavy lane ----------------------------------------------------------------
@@ -375,22 +397,24 @@ def test_a_heavy_job_queued_before_the_tab_was_left_parks_and_replays_on_show(pa
     assert out == {"whileHidden": [], "afterShow": ["draw"]}
 
 
-# --- spot line: throttled per chart, skipped when nothing new ------------------------------------
+# --- spot line: the smile's relayout is throttled and skipped when nothing is new ---------------
 
-def test_spot_line_relayouts_are_throttled_per_chart_and_the_trailing_edge_draws_the_latest(page_on_dashboard):
+def test_smile_spot_relayouts_are_throttled_and_the_trailing_edge_draws_the_latest(page_on_dashboard):
     pg = page_on_dashboard
+    _inject(pg, "price_snapshot", _snapshot())
     _inject(pg, "gex", _gex(6150))
     _settle(pg)
     pg.evaluate(COUNT_PLOTLY)
     pg.evaluate("() => { state.spotLineMinIntervalMs = 1500; }")
     for spot in (6151, 6152, 6153):
         _inject(pg, "status", {"connected": False, "spot_price": spot})
-    assert pg.evaluate(CALLS)["relayout"] == 0                  # inside the window since the last draw of each chart
-    pg.wait_for_function("() => window.__calls.relayout >= 2", timeout=5000)
+    assert pg.evaluate(CALLS)["relayout"] == 0                  # inside the window since the last smile draw
+    assert _spot_drawn_at(pg, 6153)                             # the profile is cheap: it is never held back
+    pg.wait_for_function("() => window.__calls.relayout >= 1", timeout=5000)
     _settle(pg)
-    assert pg.evaluate(CALLS)["relayout"] == 2                  # one per chart for the whole burst
-    assert 6153 in _gex_shape_xs(pg) and 6152 not in _gex_shape_xs(pg)
-    assert _gex_shape_xs(pg, "smileChart").count(6153) == 2
+    assert pg.evaluate(CALLS)["relayout"] == 1                  # one relayout for the whole burst
+    assert 6153 in _smile_shape_xs(pg) and 6152 not in _smile_shape_xs(pg)
+    assert _smile_shape_xs(pg).count(6153) == 2
 
 
 def test_a_spot_that_returns_to_the_drawn_value_inside_the_window_draws_nothing(page_on_dashboard):
@@ -414,7 +438,7 @@ def test_a_spot_change_never_draws_before_the_first_full_draw(page_on_dashboard)
     }""", _gex(6150))
     pg.evaluate(FRAMES)
     _settle(pg)
-    assert pg.evaluate(CALLS)["relayout"] == 0 and _gex_x(pg) == 0
+    assert pg.evaluate(CALLS)["relayout"] == 0 and _smile_x(pg) == 0
 
 
 # --- cancel feedback ---------------------------------------------------------------------------
@@ -573,6 +597,7 @@ def test_a_missing_perf_module_never_drops_a_data_message(page_on_dashboard):
     }""")
     try:
         pg.evaluate("g => ws.onmessage({data: JSON.stringify({type: 'gex', data: g})})", _gex(6150))
-        pg.wait_for_function("() => gexChart._fullData[0].x.length === 20", timeout=5000)
+        pg.wait_for_function("() => document.getElementById('smileChart')._fullData[0].x.length === 20", timeout=5000)
+        assert pg.evaluate("() => state.gex.gex_bars.length") == 20
     finally:
         pg.evaluate("() => { window.perfOnMessage = window.__perfOnMessage; window.perfAfterHandle = window.__perfAfterHandle; }")

@@ -9,7 +9,7 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
 | Broker API | native `ibapi` → IB TWS/Gateway (port 7497) |
 | Backend | Python 3.10, FastAPI, uvicorn |
 | Real-time push | WebSocket, one send channel per browser (changed-field chain ticks, latest-wins snapshots) |
-| Frontend | Vanilla JS, no build step: Plotly 2.32 (GEX, IV smile) and TradingView Lightweight Charts 5.2.1 (SPX price chart), both from a CDN |
+| Frontend | Vanilla JS, no build step: Plotly 2.32 (IV smile) and TradingView Lightweight Charts 5.2.1 (SPX price chart; the GEX profile is a canvas on its price axis), both libraries from a CDN |
 
 ## Features
 
@@ -31,14 +31,18 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
 ## Quick Start
 
 1. **Install the Interactive Brokers TWS API.** The native broker client (`ibapi`) is
-   not on PyPI — it ships with the TWS API distribution. Download and install it from
-   IBKR first:
+   not on PyPI — it ships with the TWS API distribution. Download the **Latest** Windows
+   build (`tws-api-latest-windows-x64.exe`; the Stable build has no Python client) from
+   the [IBKR TWS API page](https://download2.interactivebrokers.com/installers/tws-api/index.html)
+   and run it. It installs to `C:\TWS` by default. Then install the client:
 
    ```
-   pip install -e "C:\TWS API\source\pythonclient"
+   pip install -e "C:\TWS\source\pythonclient"
    ```
 
    The path above is machine-specific. Edit it to match your local TWS API installation.
+   The desk is set up against API 1052.01 (`ibapi` 1052.1); IB desupports 10.45.1 on
+   2026-12-15.
 
 2. **Install the Python dependencies.**
 
@@ -92,7 +96,7 @@ The exact URLs are printed to the console when the server starts. You can overri
 
 ## Dashboard Tabs
 
-- **Dashboard** — a four-panel overview: SPX intraday chart (1-minute bars with an RSI(14) pane below), IV smile, GEX bars and Positions & P&L, plus level badges and the status bar. The panels fill the window below the header and stack into one column at 1100 px and below.
+- **Dashboard** — the SPX intraday chart (1-minute bars with an RSI(14) pane below) takes the upper 72% of the screen, with the gamma exposure profile as a column on its right edge, on the same price axis (see Charts). The IV smile (left) and Positions & P&L (right) sit side by side under it, and together the two rows fill the window below the header, so the dashboard does not scroll. Level badges and the status bar stay above. At 1100 px and below the panels stack into one column.
 - **Option Chain** — full streaming chain table with greeks and order entry. The Strategy Builder is a collapsible order dock at the bottom: collapsed (the default) it shows one line (legs, net price, max loss) and the order row; the arrow button expands the legs table and the combo numbers. The order row shows the order's Bid / Mid / Ask (spreads as a signed net, negative for a credit); the limit price defaults to the mid on the SPX tick (0.05, or 0.10 above $2.00) and follows it until you type a price, and clicking Bid, Mid or Ask puts that price in the limit.
 - **Account** — account summary, positions, executions, order placement.
 - **Strategies** — strategy list/editor, live candidates, triggers, and arm/disarm controls.
@@ -458,26 +462,28 @@ New runtime dependencies: `pandas`, `pdfplumber`, `mcp`.
 Candlestick chart of 1-minute SPX bars on TradingView Lightweight Charts. Times are Eastern (ET) whatever the PC's time zone.
 - **Regular hours:** today's session from the 09:30 ET open. The completed bars come from IB, which keeps a 1-minute historical-bars request open (`keepUpToDate`). The current minute also follows the live SPX **last** price once a second (never bid or ask) until IB's own update for that minute replaces it. The server builds the series, so no minute is lost while the page sits on another tab or reconnects.
 - **Outside regular hours:** the last regular session's bars plus a dotted ES-derived SPX line, one point per minute (see Data Modes). At 09:30 ET the chart resets to the new day and the dotted line is cleared.
-- **Levels:** Call Wall, Put Wall, Gamma Flip and Max Pain are price lines, redrawn only when GEX publishes a different value.
+- **Levels:** Call Wall (CW), Put Wall (PW), Gamma Flip (GF) and Max Pain (MP) are translucent dotted step lines (tagged with those two-letter codes on the price axis, so the tags stay small) that show how each level moved during the session: a line starts at the first bar (or when the level first appeared), moves up or down at the minute GEX published a different value, and runs on to the latest bar. The server keeps the history (`market/level_history.py`) and sends it with the price snapshot, so a reload or reconnect keeps the lines; a server restart starts them again from the next GEX publish. The lines do not affect the price scale.
+- **Charm heatmap (Charm button, off by default, remembered per browser):** a heatmap behind the candles with one column per minute and one cell per strike within 3% of spot. A cell is the dealers' charm exposure at that strike, `100 x (call OI x call charm - put OI x put charm) x 15 min x spot` in dollars of delta per 15 minutes, under the same dealer positioning as GEX (long calls, short puts; charm is the 15-minute finite difference in the smile hover). Blue is **supportive** (the decay leaves dealers over-hedged, so they buy the underlying back as time passes), amber is **suppressive** (they sell). Color strength is relative to the 95th percentile of the day's values. The server records one frame per minute (`market/charm_history.py`), sends the history with the price snapshot (about 0.5 MB for a full session) and the newest frame with every `gex` message. History starts when the server starts and a new expiration starts a new one.
 - **When IB fails:** an error on the bar request, or no update for 3 minutes in regular hours, cancels the request and asks again after 5 s, then 15 s, then every 60 s, with the reason on the Log tab; the chart keeps its last bars meanwhile. After 3 failed `keepUpToDate` starts in a row (the request raised or IB reported it dead before any bars came back) the server stops using `keepUpToDate` for the rest of the process, logs a warning on the Log tab and carries on as if `PRICE_BARS_KEEP_UP_TO_DATE=false`; restart the server to try `keepUpToDate` again. `PRICE_BARS_KEEP_UP_TO_DATE=false` is the fallback source: one backfill at start-up, at the open and on reconnect, with the forming bar built from the live SPX last price. The `keepUpToDate` request has not been run against a live TWS yet (see `docs/progress.md`); `python -m spx_trade_desk.ib.bars_probe` checks it on paper.
 - If the Lightweight Charts script cannot be loaded (CDN down) the chart area shows a short error text and the rest of the page keeps working. The pinned Lightweight Charts and Plotly scripts carry Subresource Integrity hashes, so a CDN file that differs from the pinned version is refused the same way.
 
-### 2. Gamma Exposure (GEX) by Strike (middle)
-Bar chart showing Call GEX (green) and Put GEX (red) by strike with:
-- **Net GEX line** (violet, the theme's `alt` color) — cumulative gamma exposure
-- **Spot price indicator** (dotted line in the text color)
-- **Near / All toggle** — by default the chart draws the strikes within 40 steps of spot (`state.gexWindowStrikes`); "All" draws every strike. The IV smile follows the same toggle.
-- **Key level markers** — visual anchors for walls and flip points
-- **Annotation box** — Net GEX value, MM regime (CONVERGING/DIVERGING), Call OI, Put OI, P/C OI Ratio, Call GEX % skew
+### 2. Gamma Exposure (GEX) profile (right of the SPX chart)
+A column at the right edge of the SPX chart that draws the gamma exposure by strike as horizontal bars **on the chart's own price axis**: each bar sits at the height of its strike on the candles, so the exposure reads directly against the live quote. It is a canvas (`static/js/gex-profile.js`), as tall as the chart's price pane, aligned to it through the price scale (`priceToCoordinate`) and repainted from the chart's own paint hook.
+- **Split / Net view** (remembered per browser): Split draws put GEX to the left and call GEX to the right of a center line (PUT | CALL); Net draws one bar per strike, red to the left for net negative, green to the right for net positive. Bar lengths are scaled to the strikes on screen, so zooming in enlarges them; the largest bars carry value labels (every bar when the rows are tall enough).
+- **NOW line:** the live quote (accent color when it is ES-derived). **Level lines:** dashed lines for the call wall, put wall, gamma flip and max pain, tagged CW, PW, GF and MP in the same colors as the step lines on the chart. A level outside the view is drawn as an arrow with its value at the top or bottom edge.
+- **Vertical zoom and pan** of the shared price scale (the candles zoom with the profile): wheel over the profile zooms around the pointer; the `-` / `+` buttons zoom around the live quote; dragging the profile up or down pans; dragging the price axis stretches it as before; **Fit** (or a double-click on the profile) fits the candles again and **Levels** shows the quote, the four levels and the whole session. Zooming turns the price scale's autoscale off until you press Fit; the minimum span is 4 index points. The chart's horizontal zoom (time axis) is unchanged.
+- **Hover:** a row highlights and a tooltip lists the strike, call / put / net GEX, open interest and volume; a guide line shows the price under the pointer.
+- **Summary** under the profile: Net GEX with the regime (CONVERGING for positive, DIVERGING for negative), call / put open interest, P/C OI ratio, the call share of gross GEX and the expiration.
+- **0DTE / Monthly** picks the expiration for the profile and the IV smile. The profile draws every strike inside the visible price range (the Near / All toggle now belongs to the smile).
+- Without a price chart (CDN down) there is no shared axis: the column hides itself and the rest of the page works.
 
-### 3. IV Smile & Delta-Decay Efficiency (bottom)
+### 3. IV Smile & Delta-Decay Efficiency (bottom left)
 Two-row subplot showing:
 - **Top (Calls):** Call IV curve (green) + Call efficiency (violet, dotted)
 - **Bottom (Puts):** Put IV curve (red) + Put efficiency (violet, dotted)
-- All subplots share synchronized x-axes (strike ranges aligned)
+- Both subplots share synchronized x-axes (strike ranges aligned)
+- **Near / All toggle** — by default the smile draws the strikes within 40 steps of spot (`state.gexWindowStrikes`); "All" draws every strike.
 - Hover displays: Strike, IV %, Delta, Charm (delta decay rate), Efficiency metric
-
-**Real-time zoom sync:** Pan/zoom either the GEX or Smile chart → both charts update their x-axis range simultaneously.
 
 ### 4. Real-time Option Chain Streaming
 - Live streaming 0DTE option chain with greeks
@@ -505,13 +511,14 @@ A browser with more than `PUSH_ORDERED_BACKLOG_MAX` unsent critical messages, or
 
 **Rendering** (`static/js/render-loop.js`). Incoming messages update a model, and drawing happens once per animation frame:
 - Light jobs (price bars, chain cells, badges, account) run first in the frame.
-- Heavy jobs (the GEX and IV smile Plotly draws, tens of milliseconds each) run one per frame, after the light jobs, so a price bar or chain tick that arrives together with a GEX publish is painted before the chart draw starts. A heavy job that has waited behind four busy frames runs anyway.
-- The spot line on the GEX and smile charts moves with a light relayout at most once every 2 s per chart.
+- Heavy jobs (the IV smile Plotly draw, tens of milliseconds) run one per frame, after the light jobs, so a price bar or chain tick that arrives together with a GEX publish is painted before the smile draw starts. A heavy job that has waited behind four busy frames runs anyway.
+- The GEX profile is a light job: a canvas repaint of about 40 bars, run in the same frame as the price bar it came with. It is also repainted from the price chart's own paint hook whenever the price scale, the pane height or the column width changes, so it never lags behind a zoom.
+- The spot line on the smile chart moves with a light relayout at most once every 2 s; the profile's NOW line moves with every spot change.
 - A chart is drawn only while its tab is visible and its container has a size (`ResizeObserver`); what changed while a tab was hidden is painted once when the tab is shown.
 
 ## Themes
 
-The page has a dark and a light theme. It follows the OS (`prefers-color-scheme`) until you choose: the sun/moon button in the header flips the theme and remembers it in the browser (`localStorage` key `spx-theme`); Shift+click on it goes back to following the OS. The Plotly charts and the price chart re-theme in place when it changes, with no reload.
+The page has a dark and a light theme. It follows the OS (`prefers-color-scheme`) until you choose: the sun/moon button in the header flips the theme and remembers it in the browser (`localStorage` key `spx-theme`); Shift+click on it goes back to following the OS. The IV smile, the GEX profile and the price chart re-theme in place when it changes, with no reload.
 
 Every color lives in `static/css/tokens.css` (dark in `:root`, light in `:root[data-theme="light"]`), together with the radius, spacing, shadow and motion tokens; CSS reads them as `var(--name)`. JavaScript that has to hand a color to Plotly or Lightweight Charts (they cannot parse `var()` or `color-mix()`) calls `themeColors()` from `static/js/theme-colors.js`. `tests/test_ui_tokens.py` checks that both themes define the same tokens, that text and background pairs meet WCAG AA, that no `var(--x)` is undefined, and that no color literal appears outside those two files, so a new color goes into `tokens.css`.
 
@@ -529,7 +536,7 @@ Real-time status indicators:
 
 Key strike prices and conditions:
 - **SPX** — current spot price
-- **Call Wall / Put Wall** — highest gamma-OI strikes
+- **Call Wall / Put Wall** — the strike with the largest call GEX at or above spot (resistance) and the one with the largest put GEX at or below spot (support). An in-the-money strike on the other side of spot is never a wall, so a wall changes when spot crosses a strike; a side with no GEX on its side of spot shows `-`.
 - **Gamma Flip** — price level where net gamma crosses zero
 - **Max Pain** — strike minimizing option holder payoff
 - **Net GEX** — total gamma exposure (with regime label)
@@ -563,6 +570,8 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `spx_trade_desk/market/chain_recorder.py` | Appends the merged chain to the daily gzipped chain library and maintains the heartbeat file |
 | `spx_trade_desk/market/capture.py` | Standalone chain capture (`python -m spx_trade_desk.market.capture`): records when the dashboard is not running |
 | `spx_trade_desk/market/gex.py` | GEX computation: Call/Put Wall, Gamma Flip, Max Pain, Net GEX, MM regime |
+| `spx_trade_desk/market/charm_history.py` | Dealer charm exposure per strike, one frame per ET minute, for the SPX chart's heatmap (restored through `price_snapshot`, newest frame on each `gex` message) |
+| `spx_trade_desk/market/level_history.py` | The four levels' change history for the SPX chart's step lines (one point per change, ET minute; restored through `price_snapshot`) |
 | `spx_trade_desk/market/hours.py` | Market-hours helpers, ET timezone, expiration, FOMC/NFP day utilities |
 | `spx_trade_desk/market/price_bars.py` | The SPX 1-minute bar series for the price chart: IB `keepUpToDate` request, forming-bar merge from the live SPX last, ES-derived overnight line, 09:30 reset, re-request with backoff, `price_snapshot` / `price_bar` / `price_overnight` messages |
 | `spx_trade_desk/market/bars.py` / `core/rates.py` | One-shot historical bars (the chain poller's spot fallback), annualized-vol helper and risk-free-rate (SGOV) helpers |
@@ -601,7 +610,9 @@ domain. `config/`, `static/` and `tests/` stay at the repository root as data an
 | `static/js/theme.js` | Blocking script in `<head>`: sets `data-theme` from `spx-theme` or the OS before first paint, `getTheme` / `setTheme` / `toggleTheme`, fires `themechange` |
 | `static/js/theme-colors.js` | `themeColors()` (token values for Plotly and Lightweight Charts, cached until `themechange`), `withAlpha()` |
 | `static/js/dash-positions.js` | The Dashboard's Positions & P&L panel, drawn from `account_update` |
-| `static/js/price-chart.js` | SPX price chart on Lightweight Charts: snapshot, per-bar updates, overnight line, level price lines, ET time axis |
+| `static/js/price-chart.js` | SPX price chart on Lightweight Charts: snapshot, per-bar updates, overnight line, level step lines, charm heatmap wiring and toggle, ET time axis |
+| `static/js/charm-heatmap.js` | The charm heatmap: a Lightweight Charts series primitive painted behind the candles, color scale and cell style |
+| `static/js/gex-profile.js` | The vertical GEX profile beside the SPX chart: canvas bars on the chart's price axis, Split / Net views, level and NOW lines, hover tooltip, summary, and the vertical zoom / pan of the shared price scale (wheel, drag, buttons) |
 | `static/js/render-loop.js` | Frame batching: light and heavy job lanes, hidden-tab parking |
 | `static/js/perf.js` | Browser-side timings (server stamp to receipt, receipt to paint, long tasks), sent to the server as `perf_report` every 10 s |
 | `tests/` | Pytest suite + `run_tests.py` structured runner |

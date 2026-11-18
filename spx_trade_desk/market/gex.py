@@ -3,8 +3,8 @@ GEX (Gamma Exposure) calculator.
 
 Computes:
   - GEX per strike (call/put/net)
-  - Call Wall (highest call gamma × OI strike)
-  - Put Wall (highest put gamma × OI strike)
+  - Call Wall (highest call gamma × OI strike at or above spot: resistance)
+  - Put Wall (highest put gamma × OI strike at or below spot: support)
   - Gamma Flip Point (where cumulative net GEX crosses zero)
   - Max Pain (strike minimizing total option holder payout)
   - IV smile data with charm and delta-decay efficiency
@@ -275,12 +275,14 @@ def compute_gex(options: List[OptionData], spot_price: float,
                 if ch is not None:
                     put_charm_map[strike] = ch
 
-        # Track walls (absolute magnitudes)
-        if c_gex > max_call_gex_val:
+        # Walls are where hedging pushes back against a move toward them: the call wall is the largest
+        # call GEX at or above spot (resistance), the put wall the largest put GEX at or below spot
+        # (support). An in-the-money strike on the far side of spot is not a wall, however large.
+        if strike >= spot_price and c_gex > max_call_gex_val:
             max_call_gex_val = c_gex
             max_call_gex_strike = strike
 
-        if abs(p_gex) > max_put_gex_val:
+        if strike <= spot_price and abs(p_gex) > max_put_gex_val:
             max_put_gex_val = abs(p_gex)
             max_put_gex_strike = strike
 

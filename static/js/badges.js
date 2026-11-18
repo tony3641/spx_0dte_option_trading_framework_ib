@@ -95,8 +95,8 @@
             const prevDerived = state.esDerived;
             state.currentSpot = data.spot_price;
             state.esDerived = data.es_derived || false;
-            // Move the GEX spot line (shapes only) if spot or regime changed
-            if (state.gexChartReady && state.gex &&
+            // Move the spot lines (the GEX profile's NOW line, the smile's shapes) if spot or regime changed
+            if (state.gexProfileReady && state.gex &&
                 (state.currentSpot !== prevSpot || state.esDerived !== prevDerived)) {
                 requestSpotLineRender();
             }

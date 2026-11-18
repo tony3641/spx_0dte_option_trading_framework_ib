@@ -57,6 +57,15 @@ def _inject(page, msg_type, data):
     page.evaluate("m => window.__benchInject(m)", {"type": msg_type, "data": data})
 
 
+def _drawn_levels(page):
+    """Level series that have at least one point."""
+    return page.evaluate("() => Object.keys(priceChart.levelSeries).filter(k => priceChart.levelSeries[k].data().length).sort()")
+
+
+def _level_line(page, key):
+    return page.evaluate(f"() => priceChart.levelSeries.{key}.data().map(p => [p.time, p.value ?? null])")
+
+
 # --- price chart -------------------------------------------------------------------------------
 
 def test_library_loaded_and_et_axis(page):
@@ -97,9 +106,9 @@ def test_overnight_line_and_levels(page):
     _inject(page, "price_overnight", {"point": {"time": f"{S}T20:00:00-05:00", "value": 104.5}})
     assert page.evaluate("() => priceChart.overnight.data().length") == 1
     page.evaluate("() => updatePriceLevels({call_wall: 110, put_wall: 90, gamma_flip: 100, max_pain: null})")
-    assert page.evaluate("() => Object.keys(priceChart.levels).sort()") == ["call_wall", "gamma_flip", "put_wall"]
+    assert _drawn_levels(page) == ["call_wall", "gamma_flip", "put_wall"]
     page.evaluate("() => updatePriceLevels({call_wall: 111, put_wall: null, gamma_flip: 100, max_pain: null})")
-    assert page.evaluate("() => Object.keys(priceChart.levels).sort()") == ["call_wall", "gamma_flip"]
+    assert _drawn_levels(page) == ["call_wall", "gamma_flip"]
 
 
 def test_updates_while_hidden_render_once_on_show(page):
@@ -146,6 +155,101 @@ def test_overnight_duplicate_and_unsorted_times_resolve_the_same_way_in_setdata_
     page.evaluate("() => switchTab('dashboard')")
     page.wait_for_function("() => priceChart.overnight.data().some(p => p.value === 11)", timeout=5000)
     assert line() == [[t(20, 1), 2], [t(20, 2), 5], [t(20, 3), 11]]   # a redraw after a hidden period agrees
+
+
+# --- level history: dotted step lines ----------------------------------------------------------
+
+def _level_row(hhmm, call_wall, put_wall, gamma_flip, max_pain):
+    return {"time": f"{S}T{hhmm}", "call_wall": call_wall, "put_wall": put_wall,
+            "gamma_flip": gamma_flip, "max_pain": max_pain}
+
+
+def test_snapshot_levels_draw_step_lines_from_the_first_bar_to_the_latest_bar(page):
+    def t(hh, mm):
+        return _utc_seconds(2099, 1, 5, hh, mm)
+
+    bars = [_bar(f"09:{m}", 100 + i) for i, m in enumerate(("30", "31", "32", "33", "34"))]
+    levels = [_level_row("09:29", 110, 90, 100, None),       # before the open: drawn from the first bar
+              _level_row("09:32", 112, 90, 100, 105)]
+    _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": [],
+                                     "levels": levels})
+    assert _level_line(page, "call_wall") == [[t(9, 30), 110], [t(9, 32), 112], [t(9, 34), 112]]
+    assert _level_line(page, "put_wall") == [[t(9, 30), 90], [t(9, 34), 90]]       # unchanged: one flat line
+    assert _level_line(page, "max_pain") == [[t(9, 32), 105], [t(9, 34), 105]]     # no gap point before it appears
+
+
+def test_level_change_moves_the_line_and_a_new_bar_extends_it(page):
+    def t(hh, mm):
+        return _utc_seconds(2099, 1, 5, hh, mm)
+
+    def gex(stamp, call_wall, expiration="20990105"):
+        return {"timestamp": f"{S}T{stamp}-05:00", "expiration": expiration, "call_wall": call_wall,
+                "put_wall": 90, "gamma_flip": 100, "max_pain": 105}
+
+    page.evaluate("g => updatePriceLevels(g)", gex("09:35:20", 115))
+    assert _level_line(page, "call_wall")[-2:] == [[t(9, 32), 112], [t(9, 35), 115]]
+    rows = page.evaluate("() => priceChart.levelRows.length")
+    page.evaluate("g => updatePriceLevels(g)", gex("09:36:40", 115))      # nothing changed: nothing recorded
+    assert page.evaluate("() => priceChart.levelRows.length") == rows
+    _inject(page, "price_bar", {"session_date": S, "bar": _bar("09:37", 110)})
+    page.evaluate(FRAMES)
+    assert _level_line(page, "call_wall")[-1] == [t(9, 37), 115]           # the line runs on to the latest bar
+    page.evaluate("g => updatePriceLevels(g)", gex("09:38:10", 118, expiration="20990106"))
+    assert page.evaluate("() => priceChart.levelRows.length") == 1         # a new expiration starts a new history
+
+
+def _charm_frame(hhmm, scale=1):
+    strikes = [96, 98, 100, 102, 104]
+    return {"time": f"{S}T{hhmm}", "strikes": strikes, "values": [-300 * scale, -100 * scale, 50 * scale, 200 * scale, 400 * scale]}
+
+
+def _painted(page):
+    return page.evaluate("() => priceChart.charmPrimitive.painted")
+
+
+def test_charm_heatmap_is_off_by_default_and_paints_cells_when_switched_on(page):
+    bars = [_bar(f"09:{m}", 100 + i) for i, m in enumerate(("30", "31", "32", "33", "34"))]
+    frames = [_charm_frame(f"09:{m}") for m in ("30", "31", "32", "33", "34")]
+    _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": [],
+                                     "charm": frames})
+    assert page.evaluate("() => [priceChart.charmOn, priceChart.charmFrames.length]") == [False, 5]
+    page.evaluate(FRAMES)
+    assert _painted(page) == 0                                   # off: nothing painted
+    page.evaluate("() => document.getElementById('charmToggle').click()")
+    page.wait_for_function("() => priceChart.charmPrimitive.painted > 0", timeout=5000)
+    assert page.evaluate("() => document.getElementById('charmToggle').classList.contains('active')")
+    assert page.evaluate("() => localStorage.getItem('spx-charm-heatmap')") == "1"
+    page.evaluate("() => setCharmHeatmap(false)")
+    page.wait_for_function("() => priceChart.charmPrimitive.painted === 0", timeout=5000)
+    assert page.evaluate("() => localStorage.getItem('spx-charm-heatmap')") == "0"
+
+
+def test_a_published_charm_frame_is_appended_replaced_and_reset_by_a_new_expiration(page):
+    def gex(stamp, frame, expiration="20990105"):
+        return {"timestamp": f"{S}T{stamp}-05:00", "expiration": expiration, "call_wall": 110, "put_wall": 90,
+                "gamma_flip": 100, "max_pain": 105, "charm_frame": frame}
+
+    def count():
+        return page.evaluate("() => priceChart.charmFrames.length")
+
+    base = count()
+    page.evaluate("g => updatePriceLevels(g)", gex("09:35:20", _charm_frame("09:35")))
+    assert count() == base + 1
+    page.evaluate("g => updatePriceLevels(g)", gex("09:35:40", _charm_frame("09:35", scale=2)))
+    assert count() == base + 1                                     # same minute: replaced
+    assert page.evaluate("() => priceChart.charmFrames[priceChart.charmFrames.length - 1].values[0]") == -600
+    page.evaluate("g => updatePriceLevels(g)", gex("09:36:10", None))      # no frame in the message: nothing added
+    assert count() == base + 1
+    page.evaluate("g => updatePriceLevels(g)", gex("09:37:00", _charm_frame("09:37"), expiration="20990106"))
+    assert count() == 1                                            # a new expiration starts a new history
+
+
+def test_levels_updated_while_hidden_are_drawn_once_on_show(page):
+    page.evaluate("() => switchTab('chain')")
+    page.evaluate("""() => updatePriceLevels({timestamp: '2099-01-05T09:40:00-05:00', expiration: '20990106',
+                                             call_wall: 120, put_wall: 90, gamma_flip: 100, max_pain: 105})""")
+    page.evaluate("() => switchTab('dashboard')")
+    page.wait_for_function("() => priceChart.levelSeries.call_wall.data().some(p => p.value === 120)", timeout=5000)
 
 
 # --- frame batching ----------------------------------------------------------------------------
@@ -242,14 +346,15 @@ def _assert_page_works_without_the_price_chart(pg, problems):
     # the error text clears the chart title above it
     assert pg.evaluate("() => getComputedStyle(document.getElementById('priceChart')).paddingTop") == "40px"
     assert pg.evaluate("() => [priceChart.chart, priceChart.candles, priceChart.overnight, state.priceChartReady]")         == [None, None, None, False]
-    # the rest of the page started: GEX chart, smile chart, WebSocket
-    assert pg.evaluate("() => [state.gexChartReady, state.smileChartReady, state.wsConnected]") == [True, True, True]
+    # the rest of the page started: smile chart, WebSocket; the GEX profile has no price axis to share, so it hides
+    assert pg.evaluate("() => [state.gexProfileReady, document.getElementById('gexProfile').hidden]") == [False, True]
+    assert pg.evaluate("() => [state.smileChartReady, state.wsConnected]") == [True, True]
     _inject(pg, "price_snapshot", {"session_date": S, "mode": "live", "bars": [_bar("09:30", 100)],
                                    "overnight": [{"time": f"{S}T20:00:00-05:00", "value": 100.5}]})
     _inject(pg, "price_bar", {"session_date": S, "bar": _bar("09:31", 101)})
     _inject(pg, "price_overnight", {"point": {"time": f"{S}T20:01:00-05:00", "value": 100.6}})
     _inject(pg, "gex", _mini_gex())
-    assert pg.evaluate("() => document.getElementById('gexChart')._fullData[0].x.length") == 4
+    assert pg.evaluate("() => state.gex.gex_bars.length") == 4          # the data is still taken in
     assert pg.evaluate("() => document.getElementById('spotBadge').textContent") == "101.00"
     assert [p for p in problems if "pageerror" in p] == []
 

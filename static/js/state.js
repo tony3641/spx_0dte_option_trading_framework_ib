@@ -5,7 +5,7 @@
         wsConnected: false,
         ibConnected: false,
         priceChartReady: false,
-        gexChartReady: false,
+        gexProfileReady: false,     // the vertical GEX profile beside the price chart (gex-profile.js)
         smileChartReady: false,
         dataMode: 'initializing',   // 'live' | 'historical' | 'initializing'
         historicalDate: '',
@@ -26,10 +26,10 @@
         chainViewportSendTimer: null,
         // GEX mode toggle (dashboard)
         gexMode: '0dte',        // '0dte' | 'monthly'
-        spotLineMinIntervalMs: 2000,   // at most one spot-line relayout per GEX / smile chart in this window
+        spotLineMinIntervalMs: 2000,   // at most one spot-line relayout of the smile chart in this window
         chainFlashMax: 40,             // most tick flashes started per chain flush; 0 turns the flash off
-        gexWindowStrikes: 40,          // the GEX / smile charts draw this many strike steps each side of spot
-        gexShowAll: false,             // true: draw every strike (the "All" toggle)
+        gexWindowStrikes: 40,          // the smile chart draws this many strike steps each side of spot
+        gexShowAll: false,             // true: the smile draws every strike (the "All" toggle)
         smileMinIntervalMs: 5000,      // a changed smile redraws at most this often (trailing draw)
         monthlyGex: null,       // cached monthly GEX data
         monthlyExpiration: '',  // display string for monthly expiration
