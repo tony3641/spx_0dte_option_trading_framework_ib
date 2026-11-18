@@ -12,8 +12,9 @@ from datetime import datetime
 
 from spx_trade_desk.core.config import CHAIN_QUOTE_MAX_AGE_S, CHAIN_REFRESH_SECONDS
 from spx_trade_desk.market.chain_manager import build_chain_quotes
-from spx_trade_desk.market.dealer_model import positions_from_oi
+from spx_trade_desk.market.dealer_model import positions_from_oi, strike_gammas
 from spx_trade_desk.market.dealer_payload import build_dealer, level_fields
+from spx_trade_desk.market.flow import HOT_FRESH_MIN, annotate_gex_bars, flow_gex_by_strike, hot_strikes
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict
 from spx_trade_desk.market.hours import is_cboe_options_open, now_et
 from spx_trade_desk.market.levels import resolve_gamma_flip
@@ -32,6 +33,25 @@ def tte_years(expiration: str, now: datetime) -> float:
         mins_left = max((close_dt - now).total_seconds() / 60.0, 1.0)
         return mins_left / (390.0 * 252.0)
     return max((exp_date - now.date()).days, 1) / 252.0
+
+
+def _flow_outputs(state, gex, options, dealer, now, T: float) -> None:
+    """Hot strikes, flow GEX and the flow summary, written into the gex bars and the dealer block.
+
+    Runs after the dealer block exists. ``dealer["flow"]`` is set only when there is a dealer block. Never
+    raises: a flow failure must not drop the GEX publish.
+    """
+    try:
+        state.volume_history.record(state.expiration, now.isoformat(), options)
+        recent = {o.strike: state.volume_history.added(o.strike, HOT_FRESH_MIN) for o in options}
+        hot = hot_strikes(options, recent)
+        fgex = flow_gex_by_strike(*state.flow_tracker.net_volumes(),
+                                  strike_gammas(gex, state.spx_price, T, state.risk_free_rate), state.spx_price)
+        annotate_gex_bars(state.latest_gex["gex_bars"], state.flow_tracker, hot, fgex)
+        if dealer is not None:
+            dealer["flow"] = state.flow_tracker.summary(now)
+    except Exception:
+        logger.exception("Flow outputs failed; publishing this cycle without flow")
 
 
 async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
@@ -68,6 +88,7 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     state.latest_gex["gamma_flip_method"] = gamma_flip_method
     state.latest_gex["gamma_flip_cumulative"] = cumulative
     state.latest_gex.update(level_fields(dealer))
+    _flow_outputs(state, gex, options, dealer, now, T)
     state.latest_dealer = dealer
     state.level_history.record(state.latest_gex)
     state.charm_history.record(gex)

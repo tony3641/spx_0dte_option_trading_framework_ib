@@ -14,7 +14,7 @@ All greek functions expect ``T > 0``; callers handle expired or undefined inputs
 """
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
@@ -147,3 +147,25 @@ def strike_gex(book: DealerBook, spot: float, T: float, r: float) -> Dict[float,
         key = float(k)
         out[key] = out.get(key, 0.0) + float(c)
     return out
+
+
+def strike_gammas(result: GEXResult, spot: float, T: float, r: float) -> Tuple[Dict[float, float], Dict[float, float]]:
+    """BSM gamma per strike at ``spot`` for calls and puts, from each side's filled sticky-strike IVs.
+
+    Returns ``(call_gamma, put_gamma)``; both are empty when T <= 0, spot <= 0 or no side has an IV.
+    Used by the flow GEX (``flow.flow_gex_by_strike``), which is independent of the position model.
+    """
+    if T <= 0 or spot <= 0:
+        return {}, {}
+    out = []
+    for ivmap in (result.call_iv_by_strike, result.put_iv_by_strike):
+        strikes = sorted(set(result.strikes) | set(ivmap))
+        filled = fill_ivs(ivmap, strikes)
+        ks = [k for k in strikes if filled.get(k, 0.0) > 0]
+        if not ks:
+            out.append({})
+            continue
+        iv = np.maximum(np.array([filled[k] for k in ks], dtype=float), IV_FLOOR)
+        gamma = bsm_gamma(float(spot), np.array(ks, dtype=float), T, r, iv)
+        out.append({k: float(g) for k, g in zip(ks, gamma)})
+    return out[0], out[1]

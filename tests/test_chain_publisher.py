@@ -194,3 +194,55 @@ async def test_a_failing_dealer_build_still_publishes_the_gex_with_the_cumulativ
     assert any(m["type"] == "chain_quotes" for m in sink.msgs)
     assert st.latest_dealer is None
     assert "Dealer profile failed" in caplog.text
+
+
+def _flow_row(volume, last):
+    return OptionData(7710, "C", volume=volume, bid=1.0, ask=1.2, last=last, delta=0.3)
+
+
+@pytest.mark.asyncio
+async def test_publish_carries_flow_on_the_bars_and_in_the_dealer_block(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    chain = _chain()
+    next(o for o in chain if (o.strike, o.right) == (7710, "C")).volume = 110    # the book's day volume
+    st, sink = _state(app_state, *chain), Sink()
+    keys = {(7710.0, "C")}
+    st.flow_tracker.update([_flow_row(100, 1.1)], keys, 7700.0, datetime(2026, 10, 5, 9, 59, tzinfo=ET), "20261005")
+    st.flow_tracker.update([_flow_row(110, 1.2)], keys, 7700.0, datetime(2026, 10, 5, 10, 0, tzinfo=ET), "20261005")
+    await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    bar = next(b for b in gex["gex_bars"] if b["strike"] == 7710.0)
+    assert (bar["call_buy"], bar["call_sell"]) == (10, 0)
+    assert bar["call_net_delta_usd"] == 2310000 and bar["flow_gex"] < 0
+    assert bar["vol_oi"] == 0.11 and bar["hot"] is False              # 110 traded against 1000 open, under HOT_MIN_VOL
+    flow = gex["dealer"]["flow"]
+    assert {"coverage_start", "coverage", "hedge_pressure_15m_usd", "hedge_pressure_30m_usd",
+            "hedge_pressure_day_usd", "call_delta_day_usd", "put_delta_day_usd", "classified_pct",
+            "minute"} <= set(flow)
+    assert flow["call_delta_day_usd"] == 2310000 and flow["minute"]["time"] == "2026-10-05T10:00"
+
+
+@pytest.mark.asyncio
+async def test_without_any_flow_the_dealer_block_has_an_empty_flow_summary(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+    await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    flow = gex["dealer"]["flow"]
+    assert flow["minute"]["time"] is None and flow["coverage_start"] is None
+    assert flow["hedge_pressure_day_usd"] == 0
+    assert not any("call_buy" in b or "vol_oi" in b for b in gex["gex_bars"])
+
+
+@pytest.mark.asyncio
+async def test_a_failing_flow_block_still_publishes_the_gex(app_state, monkeypatch, caplog):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("invented flow failure")
+
+    monkeypatch.setattr(pub, "flow_gex_by_strike", boom)
+    st, sink = _state(app_state, *_chain()), Sink()
+    assert await publish_chain(st, sink, now_mono=0.0)
+    assert any(m["type"] == "gex" for m in sink.msgs) and any(m["type"] == "chain_quotes" for m in sink.msgs)
+    assert "Flow outputs failed" in caplog.text

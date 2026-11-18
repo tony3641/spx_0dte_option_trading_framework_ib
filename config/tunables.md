@@ -170,6 +170,16 @@ Source: spx_trade_desk/core/config.py
 - charm_history.DT15_YEARS = 15 / (390 x 252) (existing; the 15-minute charm step that charm_flow_15m_usd uses)
 - dealer_payload rounding: prices 2 decimals, USD whole dollars (int), profile values and hedge int, ATM IV in vol points at 2 decimals (not configurable)
 
+### Intraday flow (Phase 2): market/flow.py, chain_manager.py, chain_recorder.py
+- flow.HOT_VOL_OI = 1.0 (a strike is hot when call + put volume over open interest reaches this)
+- flow.HOT_MIN_VOL = 500 (a hot strike also needs at least this much call + put volume)
+- flow.HOT_TOP_N = 8 (a hot strike is among the N strikes with the most volume, ranked over all strikes)
+- flow.HOT_FRESH_MIN = 15 (minutes over which `vol_15m` counts the volume added)
+- flow.VOLUME_HISTORY_MINUTES = 120 (per-minute volume snapshots kept for `vol_15m`)
+- flow.FlowTracker maxlen = 1440 (minute records kept per expiration, one per ET minute)
+- chain_manager.FLOW_LOG_INTERVAL_S = 60.0 (the "Flow tracking failed" log is rate-limited to this)
+- no new `localStorage` keys and no new settings in this phase
+
 ## 3) Frontend hardcoded tunables (static/js)
 
 ### static/js/state.js

@@ -13,7 +13,7 @@ import json
 import logging
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from spx_trade_desk.ib.connection import index_price
 from spx_trade_desk.market.hours import is_short_trading_day
@@ -43,7 +43,25 @@ def record_interval(t: datetime) -> Optional[int]:
     return FAST_S if (tt < time(10, 0) or tt >= last_hour) else SLOW_S
 
 
-def build_record(book, expiry, spot, vix, vix1d, source, t: datetime, now_mono: float) -> dict:
+def flow_block(tracker, after: Optional[str]) -> Tuple[dict, Optional[str]]:
+    """The record's ``flow`` block and the newest minute time it covers (the next record's ``after``).
+
+    ``cum`` holds each streamed key's running totals ``[strike, right, buy, sell, unclassified]`` (exact sizes
+    for the day so far). ``minutes`` holds the per-minute records newer than ``after`` (the last minute the
+    previous record covered), so no minute is written twice. A minute still filling at write time is not
+    repeated later; ``cum`` stays exact for the totals.
+    """
+    minutes = tracker.minutes()
+    cum = []
+    for (strike, right), kf in sorted(tracker.keys().items()):
+        k = int(strike) if strike == int(strike) else strike
+        cum.append([k, right, kf.buy_vol, kf.sell_vol, kf.unclassified_vol])
+    new = [m for m in minutes if after is None or m["time"] > after]
+    return {"cum": cum, "minutes": new}, (minutes[-1]["time"] if minutes else after)
+
+
+def build_record(book, expiry, spot, vix, vix1d, source, t: datetime, now_mono: float,
+                 flow: Optional[dict] = None) -> dict:
     ages, srcs = book.ages(now_mono), book.sources()
     rows = []
     for o in book.options():
@@ -52,8 +70,11 @@ def build_record(book, expiry, spot, vix, vix1d, source, t: datetime, now_mono: 
                      "iv": o.implied_vol, "delta": o.delta, "gamma": o.gamma,
                      "oi": o.open_interest, "vol": o.volume,
                      "age_s": round(ages[k], 1), "src": srcs[k]})
-    return {"v": 1, "ts": t.isoformat(timespec="seconds"), "expiry": expiry, "spot": spot,
-            "vix": vix, "vix1d": vix1d, "source": source, "rows": rows}
+    rec = {"v": 1, "ts": t.isoformat(timespec="seconds"), "expiry": expiry, "spot": spot,
+           "vix": vix, "vix1d": vix1d, "source": source, "rows": rows}
+    if flow is not None:
+        rec["flow"] = flow
+    return rec
 
 
 class ChainRecorder:
@@ -62,6 +83,7 @@ class ChainRecorder:
         self.source = source
         self.heartbeat = self.root / f".heartbeat-{source}"
         self._last: Optional[datetime] = None
+        self._flow_after: Optional[str] = None    # newest flow minute already written
 
     def due(self, t: datetime) -> bool:
         iv = record_interval(t)
@@ -90,11 +112,15 @@ class ChainRecorder:
                 or len(state.quote_book) == 0 or not state.spx_price > 0):
             return False
         try:
+            tracker = getattr(state, "flow_tracker", None)
+            flow, covered = (None, None) if tracker is None else flow_block(tracker, self._flow_after)
             rec = build_record(state.quote_book, state.expiration, state.spx_price,
                                index_price(getattr(state, "vix_stream", None)),
                                index_price(getattr(state, "vix1d_stream", None)),
-                               self.source, t, now_mono)
+                               self.source, t, now_mono, flow=flow)
             self.write(rec, t)
+            if flow is not None:
+                self._flow_after = covered
             return True
         except Exception as e:
             logger.warning(f"Chain recorder write failed: {e}")

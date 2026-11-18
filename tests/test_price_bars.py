@@ -8,6 +8,7 @@ import pytest
 from spx_trade_desk.core.app_state import create_app_state
 from spx_trade_desk.ib.connection import update_spx_es_prices
 from spx_trade_desk.market import price_bars
+from spx_trade_desk.market.gex import OptionData
 from spx_trade_desk.market.hours import ET
 from tests.conftest import MockIBClient
 
@@ -609,3 +610,11 @@ async def test_repeated_empty_backfills_back_off():
         clock.mono += 1.0
         await feed.tick()
     assert [round(b - a) for a, b in zip(calls, calls[1:])] == [5, 15, 60]
+
+
+def test_the_snapshot_carries_the_flow_series():
+    st = _state()
+    st.flow_tracker.update([OptionData(100.0, "C", volume=5, bid=1.0, ask=1.4, last=1.4)], {(100.0, "C")},
+                           100.0, datetime(2099, 1, 5, 10, 0, tzinfo=ET), "20990105")
+    snap = price_bars.snapshot_payload(st, rth=True, today=DAY)
+    assert snap["flow"] == st.flow_tracker.minutes() and len(snap["flow"]) == 1

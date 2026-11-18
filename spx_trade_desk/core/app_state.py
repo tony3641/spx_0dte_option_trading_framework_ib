@@ -14,6 +14,7 @@ from spx_trade_desk.ib.contracts import ContractRegistry
 from spx_trade_desk.market.gex import GEXResult, OptionData
 from spx_trade_desk.market.atm import AtmIvHistory, ExpectedMoveAnchor
 from spx_trade_desk.market.charm_history import CharmHistory
+from spx_trade_desk.market.flow import FlowTracker, VolumeHistory
 from spx_trade_desk.market.level_history import LevelHistory
 from spx_trade_desk.market.quote_book import QuoteBook
 from spx_trade_desk.strategy.models import RuntimeState
@@ -80,6 +81,9 @@ class AppState:
         self.chain_stream_contracts: dict = {}
         self.chain_resync_requested: bool = False  # a browser just got its `init`: the stream resends whole rows
         self.quote_book = QuoteBook()              # merged stream + poll quotes (chain service)
+        self.flow_tracker = FlowTracker()          # customer buy/sell flow of the streamed keys (per cycle)
+        self.volume_history = VolumeHistory()      # per-minute total volume per strike (hot strikes, vol_15m)
+        self.flow_failed_mono: float = float("-inf")   # last "Flow tracking failed" log (rate limit)
         self.contracts = ContractRegistry()        # one qualified-contract registry: stream, poller, fetcher, order path
         self.force_chain_fetch_event: Optional[asyncio.Event] = None
         self.active_tab: str = "dashboard"

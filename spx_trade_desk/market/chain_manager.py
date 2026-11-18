@@ -326,6 +326,24 @@ def drop_failed_streams(state) -> int:
     return dropped
 
 
+FLOW_LOG_INTERVAL_S = 60.0     # "Flow tracking failed" is logged at most this often
+
+
+def record_flow(state, rows: List[OptionData], now: datetime) -> None:
+    """Feed one stream cycle to the flow tracker. Never raises: the stream loop's own handler sleeps 5 s.
+
+    ``rows`` is the cycle's book rows (only streams that ticked since the last pass), so the streamed key set
+    comes from ``chain_stream_tickers``. A failure is logged at most once per FLOW_LOG_INTERVAL_S.
+    """
+    try:
+        state.flow_tracker.update(rows, set(state.chain_stream_tickers), state.spx_price, now, state.expiration)
+    except Exception:
+        mono = time.monotonic()
+        if mono - state.flow_failed_mono >= FLOW_LOG_INTERVAL_S:
+            state.flow_failed_mono = mono
+            logger.exception("Flow tracking failed")
+
+
 async def chain_stream_loop(ib, state, broadcast_fn):
     """Maintain persistent market-data subscriptions for the strikes nearest the focus.
 
@@ -425,6 +443,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             if state.quote_book.expiry != state.expiration:
                 state.quote_book.reset(state.expiration)
             state.quote_book.update(book_options, "stream", time.monotonic())
+            record_flow(state, book_options, now_et())
 
             if state.chain_resync_requested:
                 # A browser connected since the last cycle: it starts from the cached full chain, so send

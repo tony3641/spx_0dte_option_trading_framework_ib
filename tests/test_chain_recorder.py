@@ -128,3 +128,34 @@ def test_no_record_while_spot_is_unknown(tmp_path, app_state):
     st.spx_price = 0.0
     assert not rec.maybe_record(st, at(10, 0), now_mono=10.0)
     assert not (tmp_path / "20261005.jsonl.gz").exists()
+
+
+def test_a_record_carries_cumulative_flow_and_only_the_new_minutes(tmp_path, app_state):
+    from spx_trade_desk.market.flow import FlowTracker
+    from spx_trade_desk.sim.library import iter_records
+
+    plain = build_record(_book(), "20261005", 7700.0, None, None, "dashboard", at(10, 0), now_mono=1.0)
+    assert "flow" not in plain                                         # no tracker, no flow block
+
+    st = _state(app_state)
+    st.flow_tracker = FlowTracker()
+    keys = {(7700.0, "P")}
+
+    def tick(t, volume):
+        st.flow_tracker.update([OptionData(7700, "P", volume=volume, bid=1.0, ask=1.2, last=1.2, delta=-0.3)],
+                               keys, 7700.0, t, "20261005")
+
+    rec = ChainRecorder(tmp_path)
+    tick(at(9, 59), 100)                                               # baseline
+    tick(at(10, 0), 105)                                               # 5 bought at the ask
+    assert rec.maybe_record(st, at(10, 0), now_mono=10.0)
+    tick(at(10, 2), 107)                                               # 2 more
+    assert rec.maybe_record(st, at(10, 2), now_mono=12.0)
+
+    recs = list(iter_records(tmp_path / "20261005.jsonl.gz"))
+    assert [r["v"] for r in recs] == [1, 1]
+    first, second = recs[0]["flow"], recs[1]["flow"]
+    assert first["cum"] == [[7700, "P", 5, 0, 0]]
+    assert [m["time"] for m in first["minutes"]] == ["2026-10-05T09:59", "2026-10-05T10:00"]
+    assert second["cum"] == [[7700, "P", 7, 0, 0]]
+    assert [m["time"] for m in second["minutes"]] == ["2026-10-05T10:02"]   # no minute repeated
