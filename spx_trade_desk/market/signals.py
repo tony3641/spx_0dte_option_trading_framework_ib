@@ -60,6 +60,11 @@ def _side_of(close: float, strike: float) -> str:
     return "support" if close > strike else "resistance"
 
 
+def _strike_text(strike: float) -> str:
+    """A strike as node text: ``95`` for 95.0, ``95.5`` for 95.5."""
+    return f"{float(strike):.2f}".rstrip("0").rstrip(".")
+
+
 class SignalTracker:
     def __init__(self) -> None:
         self._expiration: Optional[str] = None
@@ -149,7 +154,7 @@ class SignalTracker:
             for k in [k for k in store if k not in current]:
                 del store[k]
         for k, n in current.items():
-            self._node_step(out, minute, high, low, close, k, n.get("label") or _px(k), n.get("kind"))
+            self._node_step(out, minute, high, low, close, k, n.get("label") or _strike_text(k), n.get("kind"))
 
     def _node_step(self, out, minute, high, low, close, k, label, kind) -> None:
         if k not in self._origin:

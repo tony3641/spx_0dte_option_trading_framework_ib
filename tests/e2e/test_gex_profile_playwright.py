@@ -406,6 +406,8 @@ def _flow_gex(dealer=FLOW_DEALER):
             b.update(call_buy=5, call_sell=0, call_net_delta_usd=900000, put_buy=0, put_sell=0, put_net_delta_usd=0)
         if s in (6130, 6140, 6150, 6160):
             b["flow_gex"] = 4e6 if s in (6130, 6150) else -3e6
+        if s == 6170:
+            b["flow_gex"] = 0.0                          # a streamed strike with no flow gamma: no tick
         if s == 6140:
             b.update(hot=True, vol_oi=2.5, vol_15m=0)    # hot and stale: outlined
         if s == 6160:

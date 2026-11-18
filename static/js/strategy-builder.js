@@ -487,6 +487,9 @@
             case 'price_overnight':
                 handlePriceOvernight(msg.data);
                 break;
+            case 'signal':
+                handleSignal(msg.data);
+                break;
             case 'chain_progress':
                 handleChainProgress(msg.data);
                 break;

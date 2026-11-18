@@ -16,6 +16,7 @@ from spx_trade_desk.market.atm import AtmIvHistory, ExpectedMoveAnchor
 from spx_trade_desk.market.charm_history import CharmHistory
 from spx_trade_desk.market.flow import FlowTracker, VolumeHistory
 from spx_trade_desk.market.level_history import LevelHistory
+from spx_trade_desk.market.signals import SignalTracker
 from spx_trade_desk.market.quote_book import QuoteBook
 from spx_trade_desk.strategy.models import RuntimeState
 
@@ -42,6 +43,7 @@ class AppState:
         self.atm_iv_history = AtmIvHistory()         # per-minute ATM IV of the expiration (vanna IV trend)
         self.level_history = LevelHistory()          # wall / flip / max-pain changes, for the price chart
         self.charm_history = CharmHistory()          # per-minute charm exposure by strike (charm heatmap)
+        self.signal_tracker = SignalTracker()        # timestamped market events (price chart markers), per expiration
 
         # Chain parameters
         self.expiration: str = ""

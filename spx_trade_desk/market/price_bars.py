@@ -12,12 +12,13 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from spx_trade_desk.core.config import PRICE_BARS_KEEP_UP_TO_DATE, PRICE_BARS_STALL_S, PRICE_PUSH_INTERVAL, RTH_OPEN
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.connection import update_spx_es_prices
 from spx_trade_desk.market.hours import ET, is_within_rth, now_et
+from spx_trade_desk.market.signals import DIV_WINDOW_MIN
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def snapshot_payload(state, rth: bool, today: Optional[str] = None) -> dict:
     return {"session_date": state.price_session_date, "mode": "live" if live else "historical",
             "bars": list(state.price_history), "overnight": list(state.price_overnight),
             "levels": state.level_history.points(), "charm": state.charm_history.snapshot_frames(),
-            "flow": state.flow_tracker.minutes()}
+            "flow": state.flow_tracker.minutes(), "signals": state.signal_tracker.history()}
 
 
 def _apply_bar(history, d: dict) -> bool:
@@ -93,6 +94,7 @@ class PriceBarFeed:
         self._was_rth: Optional[bool] = None
         self._open_reset_day = ""
         self._tasks: set = set()                 # in-flight broadcasts started from IB callbacks
+        self._last_closed: Optional[str] = None  # newest bar time already evaluated (or loaded as history)
 
     # -- request lifecycle ----------------------------------------------------
 
@@ -146,6 +148,10 @@ class PriceBarFeed:
         st.price_history.clear()
         st.price_history.extend(rows)
         st.price_session_date = target
+        # Bars loaded now are history: the signal tracker evaluates only a bar that closes after this load.
+        cur_iso = self._now().replace(second=0, microsecond=0).isoformat()
+        closed = [r["time"] for r in rows if r["time"] < cur_iso]
+        self._last_closed = closed[-1] if closed else None
         if rows:
             last_close = rows[-1]["close"]
             st.spx_last_close = last_close
@@ -266,13 +272,16 @@ class PriceBarFeed:
             await self.start()
             return
 
-        message = None
+        message, signals = None, []
         if rth and st.price_session_date == today:
             message = self._merge_live(now)
+            signals = self._signals_for_closed_bar()
         elif not rth:
             message = self._sample_overnight(now)
         if message is not None:
             await self._send(message)
+        for rec in signals:
+            await self._send({"type": "signal", "data": rec})
 
     def _merge_live(self, now: datetime) -> Optional[dict]:
         price = _spx_last(self.state)
@@ -293,6 +302,24 @@ class PriceBarFeed:
         if _apply_bar(hist, b):
             return {"type": "price_bar", "data": {"session_date": self.state.price_session_date, "bar": b}}
         return None
+
+    def _signals_for_closed_bar(self) -> List[dict]:
+        """Evaluate the newest closed minute (the bar before the forming one) once; loaded history never fires."""
+        hist = self.state.price_history
+        if len(hist) < 2:
+            return []
+        closed = hist[-2]
+        if self._last_closed is not None and closed["time"] <= self._last_closed:
+            return []
+        self._last_closed = closed["time"]          # set first: a failing tracker is not retried every second
+        st = self.state
+        prior = list(hist)[-(DIV_WINDOW_MIN + 2):-2]
+        try:
+            return st.signal_tracker.on_bar_closed(st.expiration, closed, prior, st.latest_dealer,
+                                                   st.flow_tracker.minutes())
+        except Exception:
+            logger.exception("Signal tracking failed on a closed bar; the price feed keeps running")
+            return []
 
     def _sample_overnight(self, now: datetime) -> Optional[dict]:
         st = self.state

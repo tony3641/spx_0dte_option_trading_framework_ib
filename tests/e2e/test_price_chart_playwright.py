@@ -595,3 +595,74 @@ def test_the_rsi_pane_follows_the_bars(page):
     _inject(page, "price_bar", {"session_date": S, "bar": _bar("10:20", 139)})
     page.evaluate(FRAMES)
     assert page.evaluate("() => priceChart.rsi.data().length") == 7
+
+
+# --- signal markers ----------------------------------------------------------------------------
+
+def _signal(hhmm, type_, side, text, price=101.0):
+    return {"time": f"{S}T{hhmm}", "type": type_, "side": side, "price": price, "text": text, "detail": {}}
+
+
+def test_signal_markers_snap_to_bars_and_follow_the_signals_button(page):
+    try:
+        assert page.evaluate("() => localStorage.getItem('spx-signal-markers')") is None     # off by default
+        bars = [_bar("09:30", 100), _bar("09:32", 101), _bar("09:34", 102)]
+        sigs = [_signal("09:33", "zg_cross", "bull", "ZG up"), _signal("09:29", "em_touch", "neutral", "EM+")]
+        _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": [],
+                                         "signals": sigs})
+        page.evaluate(FRAMES)
+        assert page.evaluate("() => priceChart.signalMarkers.markers().length") == 0
+        assert page.evaluate("() => priceChart.signals.length") == 2                  # kept while the markers are off
+        page.click("#signalToggle")
+        assert page.evaluate("() => localStorage.getItem('spx-signal-markers')") == "1"
+        assert page.evaluate("() => document.getElementById('signalToggle').classList.contains('active')") is True
+        markers = page.evaluate("() => priceChart.signalMarkers.markers().map(m => [m.time, m.text])")
+        assert markers == [[_utc_seconds(2099, 1, 5, 9, 32), "ZG up"]]     # 09:33 snaps to the 09:32 bar; 09:29 has none
+        pure = page.evaluate("""() => signalMarkerList(priceChart.signals,
+            Array.from(priceChart.bars.keys()).sort((a, b) => a - b)).map(m => [m.time, m.text])""")
+        assert pure == markers
+        page.click("#signalToggle")
+        assert page.evaluate("() => priceChart.signalMarkers.markers().length") == 0
+        assert page.evaluate("() => localStorage.getItem('spx-signal-markers')") == "0"
+    finally:
+        page.evaluate("() => setSignalMarkers(false)")
+
+
+def test_a_live_signal_message_adds_a_marker_while_the_markers_are_on(page):
+    try:
+        _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": [_bar("09:30", 100), _bar("09:31", 101)],
+                                         "overnight": []})
+        page.evaluate("() => setSignalMarkers(true)")
+        page.evaluate(FRAMES)
+        assert page.evaluate("() => priceChart.signalMarkers.markers().length") == 0
+        _inject(page, "signal", _signal("09:31", "node_hold", "bull", "S1", 101.0))
+        page.evaluate(FRAMES)
+        assert page.evaluate("() => priceChart.signalMarkers.markers().map(m => [m.text, m.shape, m.position])") == [
+            ["S1", "arrowUp", "belowBar"]]
+        assert page.evaluate("() => priceChart.signals.map(s => s.text)") == ["S1"]
+    finally:
+        page.evaluate("() => setSignalMarkers(false)")
+
+
+# --- carry-over A: a failing flow pane keeps the candles and RSI ---------------------------------
+
+def test_a_failing_flow_pane_keeps_the_candles_and_the_rsi(page):
+    try:
+        bars = [_bar(f"10:{m:02d}", 100 + (m % 3)) for m in range(20)]
+        _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": [],
+                                         "flow": [_flow_minute("10:00", 500, -200)]})
+        page.evaluate(FRAMES)
+        page.evaluate("() => setFlowPane(false)")
+        page.evaluate("() => { priceChart.chart.addSeries = () => { throw new Error('flow pane test'); }; }")
+        page.evaluate("() => setFlowPane(true)")                 # must not throw out of the toggle
+        assert page.evaluate("() => [priceChart.flowOn, priceChart.flowSeries, priceChart.chart.panes().length]") == [
+            False, None, 2]
+        assert page.evaluate("() => document.getElementById('flowToggle').classList.contains('active')") is False
+        assert page.evaluate("() => priceChart.candles.data().length") == 20
+        assert page.evaluate("() => priceChart.rsi.data().length") == 6
+        page.evaluate("() => { delete priceChart.chart.addSeries; }")
+        page.evaluate("() => setFlowPane(true)")
+        assert page.evaluate("() => [priceChart.flowOn, priceChart.flowSeries !== null, priceChart.chart.panes().length]") == [
+            True, True, 3]
+    finally:
+        page.evaluate("() => { delete priceChart.chart.addSeries; setFlowPane(true); }")

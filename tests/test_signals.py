@@ -133,3 +133,14 @@ def test_every_dealer_rule_is_a_no_op_on_null_inputs():
     assert tr.on_publish(E, now, None, 100.0) == []
     assert tr.on_publish(E, now, empty, 100.0) == []
     assert tr.history() == []
+
+
+def test_a_node_without_a_label_is_named_by_its_strike_as_a_string():   # carry-over F
+    whole = [_bar("10:00", 98, 98.5, 97.5, 98), _bar("10:01", 98, 98, 96.0, 96.5),
+             _bar("10:02", 96.5, 97.5, 96.2, 97.0), _bar("10:03", 97, 98.5, 96.8, 98.2)]
+    half = [_bar("10:00", 98, 98.5, 97.5, 98), _bar("10:01", 98, 98, 96.5, 96.8),
+            _bar("10:02", 96.8, 99, 96.6, 98.7)]
+    for strike, bars, text in ((95.0, whole, "95"), (95.5, half, "95.5")):
+        dealer = {**DEALER, "nodes": [{"strike": strike, "kind": "pin"}]}
+        sig = [s for s in _feed(SignalTracker(), bars, dealer) if s["type"] == "node_hold"]
+        assert [s["text"] for s in sig] == [text]

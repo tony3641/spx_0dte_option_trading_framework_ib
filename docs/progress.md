@@ -2,6 +2,23 @@
 
 All significant feature additions and bug fixes made to the SPX 0DTE GEX Dashboard.
 
+## Session: November 18, 2026 - Intraday options flow (phase 3): signals and chart markers
+
+- **What changed:** `market/signals.py` (`SignalTracker`) is wired into the live loop. `PriceBarFeed` evaluates each closed minute once (zero gamma, nodes, expected move, flow surge and divergence, with the previous bars and the flow minutes), and `publish_chain` evaluates the publish-time rules (vanna shift, charm window). Records are kept per expiration (500 at most, cleared on an expiration change), sent in the price snapshot as `signals`, and streamed as `signal` messages (publish-time ones right after their `gex` message).
+- **Session load never fires:** the bars loaded when the session starts (or after a reconnect) are history. The feed sets its last evaluated bar to the newest loaded closed minute, so only a minute that closes after the load can produce a signal.
+- **Markers are off by default:** the Signals button (`spx-signal-markers`) puts the records on the candles, each on the latest bar at or before its minute. Records are kept while the markers are off. **All thresholds are placeholders** until the replay (Task 14) calibrates them; they are not validated values.
+- **Null charm:** a null `charm.to_close_usd` does not use up the 14:00 window, so the charm signal can fire later (before 16:00) once the value appears.
+- **Carry-over fixes:**
+  - **A.** A failing hedge-flow pane no longer takes the price chart down: the pane is removed as far as it was built, the Flow button shows it off, and a later click tries again (e2e test).
+  - **B.** The price-chart help now says the flow day total is on its own hidden scale, with its value in the Hedge flow 30m tooltip.
+  - **C.** The RSI stretch comment is corrected: the panes are 3:1:1 (candles 60%); RSI shrinks from a quarter to a fifth when the flow pane is on (README).
+  - **D.** The flow GEX tick loop skips a zero `flow_gex` (the GEX profile e2e fixture now carries one zero strike).
+  - **E.** README and `config/tunables.md` document the thresholds as placeholders, the markers as off by default and the null-charm rule.
+  - **F.** A node without a label is named by its strike as text (`95`, `95.5`), not a float (`95.0`).
+  - **G.** The price-chart help had grown to about 5,700 characters and its tooltip was taller than a 1440x900 window (the theme e2e test caught it). It is now about 2,600 characters, and the tooltip scrolls on a short window.
+- **Tests:** `tests/test_signals.py`, `tests/test_chain_publisher.py` and `tests/test_price_bars.py` (the loaded-session guard, the new-minute evaluation, the snapshot and the publish broadcast, with publisher failure isolation). The e2e tests cover the marker snapping, the Signals button and remembered state, a live signal marker, the flow-pane failure (A) and the zero flow-GEX tick (D).
+- **Verification:** unit tests (`tests/test_price_bars.py`, `tests/test_chain_publisher.py`, `tests/test_signals.py`, `tests/test_ui_tokens.py`, `tests/test_bars_fallback.py`, `tests/test_charm_history.py`) pass. E2e was run with the local Edge shim (Playwright's Chromium is not installed here): `tests/e2e/test_price_chart_playwright.py` 36 passed, `tests/e2e/test_gex_profile_playwright.py` 26 passed, `tests/e2e/test_theme_playwright.py` 37 passed (full file). The full suite was not run.
+
 ## Session: November 18, 2026 - Intraday options flow (phase 2): flow tracker, hot strikes, flow GEX and the hedge-flow pane
 
 - **What changed:** every streamed option trade is classified as a customer buy or sell (`market/flow.py`, `FlowTracker`): at or above the ask is a buy, at or below the bid a sell, inside the spread the side of the mid, and at the mid the tick rule against the previous print. The first sighting of a contract only sets its volume baseline, and a fresh stream that reports volume 0 is ignored until its first volume tick, so a day's volume is never counted as one trade. Outputs: `dealer.flow` (15 / 30 minute and day hedge pressure, the day's call and put delta, `classified_pct`, `coverage_start`, the coverage and the newest minute), per strike `call_buy`, `call_sell`, `put_buy`, `put_sell`, `call_net_delta_usd`, `put_net_delta_usd` and `flow_gex`, hot strikes (`vol_oi`, `hot`, `vol_15m`), and the per-minute series as `flow` in the price snapshot. The chain library records completed flow minutes only.

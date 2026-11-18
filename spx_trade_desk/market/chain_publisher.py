@@ -22,6 +22,15 @@ from spx_trade_desk.market.levels import resolve_gamma_flip
 logger = logging.getLogger(__name__)
 
 
+def _publish_signals(state, now: datetime, dealer) -> list:
+    """Publish-time signals (vanna shift, charm window). Never raises: a signal bug must not drop the GEX publish."""
+    try:
+        return state.signal_tracker.on_publish(state.expiration, now, dealer, state.spx_price)
+    except Exception:
+        logger.exception("Signal tracking failed on publish; publishing this cycle without signals")
+        return []
+
+
 def tte_years(expiration: str, now: datetime) -> float:
     """Time to expiry in RTH-trading years (390 min x 252 days), as the GEX math expects."""
     try:
@@ -96,6 +105,7 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     state.latest_gex.update(level_fields(dealer))
     _flow_outputs(state, gex, options, dealer, now, T)
     state.latest_dealer = dealer
+    signals = _publish_signals(state, now, dealer)
     state.level_history.record(state.latest_gex)
     state.charm_history.record(gex)
     state.last_chain_update = now.strftime("%H:%M:%S")
@@ -112,6 +122,8 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     payload["es_derived"] = state.es_derived
     payload["charm_frame"] = state.charm_history.latest()     # the chart appends it to the snapshot's history
     await broadcast_fn({"type": "gex", "data": payload})
+    for rec in signals:
+        await broadcast_fn({"type": "signal", "data": rec})
     await broadcast_fn({"type": "chain_quotes", "data": state.chain_quotes_cache})
     if state.chain_fetching:
         state.chain_fetching = False      # hides the dashboard's loading overlay

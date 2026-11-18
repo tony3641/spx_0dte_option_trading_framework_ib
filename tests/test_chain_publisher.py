@@ -310,3 +310,35 @@ async def test_a_failing_flow_blend_keeps_the_oi_positions_and_still_publishes(a
     assert any(m["type"] == "chain_quotes" for m in sink.msgs)
     assert gex["dealer"] is not None and gex["dealer"]["model"] == "oi_assumed"
     assert "Flow-blend positions failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_publish_broadcasts_publish_time_signals(app_state, monkeypatch):    # after the gex message
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+    rec = {"time": "2026-10-05T10:00", "type": "vanna_shift", "side": "bull", "price": 7700.0, "text": "V+", "detail": {}}
+    seen = []
+
+    def on_publish(expiration, now, dealer, price):
+        seen.append((expiration, dealer is not None, price))
+        return [rec]
+
+    monkeypatch.setattr(st.signal_tracker, "on_publish", on_publish)
+    await publish_chain(st, sink, now_mono=0.0)
+    assert [m["type"] for m in sink.msgs] == ["gex", "signal", "chain_quotes"]
+    assert sink.msgs[1]["data"] == rec
+    assert seen == [("20261005", True, 7700.0)]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_signal_tracker_still_publishes_the_gex(app_state, monkeypatch, caplog):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+
+    def boom(*a, **k):
+        raise RuntimeError("signal bug")
+
+    monkeypatch.setattr(st.signal_tracker, "on_publish", boom)
+    assert await publish_chain(st, sink, now_mono=0.0)
+    assert [m["type"] for m in sink.msgs] == ["gex", "chain_quotes"]
+    assert "signal" in caplog.text.lower()

@@ -464,7 +464,7 @@
         // streamed strike, on the same scale as the GEX bars, so the open-interest and the flow gamma compare.
         if (P.ticksOn && !monthly && !flowView && maxAbs > 0) {
             for (const r of rows) {
-                if (typeof r.flowGex !== 'number') continue;
+                if (typeof r.flowGex !== 'number' || r.flowGex === 0) continue;   // no flow gamma, no tick
                 const bh = Math.max(1, Math.min(GEX_BAR_MAX_H, r.h * GEX_BAR_FILL));
                 const len = Math.min(maxLen, Math.max(1, Math.abs(r.flowGex) / maxAbs * maxLen));
                 const x = r.flowGex >= 0 ? half + len : half - len;
