@@ -28,6 +28,7 @@ from spx_trade_desk.ib.session import boot_session, start_background_loops
 from spx_trade_desk.core import config
 from spx_trade_desk.resources import CHAIN_LIBRARY_DIR, STATIC_DIR
 from spx_trade_desk.core.app_state import AppState
+from spx_trade_desk.core.loop import loop_factory
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.ib.account import (
     refresh_account_state, build_account_payload,
@@ -445,6 +446,19 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+def run_server(server: uvicorn.Server) -> None:
+    """Serve on the project's event loop (selector on Windows, via core.loop). Only this entry point
+    selects the loop: `uvicorn spx_trade_desk.server:app` runs on uvicorn's own loop (Proactor on
+    Windows). Runner's exit cancels leftover tasks and shuts down async generators and the default
+    executor before closing."""
+    with asyncio.Runner(loop_factory=loop_factory()) as runner:
+        try:
+            runner.run(server.serve())
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received; shutting down...")
+            server.should_exit = True
+
+
 if __name__ == "__main__":
     uvi_config = uvicorn.Config(
         app,
@@ -486,14 +500,5 @@ if __name__ == "__main__":
     else:
         logger.info(f"  Access at       : http://{config.SERVER_HOST}:{config.SERVER_PORT}")
 
-    # Selector loop on Windows (the Proactor default is avoided as before). A loop_factory replaces
-    # the event-loop policy API, which is deprecated in 3.14 and removed in 3.16. Runner's exit
-    # cancels leftover tasks, shuts down async generators and the default executor, then closes.
-    loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
-    with asyncio.Runner(loop_factory=loop_factory) as runner:
-        try:
-            runner.run(server.serve())
-        except KeyboardInterrupt:
-            logger.info("KeyboardInterrupt received; shutting down...")
-            server.should_exit = True
+    run_server(server)
     logger.info("Server shutdown complete")

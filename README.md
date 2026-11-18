@@ -70,6 +70,10 @@ A real-time Gamma Exposure (GEX) dashboard for SPX 0DTE options, powered by Inte
    python -m spx_trade_desk.server
    ```
 
+   Use this form (or `start_server.bat` on Windows). It runs on a selector event loop on Windows and shuts
+   down gracefully on Ctrl+C / SIGTERM. `uvicorn spx_trade_desk.server:app` also works but runs on
+   uvicorn's own loop (Proactor on Windows) and without these signal handlers.
+
 6. Open `http://localhost:8000` in a browser.
 
 ### Tests
