@@ -39,6 +39,24 @@ def positions_from_oi(result: GEXResult) -> DealerPositions:
     return DealerPositions(calls=calls, puts=puts, model="oi_assumed")
 
 
+def positions_flow_blend(base: DealerPositions, net_calls: Dict[float, float],
+                         net_puts: Dict[float, float]) -> DealerPositions:
+    """Dealers take the other side of today's net customer volume: ``calls[k] = base - net_calls[k]``.
+
+    ``net_calls`` / ``net_puts`` are customer net contracts bought per strike (``FlowTracker.net_volumes``).
+    With no flow the result is the base positions, relabelled "flow_blend". Zero positions are dropped.
+    """
+    def blend(positions: Dict[float, float], net: Dict[float, float]) -> Dict[float, float]:
+        out: Dict[float, float] = {}
+        for k in set(positions) | {float(x) for x in net}:
+            v = positions.get(k, 0.0) - float(net.get(k, 0.0))
+            if v != 0:
+                out[k] = v
+        return out
+
+    return DealerPositions(calls=blend(base.calls, net_calls), puts=blend(base.puts, net_puts), model="flow_blend")
+
+
 def fill_ivs(known: Dict[float, float], strikes: Iterable[float]) -> Dict[float, float]:
     """IV at each strike: linear between the nearest known strikes, flat beyond the ends; {} if nothing is known."""
     if not known:

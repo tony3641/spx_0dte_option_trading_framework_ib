@@ -27,6 +27,7 @@ Source: spx_trade_desk/core/config.py
 - VIEWPORT_CENTER_MIN_INTERVAL = 0.2
 - PUSH_ORDERED_BACKLOG_MAX = 1000, minimum 10 (a lower value is raised to 10) (unsent critical messages, such as order status, one browser may queue before it is dropped and reconnects to a fresh init; raise it only if a slow but healthy client gets dropped during order bursts)
 - PUSH_SEND_TIMEOUT_S = 5.0, minimum 0.5 (a lower value is raised to 0.5) (one WebSocket send slower than this drops that browser only; raise it for clients on a slow remote link, lower it to shed a stuck tab sooner)
+- DEALER_POSITION_MODEL = "oi_assumed" (`oi_assumed`: dealers long calls and short puts at the open interest; `flow_blend`: open interest less today's net customer volume per strike; set in the gear menu or `.env`, not `params.yaml`; an unknown value falls back to `oi_assumed`; keep `oi_assumed` until the flow tracker has a few days of data)
 
 ## 2) Backend hardcoded tunables (not env-wired today)
 

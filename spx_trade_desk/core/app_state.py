@@ -82,6 +82,7 @@ class AppState:
         self.chain_resync_requested: bool = False  # a browser just got its `init`: the stream resends whole rows
         self.quote_book = QuoteBook()              # merged stream + poll quotes (chain service)
         self.flow_tracker = FlowTracker()          # customer buy/sell flow of the streamed keys (per cycle)
+        self.dealer_model: str = config.DEALER_POSITION_MODEL   # "oi_assumed" | "flow_blend" (gear menu)
         self.volume_history = VolumeHistory()      # per-minute total volume per strike (hot strikes, vol_15m)
         self.flow_failed_mono: float = float("-inf")   # last "Flow tracking failed" log (rate limit)
         self.contracts = ContractRegistry()        # one qualified-contract registry: stream, poller, fetcher, order path

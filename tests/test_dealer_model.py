@@ -87,3 +87,17 @@ def test_a_very_large_negative_iv_shift_stays_finite_because_iv_is_floored():
     floored = dealer_delta(book, spots, TTE, R, iv_shift=-10.0)
     assert np.isfinite(floored).all()
     assert floored == pytest.approx(dealer_delta(book, spots, TTE, R, iv_shift=IV_FLOOR - 0.2), rel=1e-6)
+
+
+def test_flow_blend_takes_the_other_side_of_todays_customer_flow():
+    from spx_trade_desk.market.dealer_model import DealerPositions, positions_flow_blend
+    base = DealerPositions(calls={100.0: 1000.0}, puts={100.0: -800.0}, model="oi_assumed")
+    out = positions_flow_blend(base, {100.0: 30}, {100.0: -20, 105.0: 5})
+    assert (out.calls, out.puts, out.model) == ({100.0: 970.0}, {100.0: -780.0, 105.0: -5.0}, "flow_blend")
+
+
+def test_flow_blend_without_any_net_flow_keeps_the_oi_positions():
+    from spx_trade_desk.market.dealer_model import DealerPositions, positions_flow_blend
+    base = DealerPositions(calls={100.0: 1000.0}, puts={100.0: -800.0}, model="oi_assumed")
+    out = positions_flow_blend(base, {}, {})
+    assert (out.calls, out.puts, out.model) == ({100.0: 1000.0}, {100.0: -800.0}, "flow_blend")

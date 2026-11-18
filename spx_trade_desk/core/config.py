@@ -83,6 +83,17 @@ def _as_bool(value: Any) -> bool:
     raise ValueError(f"not a boolean: {value!r}")
 
 
+DEALER_MODELS = ("oi_assumed", "flow_blend")
+
+
+def _dealer_model(value: Any) -> str:
+    """Dealer position model name; anything outside DEALER_MODELS is an error."""
+    text = str(value).strip()
+    if text not in DEALER_MODELS:
+        raise ValueError(f"not a dealer position model: {value!r}")
+    return text
+
+
 def _parse_hhmm(value: Any) -> time:
     text = str(value).strip()
     hh, mm = text.split(":", 1)
@@ -135,6 +146,14 @@ SERVER_PORT = _get_setting("SERVER_PORT", 8000, int)
 # Worker processes for a sim run: 0 = auto (CPU count), 1 = serial.
 # Overridable per run via SimRunConfig.n_workers.
 SIM_WORKERS = _get_setting("SIM_WORKERS", 0, int)
+
+# ---------------------------------------------------------------------------
+# Dealer position model (market/dealer_model.py, chain_publisher.py)
+# ---------------------------------------------------------------------------
+# oi_assumed: dealers are long calls and short puts at the open interest (the GEX convention).
+# flow_blend: the open interest less today's net customer volume, so the dealers' side follows the flow.
+# An unknown value falls back to the default. Switchable in the gear menu; not in params.yaml.
+DEALER_POSITION_MODEL = _get_setting("DEALER_POSITION_MODEL", "oi_assumed", _dealer_model)
 
 # ---------------------------------------------------------------------------
 # Chain streaming

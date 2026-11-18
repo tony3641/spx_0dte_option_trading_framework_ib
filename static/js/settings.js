@@ -14,7 +14,7 @@
 
     async function loadSettings() {
         try {
-            const [discord, ib, sim] = await Promise.all([
+            const [discord, ib, sim, dealer] = await Promise.all([
                 fetch('/api/settings/discord').then(r => {
                     if (!r.ok) throw new Error(r.statusText);
                     return r.json();
@@ -24,6 +24,10 @@
                     return r.json();
                 }),
                 fetch('/api/settings/sim').then(r => {
+                    if (!r.ok) throw new Error(r.statusText);
+                    return r.json();
+                }),
+                fetch('/api/settings/dealer').then(r => {
                     if (!r.ok) throw new Error(r.statusText);
                     return r.json();
                 }),
@@ -48,9 +52,22 @@
                 sim.workers > 0
                     ? `Fixed at ${sim.workers} process${sim.workers === 1 ? '' : 'es'}`
                     : `0 = auto (all ${sim.cpu_count} CPU cores; small runs stay serial)`;
+            const modelSel = document.getElementById('setDealerModel');
+            modelSel.textContent = '';
+            for (const m of (dealer.models || [])) {
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                modelSel.appendChild(opt);
+            }
+            modelSel.value = dealer.model;
+            document.getElementById('setDealerHint').textContent = dealer.model === 'flow_blend'
+                ? "Open interest less today's customer flow (needs a few days of flow data to be trusted)"
+                : 'Open interest only (dealers long calls, short puts); the default';
             document.getElementById('setDiscordResult').textContent = '';
             document.getElementById('setIbResult').textContent = '';
             document.getElementById('setSimResult').textContent = '';
+            document.getElementById('setDealerResult').textContent = '';
             settingsLoaded = true;
         } catch (e) {
             document.getElementById('setDiscordResult').textContent =
@@ -127,6 +144,31 @@
         } finally {
             document.getElementById('loadingOverlay').classList.add('hidden');
             btn.disabled = false;
+        }
+    }
+
+    async function applyDealerSettings() {
+        const model = document.getElementById('setDealerModel').value;
+        const btn = document.getElementById('setDealerApplyBtn');
+        btn.disabled = true;
+        btn.textContent = 'Applying...';
+        try {
+            const r = await fetch('/api/settings/dealer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model }),
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.detail || r.statusText || 'Apply failed');
+            let msg = `Applied — dealer model ${data.model} on the next chain publish.`;
+            if (data.persisted === false) msg += ' Warning: could not write .env — setting lost on restart.';
+            setSettingsResult('setDealerResult', msg, true);
+            settingsLoaded = false;              // reload the hint on next open
+        } catch (e) {
+            setSettingsResult('setDealerResult', 'Apply failed: ' + e.message, false);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Apply Model';
         }
     }
 

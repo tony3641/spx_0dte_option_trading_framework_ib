@@ -246,3 +246,50 @@ async def test_a_failing_flow_block_still_publishes_the_gex(app_state, monkeypat
     assert await publish_chain(st, sink, now_mono=0.0)
     assert any(m["type"] == "gex" for m in sink.msgs) and any(m["type"] == "chain_quotes" for m in sink.msgs)
     assert "Flow outputs failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_flow_blend_model_is_reported_in_the_dealer_block(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+    st.dealer_model = "flow_blend"
+    await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    assert gex["dealer"]["model"] == "flow_blend"
+
+
+@pytest.mark.asyncio
+async def test_flow_blend_with_no_flow_uses_the_oi_positions(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    oi_st, oi_sink = _state(app_state, *_chain()), Sink()
+    await publish_chain(oi_st, oi_sink, now_mono=0.0)
+    blend_st, blend_sink = _state(app_state, *_chain()), Sink()
+    blend_st.dealer_model = "flow_blend"
+    await publish_chain(blend_st, blend_sink, now_mono=0.0)
+    oi = next(m for m in oi_sink.msgs if m["type"] == "gex")["data"]["dealer"]
+    blend = next(m for m in blend_sink.msgs if m["type"] == "gex")["data"]["dealer"]
+    assert blend["model"] == "flow_blend" and oi["model"] == "oi_assumed"
+    assert blend["zero_gamma"] == oi["zero_gamma"] and blend["profile"] == oi["profile"]
+
+
+@pytest.mark.asyncio
+async def test_flow_blend_positions_net_out_the_customer_volume(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    seen = {}
+    real_build = pub.build_dealer
+
+    def spy(result, options, pos, *args, **kwargs):
+        seen["pos"] = pos
+        return real_build(result, options, pos, *args, **kwargs)
+
+    monkeypatch.setattr(pub, "build_dealer", spy)
+    chain = _chain()
+    next(o for o in chain if (o.strike, o.right) == (7710, "C")).volume = 110
+    st, sink = _state(app_state, *chain), Sink()
+    st.dealer_model = "flow_blend"
+    keys = {(7710.0, "C")}
+    st.flow_tracker.update([_flow_row(100, 1.1)], keys, 7700.0, datetime(2026, 10, 5, 9, 59, tzinfo=ET), "20261005")
+    st.flow_tracker.update([_flow_row(110, 1.2)], keys, 7700.0, datetime(2026, 10, 5, 10, 0, tzinfo=ET), "20261005")
+    await publish_chain(st, sink, now_mono=0.0)
+    assert seen["pos"].model == "flow_blend"
+    assert seen["pos"].calls[7710.0] == 1000 - 10       # OI 1000 less the 10 contracts customers bought

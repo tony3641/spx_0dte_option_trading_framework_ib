@@ -12,7 +12,7 @@ from datetime import datetime
 
 from spx_trade_desk.core.config import CHAIN_QUOTE_MAX_AGE_S, CHAIN_REFRESH_SECONDS
 from spx_trade_desk.market.chain_manager import build_chain_quotes
-from spx_trade_desk.market.dealer_model import positions_from_oi, strike_gammas
+from spx_trade_desk.market.dealer_model import positions_flow_blend, positions_from_oi, strike_gammas
 from spx_trade_desk.market.dealer_payload import build_dealer, level_fields
 from spx_trade_desk.market.flow import HOT_FRESH_MIN, annotate_gex_bars, flow_gex_by_strike, hot_strikes
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict
@@ -73,6 +73,8 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     gex.expiration = state.expiration
     gex.timestamp = now.isoformat()
     pos = positions_from_oi(gex)
+    if state.dealer_model == "flow_blend":
+        pos = positions_flow_blend(pos, *state.flow_tracker.net_volumes())
     try:
         dealer, levels = build_dealer(gex, options, pos, T, state.risk_free_rate, now, state.em_anchor,
                                       state.atm_iv_history, state.price_history, state.price_session_date)

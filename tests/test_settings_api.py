@@ -286,3 +286,50 @@ def test_post_sim_negative_400(monkeypatch):
         _run(server.post_sim_settings(server.SimSettingsIn(workers=-1), _req()))
     assert ei.value.status_code == 400
     assert calls == []
+
+
+# ---- dealer position model endpoints ---------------------------------------
+@pytest.fixture
+def dealer_state(monkeypatch):
+    st = SimpleNamespace(dealer_model="oi_assumed")
+    monkeypatch.setattr(server, "state", st)
+    return st
+
+
+def test_dealer_settings_403_for_remote(monkeypatch, dealer_state):
+    _manager(monkeypatch, [])
+    for call in (
+        lambda: server.get_dealer_settings(_req("10.0.0.9")),
+        lambda: server.post_dealer_settings(server.DealerSettingsIn(model="flow_blend"), _req("10.0.0.9")),
+    ):
+        with pytest.raises(server.HTTPException) as ei:
+            _run(call())
+        assert ei.value.status_code == 403
+    assert dealer_state.dealer_model == "oi_assumed"
+
+
+def test_get_dealer_settings(monkeypatch, dealer_state):
+    _manager(monkeypatch, [])
+    assert _run(server.get_dealer_settings(_req())) == {
+        "model": "oi_assumed", "models": ["oi_assumed", "flow_blend"]}
+
+
+def test_post_dealer_persists_and_hot_applies(monkeypatch, dealer_state):
+    calls = []
+    _manager(monkeypatch, calls)
+    monkeypatch.setenv("DEALER_POSITION_MODEL", "oi_assumed")   # monkeypatch restores the env after the test
+    resp = _run(server.post_dealer_settings(server.DealerSettingsIn(model="flow_blend"), _req()))
+    assert resp == {"ok": True, "model": "flow_blend", "persisted": True}
+    assert dealer_state.dealer_model == "flow_blend"             # the next publish uses it, no restart
+    assert os.environ["DEALER_POSITION_MODEL"] == "flow_blend"
+    assert calls[-1] == {"DEALER_POSITION_MODEL": "flow_blend"}
+
+
+def test_post_dealer_unknown_model_400(monkeypatch, dealer_state):
+    calls = []
+    _manager(monkeypatch, calls)
+    with pytest.raises(server.HTTPException) as ei:
+        _run(server.post_dealer_settings(server.DealerSettingsIn(model="nonsense"), _req()))
+    assert ei.value.status_code == 400
+    assert dealer_state.dealer_model == "oi_assumed"
+    assert calls == []

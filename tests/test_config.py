@@ -101,3 +101,17 @@ class TestConfigConstants:
     def test_defaults_are_reasonable(self):
         assert IB_PORT > 0
         assert SERVER_PORT > 0
+
+
+# ---------------------------------------------------------------------------
+# Dealer position model
+# ---------------------------------------------------------------------------
+
+def test_dealer_position_model_defaults_and_rejects_unknown_values(monkeypatch):
+    from spx_trade_desk.core import config
+    monkeypatch.delenv("DEALER_POSITION_MODEL", raising=False)
+    assert config._get_setting("DEALER_POSITION_MODEL", "oi_assumed", config._dealer_model) == "oi_assumed"
+    monkeypatch.setenv("DEALER_POSITION_MODEL", "flow_blend")
+    assert config._get_setting("DEALER_POSITION_MODEL", "oi_assumed", config._dealer_model) == "flow_blend"
+    monkeypatch.setenv("DEALER_POSITION_MODEL", "nonsense")
+    assert config._get_setting("DEALER_POSITION_MODEL", "oi_assumed", config._dealer_model) == "oi_assumed"

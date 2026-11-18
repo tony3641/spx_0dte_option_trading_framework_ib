@@ -688,6 +688,7 @@ Settings are resolved in order: **environment variable → repo-root `.env` → 
 | `SGOV_TICKER` | `SGOV` | Ticker used for risk-free rate |
 | `DEFAULT_RISK_FREE_RATE` | `0.043` | Fallback risk-free rate |
 | `SIM_WORKERS` | `0` | Sim worker processes: `0` = auto (CPU count), `1` = serial |
+| `DEALER_POSITION_MODEL` | `oi_assumed` | Dealer position model behind the gamma profile. `oi_assumed`: dealers are long calls and short puts at the open interest. `flow_blend`: the open interest less today's net customer volume at each strike. Set in the gear menu or `.env` (not `params.yaml`); an unknown value falls back to `oi_assumed` |
 | `RTH_OPEN` / `RTH_CLOSE` | `09:30` / `16:15` | Regular trading hours window (ET) |
 | `FOMC_DATES` | `[]` | FOMC meeting dates (via `params.yaml`) |
 
@@ -719,6 +720,19 @@ in place; the IB port reconnects immediately) and persists it to the repo-root
 `.env`, which overrides `config/params.yaml` but loses to real environment
 variables. Settings endpoints only accept localhost connections. The header
 connection badge is display-only now.
+
+**Dealer position model** (Settings → Dealer model, or `DEALER_POSITION_MODEL`)
+chooses how the dealers' option positions are estimated for the gamma profile,
+the levels, the nodes and the flow hedge pressure. `oi_assumed` (the default)
+puts the dealers long every call and short every put at the open interest,
+the convention GEX has always used. `flow_blend` takes today's net customer
+volume off that: each strike's dealer position is its open interest less the
+contracts customers bought there on net, so a strike that customers have been
+buying becomes less dealer-long. The flow comes only from the streamed strikes
+and starts when the server starts, so after a mid-session start `flow_blend`
+reflects just the flow seen since then. Stay on `oi_assumed` until the flow
+tracker has a few days of data behind it; the default stays `oi_assumed` until
+then. The switch applies on the next chain publish, with no restart.
 
 ### Manual setup (headless alternative)
 
