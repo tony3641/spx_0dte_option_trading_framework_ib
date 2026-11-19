@@ -94,18 +94,21 @@ class SignalTracker:
     def history(self) -> List[dict]:
         return list(self._history)
 
-    def _emit(self, out: List[dict], minute: str, type_: str, side: str, price: float, text: str, detail: dict) -> None:
+    def _emit(self, out: List[dict], minute: str, type_: str, side: str, price: float, text: str, detail: dict) -> bool:
+        """Append the signal unless this type already fired this minute or (type, text) is cooling down.
+        Returns True when emitted, so callers commit their state only then."""
         if self._last_type_minute.get(type_) == minute:
-            return
+            return False
         now = datetime.strptime(minute, _FMT)
         last = self._last_emit.get((type_, text))
         if last is not None and now - last < timedelta(minutes=SIGNAL_COOLDOWN_MIN):
-            return
+            return False
         self._last_type_minute[type_] = minute
         self._last_emit[(type_, text)] = now
         rec = {"time": minute, "type": type_, "side": side, "price": _px(price), "text": text, "detail": detail}
         self._history.append(rec)
         out.append(rec)
+        return True
 
     # ---- per closed bar ----
 
@@ -164,16 +167,18 @@ class SignalTracker:
         had_pending = k in self._pending
         touched = low <= k + NODE_TOUCH_PTS if support else high >= k - NODE_TOUCH_PTS
         detail = {"strike": _px(k), "kind": kind}
-        signaled = False
+        event = False       # a hold or break condition was met on this bar, whether or not it was emitted
 
         if had_pending:
             holds = close >= k + NODE_CONFIRM_PTS if support else close <= k - NODE_CONFIRM_PTS
             if holds:
-                self._emit(out, minute, "node_hold", "bull" if support else "bear", close, label, detail)
-                self._pending.pop(k, None)
-                self._run.pop(k, None)
-                self._origin[k] = _side_of(close, k)
-                signaled = True
+                event = True
+                # A suppressed hold (same-minute or cooldown) keeps pending and origin untouched,
+                # so the next bar re-evaluates it. A pending counter only ticks down on non-holding bars.
+                if self._emit(out, minute, "node_hold", "bull" if support else "bear", close, label, detail):
+                    self._pending.pop(k, None)
+                    self._run.pop(k, None)
+                    self._origin[k] = _side_of(close, k)
             else:
                 left = self._pending[k] - 1
                 if left > 0:
@@ -184,18 +189,20 @@ class SignalTracker:
         beyond = close <= k - NODE_CONFIRM_PTS if support else close >= k + NODE_CONFIRM_PTS
         run = self._run.get(k, 0) + 1 if beyond else 0
         if run >= NODE_CONFIRM_BARS:
-            self._emit(out, minute, "node_break", "bear" if support else "bull", close, f"{label} brk", detail)
-            self._run.pop(k, None)
-            self._pending.pop(k, None)
-            self._origin[k] = _side_of(close, k)
-            signaled = True
+            event = True
+            if self._emit(out, minute, "node_break", "bear" if support else "bull", close, f"{label} brk", detail):
+                self._run.pop(k, None)
+                self._pending.pop(k, None)
+                self._origin[k] = _side_of(close, k)
+            else:
+                self._run[k] = run      # suppressed: keep counting, so the break is retried while still beyond
         elif run:
             self._run[k] = run
         else:
             self._run.pop(k, None)
 
         # A touch opens a confirmation window only when none was open before this bar.
-        if touched and not had_pending and not signaled:
+        if touched and not had_pending and not event:
             self._pending[k] = NODE_CONFIRM_BARS
 
     def _flow_surge(self, out, minute, close, flow_minutes) -> None:
@@ -255,10 +262,10 @@ class SignalTracker:
             return
         if not (CHARM_WINDOW_ET <= et.time() < _CHARM_END_ET) or to_close is None:
             return
-        self._charm_done = True
-        if abs(to_close) < CHARM_MIN_USD:
+        if abs(to_close) < CHARM_MIN_USD:       # below the minimum: the window stays open for a later publish
             return
         up = to_close > 0
         text = ("C+ $" if up else "C- $") + _usd_short(to_close)
-        self._emit(out, minute, "charm_window", "bull" if up else "bear", price, text,
-                   {"to_close_usd": round(to_close)})
+        if self._emit(out, minute, "charm_window", "bull" if up else "bear", price, text,
+                      {"to_close_usd": round(to_close)}):
+            self._charm_done = True             # the one-shot is used up only by an emitted signal

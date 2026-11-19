@@ -62,6 +62,7 @@ class KeyFlow:
     prev_ask: Optional[float]
     prev_last: Optional[float]
     gapped: bool = False
+    rebase: bool = False                # a 0 reading after a baseline: the next nonzero reading is a fresh baseline
     buy_vol: int = 0
     sell_vol: int = 0
     unclassified_vol: int = 0
@@ -137,12 +138,19 @@ class FlowTracker:
             vol = int(row.volume or 0)
             kf = self._keys.get(key)
             if vol <= 0:                        # 0 = not reported yet (fresh stream): never a baseline
-                if kf is not None:
+                if kf is not None:              # a resubscribe restarts the counter: rebase on the next reading
+                    kf.rebase = True
                     kf.prev_bid, kf.prev_ask, kf.prev_last = row.bid, row.ask, row.last
                 continue
             if kf is None:                      # first sighting: baseline only
                 self._keys[key] = KeyFlow(last_volume=vol, prev_bid=row.bid, prev_ask=row.ask,
                                           prev_last=row.last)
+                continue
+            if kf.rebase:                       # counter restarted: this reading is a fresh baseline, nothing classified
+                kf.rebase = False
+                kf.gapped = False
+                kf.last_volume = vol
+                kf.prev_bid, kf.prev_ask, kf.prev_last = row.bid, row.ask, row.last
                 continue
             dv = vol - kf.last_volume
             if kf.gapped:                       # volume traded while unstreamed: size known, side not

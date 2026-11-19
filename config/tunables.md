@@ -196,7 +196,7 @@ Source: spx_trade_desk/core/config.py
 - signals.CHARM_MIN_USD = 100_000_000 (charm window: the charm to close must be at least this size)
 - signals.MAX_SIGNALS = 500 (records kept and sent with the snapshot; cleared on an expiration change)
 - All of the above are placeholders until the Phase 5 replay (Task 14) calibrates them; they are not validated values.
-- A null `charm.to_close_usd` does not consume the 14:00 window: the signal can fire later, before 16:00, once the value appears.
+- A null `charm.to_close_usd`, or one below `CHARM_MIN_USD`, does not consume the charm window: the signal fires on the first publish from 14:00 to 16:00 ET whose value is at least the minimum.
 - static/js/price-chart.js: `SIGNAL_MARKERS_KEY` (`spx-signal-markers`: `'1'` on, `'0'` off; default off) remembers the Signals button; `SIGNALS_MAX` (500) bounds the records the browser holds.
 - static/js/price-chart.js pane stretch: price pane 3, RSI 1, hedge-flow pane 1 (candles 60%, RSI and flow 20% each); RSI keeps a quarter while the flow pane is off.
 - static/css/charts.css: `.panel-price .chart-title .help .tooltip` has `max-height: calc(100vh - 180px)` and scrolls, so a short window keeps the whole help on screen.

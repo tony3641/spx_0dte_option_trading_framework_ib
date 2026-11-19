@@ -99,6 +99,18 @@ def test_a_volume_drop_resets_the_baseline_without_classifying():
     assert kf.buy_vol + kf.sell_vol + kf.unclassified_vol == 10
 
 
+def test_a_zero_reading_after_a_baseline_rebases_so_a_restarted_counter_is_not_one_burst():   # wave2 fix 1
+    t = FlowTracker()
+    _cycle(t, [_row(100, "C", 100, 1.00, 1.40, 1.20)], 0)               # baseline 100
+    _cycle(t, [_row(100, "C", 0, 1.00, 1.40, None)], 1)                 # resubscribed: counter not reported yet
+    kf = t.keys()[(100.0, "C")]
+    _cycle(t, [_row(100, "C", 5000, 1.00, 1.40, 1.20)], 2)              # restarted counter: fresh baseline only
+    assert (kf.buy_vol, kf.sell_vol, kf.unclassified_vol) == (0, 0, 0)
+    assert kf.last_volume == 5000
+    _cycle(t, [_row(100, "C", 5010, 1.40, 1.80, 1.40)], 3)              # 10 at the ask, classified normally
+    assert (kf.buy_vol, kf.sell_vol, kf.unclassified_vol) == (10, 0, 0)
+
+
 def test_a_new_expiration_clears_everything():
     t = FlowTracker()
     _cycle(t, [_row(100, "C", 5000, 1.00, 1.40, 1.20), _row(101, "C", 4000, 1.00, 1.40, 1.20)], 0)

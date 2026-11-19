@@ -51,6 +51,27 @@ def test_a_touch_that_chops_is_no_signal():
     assert [s for s in _feed(SignalTracker(), bars, DEALER) if s["type"].startswith("node")] == []
 
 
+def test_two_nodes_that_hold_on_the_same_bar_both_signal_one_bar_apart():   # wave2 fix 2
+    dealer = {"zero_gamma": None, "em": {}, "nodes": [{"label": "S1", "strike": 95.0}, {"label": "S2", "strike": 94.0}]}
+    bars = [_bar("10:00", 98, 98.5, 97.5, 98), _bar("10:01", 98, 98, 95.9, 96.5),
+            _bar("10:02", 96.5, 98.5, 97.0, 98.2), _bar("10:03", 98.2, 98.6, 98.0, 98.3)]
+    sig = [s for s in _feed(SignalTracker(), bars, dealer) if s["type"] == "node_hold"]
+    assert [(s["text"], s["time"][-5:]) for s in sig] == [("S1", "10:02"), ("S2", "10:03")]
+
+
+def test_a_cooldown_suppressed_hold_is_emitted_once_the_cooldown_has_passed_if_still_valid():   # wave2 fix 2
+    dealer = {"zero_gamma": None, "em": {}, "nodes": [{"label": "S1", "strike": 95.0}]}
+    bars = [_bar("10:00", 98, 98.5, 97.5, 98), _bar("10:01", 98, 98, 96.0, 96.5),
+            _bar("10:02", 96.5, 98.5, 97.0, 98.2),      # hold: emitted
+            _bar("10:03", 98.2, 98.4, 96.0, 96.5),      # back into the touch zone: a new window opens
+            _bar("10:04", 96.5, 98.5, 97.0, 98.3),      # hold 2 min after the last S1 hold: cooldown
+            _bar("10:05", 98.3, 98.5, 98.0, 98.4),      # still holding, 3 min: cooldown
+            _bar("10:06", 98.4, 98.6, 98.1, 98.4),      # 4 min: cooldown
+            _bar("10:07", 98.4, 98.6, 98.1, 98.5)]      # 5 min: the held confirmation is emitted now
+    sig = [s for s in _feed(SignalTracker(), bars, dealer) if s["type"] == "node_hold"]
+    assert [(s["text"], s["time"][-5:]) for s in sig] == [("S1", "10:02"), ("S1", "10:07")]
+
+
 def test_the_same_signal_is_suppressed_for_the_cooldown():
     closes = [99, 101, 99, 101, 99, 101, 99, 101]
     bars = [_bar(f"10:{m:02d}", 100, 101.5, 98.5, c) for m, c in enumerate(closes)]
@@ -104,10 +125,18 @@ def test_the_charm_window_fires_once_at_14_00():
     assert tr.on_publish(E, datetime(2099, 1, 5, 14, 30, tzinfo=ET), _dealer(to_close=2.5e8), 100.0) == []
 
 
-def test_the_charm_window_is_quiet_below_the_minimum_and_on_another_days_expiry():   # Review Focus 3
+def test_a_charm_below_the_minimum_or_null_does_not_use_up_the_window():   # wave2 fix 3
     tr = SignalTracker()
     assert tr.on_publish(E, datetime(2099, 1, 5, 14, 0, tzinfo=ET), _dealer(to_close=5e7), 100.0) == []
-    assert tr.on_publish(E, datetime(2099, 1, 5, 14, 10, tzinfo=ET), _dealer(to_close=5e8), 100.0) == []   # once per session
+    assert tr.on_publish(E, datetime(2099, 1, 5, 14, 5, tzinfo=ET), _dealer(to_close=None), 100.0) == []
+    later = tr.on_publish(E, datetime(2099, 1, 5, 14, 10, tzinfo=ET), _dealer(to_close=5e8), 100.0)
+    assert [(s["type"], s["side"], s["text"]) for s in later] == [("charm_window", "bull", "C+ $500M")]
+    assert tr.on_publish(E, datetime(2099, 1, 5, 14, 20, tzinfo=ET), _dealer(to_close=5e8), 100.0) == []   # once per session
+
+
+def test_the_charm_window_is_quiet_before_14_00_after_16_00_and_on_another_days_expiry():   # Review Focus 3
+    assert SignalTracker().on_publish(E, datetime(2099, 1, 5, 13, 59, tzinfo=ET), _dealer(to_close=5e8), 100.0) == []
+    assert SignalTracker().on_publish(E, datetime(2099, 1, 5, 16, 0, tzinfo=ET), _dealer(to_close=5e8), 100.0) == []
     assert SignalTracker().on_publish("20990106", datetime(2099, 1, 5, 14, 0, tzinfo=ET), _dealer(to_close=5e8), 100.0) == []
 
 
