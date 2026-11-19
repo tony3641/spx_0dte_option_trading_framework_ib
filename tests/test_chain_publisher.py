@@ -1,4 +1,5 @@
 """Publisher: the quote book becomes GEX + chain payload + state every cycle."""
+import json
 import os
 import time
 from datetime import datetime
@@ -110,3 +111,234 @@ async def test_publish_tick_does_not_touch_the_heartbeat_when_the_publish_failed
 async def test_publish_tick_without_a_recorder_just_publishes(app_state):
     st = _state(app_state, OptionData(7690, "P", bid=1.0))
     assert await pub.publish_tick(st, Sink(), None, now_mono=1.0)
+
+
+def _chain(iv=0.15):
+    """Invented chain: strikes 7600..7800; dealers' OI sits on calls above 7700 and puts below it."""
+    opts = []
+    for k in range(7600, 7810, 10):
+        for right in ("C", "P"):
+            oi = 1000 if (right == "C" and k > 7700) or (right == "P" and k < 7700) else 0
+            bid, ask = (9.8, 10.2) if k == 7700 else (1.0, 1.2)
+            opts.append(OptionData(k, right, implied_vol=iv, open_interest=oi, bid=bid, ask=ask))
+    return opts
+
+
+def _chain_200_strikes():
+    """Invented chain with 200 strikes per right, for the payload size check."""
+    opts = []
+    for k in range(7000, 9000, 10):
+        for right in ("C", "P"):
+            oi = 1000 if (right == "C" and k > 7700) or (right == "P" and k < 7700) else 0
+            opts.append(OptionData(k, right, implied_vol=0.15, open_interest=oi, bid=1.0, ask=1.2))
+    return opts
+
+
+@pytest.mark.asyncio
+async def test_publish_adds_the_dealer_block_and_zero_gamma_replaces_the_flip(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+    await publish_chain(st, sink, now_mono=0.0)
+    gex = sink.msgs[0]["data"]
+    d = gex["dealer"]
+    assert {"model", "regime", "gamma_at_spot", "zero_gamma", "zero_gamma_all", "zero_gamma_distance",
+            "profile", "nodes", "voids", "em", "charm", "vanna"} <= set(d)
+    assert d["model"] == "oi_assumed" and gex["gamma_flip"] == d["zero_gamma"]
+    assert gex["gamma_flip_method"] == "zero_gamma"
+    assert "gamma_flip_cumulative" in gex
+    assert st.latest_gex["dealer"] == d and st.latest_dealer == d
+    assert st.chain_quotes_cache["gamma_flip"] == gex["gamma_flip"]
+    assert d["em"]["live"] == pytest.approx(20.0) and d["em"]["anchor_time"] == "10:00"
+    assert (gex["em_low"], gex["em_high"]) == (7680.0, 7720.0)
+
+
+@pytest.mark.asyncio
+async def test_without_any_iv_there_is_no_dealer_block_and_the_flip_is_cumulative(app_state):
+    st = _state(app_state, OptionData(7690, "P", gamma=0.01, open_interest=100, bid=1.0, ask=1.2))
+    sink = Sink()
+    await publish_chain(st, sink, now_mono=0.0)
+    assert sink.msgs[0]["data"]["dealer"] is None
+    assert sink.msgs[0]["data"]["gamma_flip_method"] == "cumulative"
+
+
+@pytest.mark.asyncio
+async def test_the_level_history_records_the_em_band_and_the_nearest_pins(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st = _state(app_state, *_chain())
+    await publish_chain(st, Sink(), now_mono=0.0)
+    point = st.level_history.points()[-1]
+    assert {"em_high", "em_low", "node_r1", "node_s1"} <= set(point)
+    assert point["em_high"] == 7720.0 and point["em_low"] == 7680.0
+
+
+@pytest.mark.asyncio
+async def test_the_dealer_block_stays_compact(app_state, monkeypatch):      # sent to every browser every 10 s
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st = _state(app_state, *_chain_200_strikes())
+    await publish_chain(st, Sink(), now_mono=0.0)
+    assert st.latest_dealer is not None
+    assert len(json.dumps(st.latest_dealer)) < 6000
+
+
+@pytest.mark.asyncio
+async def test_a_failing_dealer_build_still_publishes_the_gex_with_the_cumulative_flip(
+        app_state, monkeypatch, caplog):
+    def boom(*args, **kwargs):
+        raise RuntimeError("invented profile failure")
+
+    monkeypatch.setattr(pub, "build_dealer", boom)
+    st, sink = _state(app_state, *_chain()), Sink()
+    assert await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    assert gex["dealer"] is None and gex["gamma_flip_method"] == "cumulative"
+    assert any(m["type"] == "chain_quotes" for m in sink.msgs)
+    assert st.latest_dealer is None
+    assert "Dealer profile failed" in caplog.text
+
+
+def _flow_row(volume, last):
+    return OptionData(7710, "C", volume=volume, bid=1.0, ask=1.2, last=last, delta=0.3)
+
+
+@pytest.mark.asyncio
+async def test_publish_carries_flow_on_the_bars_and_in_the_dealer_block(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    chain = _chain()
+    next(o for o in chain if (o.strike, o.right) == (7710, "C")).volume = 110    # the book's day volume
+    st, sink = _state(app_state, *chain), Sink()
+    keys = {(7710.0, "C")}
+    st.flow_tracker.update([_flow_row(100, 1.1)], keys, 7700.0, datetime(2026, 10, 5, 9, 59, tzinfo=ET), "20261005")
+    st.flow_tracker.update([_flow_row(110, 1.2)], keys, 7700.0, datetime(2026, 10, 5, 10, 0, tzinfo=ET), "20261005")
+    await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    bar = next(b for b in gex["gex_bars"] if b["strike"] == 7710.0)
+    assert (bar["call_buy"], bar["call_sell"]) == (10, 0)
+    assert bar["call_net_delta_usd"] == 2310000 and bar["flow_gex"] < 0
+    assert bar["vol_oi"] == 0.11 and bar["hot"] is False              # 110 traded against 1000 open, under HOT_MIN_VOL
+    flow = gex["dealer"]["flow"]
+    assert {"coverage_start", "coverage", "hedge_pressure_15m_usd", "hedge_pressure_30m_usd",
+            "hedge_pressure_day_usd", "call_delta_day_usd", "put_delta_day_usd", "classified_pct",
+            "minute"} <= set(flow)
+    assert flow["call_delta_day_usd"] == 2310000 and flow["minute"]["time"] == "2026-10-05T10:00"
+
+
+@pytest.mark.asyncio
+async def test_without_any_flow_the_dealer_block_has_an_empty_flow_summary(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+    await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    flow = gex["dealer"]["flow"]
+    assert flow["minute"]["time"] is None and flow["coverage_start"] is None
+    assert flow["hedge_pressure_day_usd"] == 0
+    assert not any("call_buy" in b or "vol_oi" in b for b in gex["gex_bars"])
+
+
+@pytest.mark.asyncio
+async def test_a_failing_flow_block_still_publishes_the_gex(app_state, monkeypatch, caplog):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("invented flow failure")
+
+    monkeypatch.setattr(pub, "flow_gex_by_strike", boom)
+    st, sink = _state(app_state, *_chain()), Sink()
+    assert await publish_chain(st, sink, now_mono=0.0)
+    assert any(m["type"] == "gex" for m in sink.msgs) and any(m["type"] == "chain_quotes" for m in sink.msgs)
+    assert "Flow outputs failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_flow_blend_model_is_reported_in_the_dealer_block(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+    st.dealer_model = "flow_blend"
+    await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    assert gex["dealer"]["model"] == "flow_blend"
+
+
+@pytest.mark.asyncio
+async def test_flow_blend_with_no_flow_uses_the_oi_positions(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    oi_st, oi_sink = _state(app_state, *_chain()), Sink()
+    await publish_chain(oi_st, oi_sink, now_mono=0.0)
+    blend_st, blend_sink = _state(app_state, *_chain()), Sink()
+    blend_st.dealer_model = "flow_blend"
+    await publish_chain(blend_st, blend_sink, now_mono=0.0)
+    oi = next(m for m in oi_sink.msgs if m["type"] == "gex")["data"]["dealer"]
+    blend = next(m for m in blend_sink.msgs if m["type"] == "gex")["data"]["dealer"]
+    assert blend["model"] == "flow_blend" and oi["model"] == "oi_assumed"
+    assert blend["zero_gamma"] == oi["zero_gamma"] and blend["profile"] == oi["profile"]
+
+
+@pytest.mark.asyncio
+async def test_flow_blend_positions_net_out_the_customer_volume(app_state, monkeypatch):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    seen = {}
+    real_build = pub.build_dealer
+
+    def spy(result, options, pos, *args, **kwargs):
+        seen["pos"] = pos
+        return real_build(result, options, pos, *args, **kwargs)
+
+    monkeypatch.setattr(pub, "build_dealer", spy)
+    chain = _chain()
+    next(o for o in chain if (o.strike, o.right) == (7710, "C")).volume = 110
+    st, sink = _state(app_state, *chain), Sink()
+    st.dealer_model = "flow_blend"
+    keys = {(7710.0, "C")}
+    st.flow_tracker.update([_flow_row(100, 1.1)], keys, 7700.0, datetime(2026, 10, 5, 9, 59, tzinfo=ET), "20261005")
+    st.flow_tracker.update([_flow_row(110, 1.2)], keys, 7700.0, datetime(2026, 10, 5, 10, 0, tzinfo=ET), "20261005")
+    await publish_chain(st, sink, now_mono=0.0)
+    assert seen["pos"].model == "flow_blend"
+    assert seen["pos"].calls[7710.0] == 1000 - 10       # OI 1000 less the 10 contracts customers bought
+
+
+@pytest.mark.asyncio
+async def test_a_failing_flow_blend_keeps_the_oi_positions_and_still_publishes(app_state, monkeypatch, caplog):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("invented flow-blend failure")
+
+    monkeypatch.setattr(pub, "positions_flow_blend", boom)
+    st, sink = _state(app_state, *_chain()), Sink()
+    st.dealer_model = "flow_blend"
+    assert await publish_chain(st, sink, now_mono=0.0)
+    gex = next(m for m in sink.msgs if m["type"] == "gex")["data"]
+    assert any(m["type"] == "chain_quotes" for m in sink.msgs)
+    assert gex["dealer"] is not None and gex["dealer"]["model"] == "oi_assumed"
+    assert "Flow-blend positions failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_publish_broadcasts_publish_time_signals(app_state, monkeypatch):    # after the gex message
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+    rec = {"time": "2026-10-05T10:00", "type": "vanna_shift", "side": "bull", "price": 7700.0, "text": "V+", "detail": {}}
+    seen = []
+
+    def on_publish(expiration, now, dealer, price):
+        seen.append((expiration, dealer is not None, price))
+        return [rec]
+
+    monkeypatch.setattr(st.signal_tracker, "on_publish", on_publish)
+    await publish_chain(st, sink, now_mono=0.0)
+    assert [m["type"] for m in sink.msgs] == ["gex", "signal", "chain_quotes"]
+    assert sink.msgs[1]["data"] == rec
+    assert seen == [("20261005", True, 7700.0)]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_signal_tracker_still_publishes_the_gex(app_state, monkeypatch, caplog):
+    monkeypatch.setattr(pub, "now_et", lambda: datetime(2026, 10, 5, 10, 0, tzinfo=ET))
+    st, sink = _state(app_state, *_chain()), Sink()
+
+    def boom(*a, **k):
+        raise RuntimeError("signal bug")
+
+    monkeypatch.setattr(st.signal_tracker, "on_publish", boom)
+    assert await publish_chain(st, sink, now_mono=0.0)
+    assert [m["type"] for m in sink.msgs] == ["gex", "chain_quotes"]
+    assert "signal" in caplog.text.lower()

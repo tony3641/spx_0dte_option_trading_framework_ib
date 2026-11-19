@@ -4,9 +4,11 @@ from spx_trade_desk.market.level_history import LevelHistory
 from spx_trade_desk.market.price_bars import snapshot_payload
 
 
-def _gex(stamp, call_wall=110.0, put_wall=90.0, gamma_flip=100.123, max_pain=None, expiration="20990105"):
+def _gex(stamp, call_wall=110.0, put_wall=90.0, gamma_flip=100.123, max_pain=None, expiration="20990105",
+         em_high=None, em_low=None, node_r1=None, node_s1=None):
     return {"timestamp": f"2099-01-05T{stamp}-05:00", "expiration": expiration, "call_wall": call_wall,
-            "put_wall": put_wall, "gamma_flip": gamma_flip, "max_pain": max_pain}
+            "put_wall": put_wall, "gamma_flip": gamma_flip, "max_pain": max_pain,
+            "em_high": em_high, "em_low": em_low, "node_r1": node_r1, "node_s1": node_s1}
 
 
 def test_only_a_change_adds_a_point_and_levels_are_rounded_to_cents():
@@ -16,8 +18,10 @@ def test_only_a_change_adds_a_point_and_levels_are_rounded_to_cents():
     assert h.record(_gex("09:40:00")) is False
     assert h.record(_gex("09:45:00", call_wall=115.0)) is True
     assert h.points() == [
-        {"time": "2099-01-05T09:31", "call_wall": 110.0, "put_wall": 90.0, "gamma_flip": 100.12, "max_pain": None},
-        {"time": "2099-01-05T09:45", "call_wall": 115.0, "put_wall": 90.0, "gamma_flip": 100.12, "max_pain": None},
+        {"time": "2099-01-05T09:31", "call_wall": 110.0, "put_wall": 90.0, "gamma_flip": 100.12, "max_pain": None,
+         "em_high": None, "em_low": None, "node_r1": None, "node_s1": None},
+        {"time": "2099-01-05T09:45", "call_wall": 115.0, "put_wall": 90.0, "gamma_flip": 100.12, "max_pain": None,
+         "em_high": None, "em_low": None, "node_r1": None, "node_s1": None},
     ]
 
 
@@ -58,3 +62,11 @@ def test_the_price_snapshot_carries_the_history():
     st.level_history.record(_gex("09:45:00", call_wall=115.0))
     snap = snapshot_payload(st, rth=True, today="2099-01-05")
     assert [p["call_wall"] for p in snap["levels"]] == [110.0, 115.0]
+
+
+def test_an_em_band_change_alone_adds_a_point():
+    h = LevelHistory()
+    h.record(_gex("09:31:10", em_high=110.0, em_low=90.0))
+    assert h.record(_gex("09:31:50", em_high=110.0, em_low=90.0)) is False
+    assert h.record(_gex("09:40:00", em_high=111.0, em_low=90.0)) is True
+    assert [p["em_high"] for p in h.points()] == [110.0, 111.0]

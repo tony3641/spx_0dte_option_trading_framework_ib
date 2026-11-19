@@ -15,7 +15,7 @@ FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFra
 IDLE = "() => _renderJobs.size === 0 && _heavyJobs.size === 0"
 
 
-def _gex(spot=6150, call_wall=6160, put_wall=6130):
+def _gex(spot=6150, call_wall=6160, put_wall=6130, dealer=None):
     strikes = [6100 + 5 * i for i in range(20)]
     bars = []
     for s in strikes:
@@ -24,7 +24,31 @@ def _gex(spot=6150, call_wall=6160, put_wall=6130):
     return {"gex_bars": bars, "call_wall": call_wall, "put_wall": put_wall, "gamma_flip": None, "max_pain": 6140,
             "spot_price": spot, "expiration": "20990105", "timestamp": "", "total_call_gex": 3e7, "total_put_gex": -2e7,
             "total_net_gex": 1e7, "total_call_oi": 200, "total_put_oi": 400, "total_call_vol": 20, "total_put_vol": 40,
-            "smile_data": [], "es_derived": False}
+            "smile_data": [], "es_derived": False, **({"dealer": dealer} if dealer is not None else {})}
+
+
+# The dealer block as the server sends it (invented values): profile 6100 + 2.5 x i with zero at 6150,
+# a pin node R1 at 6160, an accel node S1 at 6130, a void 6170-6180, and the open band 6138-6162.
+DEALER = {
+    "model": "oi_assumed", "regime": "long_gamma", "gamma_at_spot": 200000000, "zero_gamma": 6150.0,
+    "zero_gamma_all": [6150.0], "zero_gamma_distance": 0.0,
+    "profile": {"from": 6100.0, "step": 2.5, "values": [(i - 20) * 2000000 for i in range(41)],
+                "hedge": [(i - 20) * 500000 for i in range(41)]},
+    "nodes": [
+        {"label": "R1", "strike": 6160.0, "kind": "pin", "gex": 5000000, "side": "above", "hedge_usd": 2000000, "rank": 1},
+        {"label": "S1", "strike": 6130.0, "kind": "accel", "gex": -4000000, "side": "below", "hedge_usd": -1500000, "rank": 1},
+    ],
+    "voids": [{"lo": 6170.0, "hi": 6180.0}],
+    "em": {"live": 8.0, "open": 12.0, "open_spot": 6150.0, "high": 6162.0, "low": 6138.0, "used_pct": 40.0,
+           "anchor_time": "09:31"},
+    "charm": {"flow_15m_usd": 1000000, "to_close_usd": 5000000, "path": [], "pivot": 6150.0},
+    "vanna": {"usd_per_vol_down": -3000000, "atm_iv": 14.2, "iv_change_15m": 0.0, "iv_change_30m": 0.0,
+              "flow_est_usd": 0},
+}
+
+
+def _inject_gex(pg, **kw):
+    pg.evaluate("m => window.__benchInject(m)", {"type": "gex", "data": _gex(**kw)})
 
 
 def _snapshot(lo=6095, hi=6200):
@@ -87,6 +111,7 @@ def test_zoom_range_keeps_the_anchor_fixed_and_respects_the_limits(page):
     assert out["in_"] == {"from": 125, "to": 175}
     assert out["anchored"] == {"from": 110, "to": 160}                     # 120 stays at 20% of the range
     assert out["out"] == {"from": 50, "to": 250}
+    assert out["offscreen"] == {"from": 125, "to": 175}                    # an anchor outside the range: the middle
     assert out["tooClose"]["to"] - out["tooClose"]["from"] == pytest.approx(4)
     assert out["tooFar"]["to"] - out["tooFar"]["from"] == pytest.approx(300)
 
@@ -102,7 +127,6 @@ def test_zoom_range_never_moves_the_wrong_way_when_already_past_a_limit(page):
     assert out["wideIn"]["to"] - out["wideIn"]["from"] == pytest.approx(200)
     assert out["narrowIn"] == {"from": 100, "to": 102}                     # zoom in on a too-narrow range: unchanged
     assert out["narrowOut"]["to"] - out["narrowOut"]["from"] == pytest.approx(4)   # zoom out reaches the minimum
-    assert out["offscreen"] == {"from": 125, "to": 175}                    # an anchor outside the range: the middle
 
 
 def test_pan_range_follows_the_pointer_and_levels_range_covers_what_it_is_given(page):
@@ -119,6 +143,21 @@ def test_pan_range_follows_the_pointer_and_levels_range_covers_what_it_is_given(
     lv = out["levels"]
     assert lv["from"] < 6090 and lv["to"] > 6210 and lv["to"] - lv["from"] < 160
     assert out["none"] is None
+
+
+def test_levels_range_ignores_the_levels_that_stay_off_the_profile(page):
+    out = page.evaluate("""() => ({
+        base: gexLevelsRange({call_wall: 6200, put_wall: 6100, gamma_flip: null, max_pain: 6150}, 6140, []),
+        withOff: gexLevelsRange({call_wall: 6200, put_wall: 6100, gamma_flip: null, max_pain: 6150,
+                                 em_high: 9999, em_low: 1, node_r1: 9999, node_s1: 1}, 6140, []),
+    })""")
+    assert out["withOff"] == out["base"]
+
+
+def test_curve_helpers_map_values_and_interpolate(page):
+    out = page.evaluate("() => ({xy: gexCurveXY([-2, 0, 4], 100, 2.5, 4, 50, 40), mid: gexInterp(100, 2.5, [0, 10, 20], 101.25), off: gexInterp(100, 2.5, [0, 10], 90)})")
+    assert out["xy"] == [{"p": 100, "x": 30}, {"p": 102.5, "x": 50}, {"p": 105, "x": 90}]
+    assert out["mid"] == 5 and out["off"] is None
 
 
 def test_bands_run_halfway_to_each_neighbour(page):
@@ -289,3 +328,162 @@ def test_strikes_outside_the_visible_range_are_not_drawn(page):
     _settle(page)
     rows = page.evaluate("() => gexProfile.rows.map(r => r.strike)")
     assert rows and min(rows) >= 6145 and max(rows) <= 6195 and len(rows) < 20
+
+
+# --- dealer overlays: curve, nodes, voids, expected-move brackets, summary rows -------------------
+
+def test_dealer_overlays_are_painted_and_the_curve_toggle_is_remembered(page):
+    _inject_gex(page, dealer=DEALER)
+    _settle(page)
+    c = page.evaluate("() => [gexProfile.curveDrawn > 0, gexProfile.nodesDrawn, gexProfile.voidsDrawn, gexProfile.emDrawn]")
+    assert c == [True, 2, 1, 2]
+    page.click("#gexCurveToggle")
+    _settle(page)
+    assert page.evaluate("() => [gexProfile.curveDrawn, localStorage.getItem('spx-gex-curve')]") == [0, "0"]
+    assert page.evaluate("() => document.getElementById('gexCurveToggle').classList.contains('active')") is False
+    page.click("#gexCurveToggle")
+    _settle(page)
+    assert page.evaluate("() => gexProfile.curveDrawn > 0") and page.evaluate("() => localStorage.getItem('spx-gex-curve')") == "1"
+
+
+def test_the_summary_shows_regime_zero_gamma_distance_em_used_charm_and_vanna(page):
+    dealer = dict(DEALER, gamma_at_spot=200000000, zero_gamma_distance=-4.5,
+                  em=dict(DEALER["em"], used_pct=62), charm=dict(DEALER["charm"], to_close_usd=12000000),
+                  vanna=dict(DEALER["vanna"], usd_per_vol_down=-3000000))
+    _inject_gex(page, dealer=dealer)
+    _settle(page)
+    assert page.inner_text("#gexSumGamma").startswith("Long γ")
+    assert page.inner_text("#gexSumZgDist") == "-4.5"
+    assert page.inner_text("#gexSumEmUsed") == "62%" and page.inner_text("#gexSumCharm") == "+$12.0M"
+    assert page.inner_text("#gexSumVanna") == "-$3.0M"
+
+
+def test_hovering_a_node_strike_lists_the_node_and_the_hedge_to_there(page):
+    _inject_gex(page, dealer=DEALER)
+    _settle(page)
+    page.evaluate("""() => {
+        const cv = gexProfile.canvas, rect = cv.getBoundingClientRect();
+        const row = gexProfile.rows.find(r => r.strike === 6160);
+        cv.dispatchEvent(new PointerEvent('pointermove', {clientX: rect.left + 100, clientY: rect.top + row.y, pointerId: 4, bubbles: true}));
+    }""")
+    text = page.evaluate("() => document.getElementById('gexProfileTip').textContent")
+    assert "Node" in text and "R1 pin" in text and "Hedge $ to here" in text
+
+
+def test_monthly_mode_draws_no_dealer_overlays(page):
+    _inject_gex(page, dealer=DEALER)
+    page.evaluate("m => window.__benchInject(m)", {"type": "monthly_gex", "data": _gex()})
+    try:
+        page.evaluate("() => setGexMode('monthly')")
+        _settle(page)
+        assert page.evaluate("() => [gexProfile.curveDrawn, gexProfile.nodesDrawn, gexProfile.voidsDrawn, gexProfile.emDrawn]") == [0, 0, 0, 0]
+    finally:
+        _restore_0dte(page)
+
+
+# --- customer flow: the Flow view, flow GEX ticks, hot strikes ----------------------------------------
+
+# The streamed strikes (inside the coverage 6130..6170) and the flow block the server sends with them.
+STREAMED = [6130, 6135, 6140, 6145, 6150, 6155, 6160, 6165, 6170]
+FLOW_DEALER = dict(DEALER, flow={
+    "coverage_start": "09:31", "coverage": {"lo": 6130, "hi": 6170},
+    "hedge_pressure_15m_usd": 1000000, "hedge_pressure_30m_usd": 1500000, "hedge_pressure_day_usd": 2000000,
+    "call_delta_day_usd": 1200000, "put_delta_day_usd": 800000, "classified_pct": 80.0,
+    "minute": {"time": f"{S}T10:00", "call_delta_usd": 900000, "put_delta_usd": 600000,
+               "hedge_pressure_usd": 1500000}})
+
+
+def _flow_gex(dealer=FLOW_DEALER):
+    """The 0DTE payload with flow keys on the streamed strikes, flow GEX on four of them and one hot strike."""
+    g = _gex(dealer=dealer)
+    for b in g["gex_bars"]:
+        s = b["strike"]
+        if s in STREAMED:
+            left = (s // 5) % 2 == 0                     # customers net bought calls on half of them, net sold on the rest
+            b.update(call_buy=30 if left else 10, call_sell=10 if left else 30, put_buy=5, put_sell=25,
+                     call_net_delta_usd=2000000 if left else -1000000, put_net_delta_usd=-1000000)
+        if s == 6100:                                    # outside the coverage: keys but no bar
+            b.update(call_buy=5, call_sell=0, call_net_delta_usd=900000, put_buy=0, put_sell=0, put_net_delta_usd=0)
+        if s in (6130, 6140, 6150, 6160):
+            b["flow_gex"] = 4e6 if s in (6130, 6150) else -3e6
+        if s == 6170:
+            b["flow_gex"] = 0.0                          # a streamed strike with no flow gamma: no tick
+        if s == 6140:
+            b.update(hot=True, vol_oi=2.5, vol_15m=0)    # hot and stale: outlined
+        if s == 6160:
+            b.update(hot=True, vol_oi=0.5, vol_15m=50)   # hot and fresh: a filled dot
+    return g
+
+
+def _inject_data(pg, msg_type, data):
+    pg.evaluate("m => window.__benchInject(m)", {"type": msg_type, "data": data})
+
+
+def _restore_0dte(pg):
+    pg.evaluate("() => setGexMode('0dte')")
+    _settle(pg)
+
+
+def test_the_flow_view_draws_customer_delta_bars_inside_coverage_and_is_remembered(page):
+    _inject_data(page, "gex", _flow_gex())
+    _settle(page)
+    page.click("#gexViewToggle [data-view=flow]")
+    _settle(page)
+    assert page.evaluate("() => gexProfile.view") == "flow"
+    assert page.evaluate("() => localStorage.getItem('spx-gex-profile-view')") == "flow"
+    assert page.evaluate("() => gexProfile.caption") == "PUT Δ$ | CALL Δ$"
+    # a call and a put bar for each of the nine streamed strikes inside coverage; the strike outside has none
+    assert page.evaluate("() => gexProfile.flowBarsDrawn") == 2 * len(STREAMED)
+    page.reload()
+    page.wait_for_function("() => typeof state !== 'undefined' && state.gexProfileReady === true", timeout=15000)
+    assert page.evaluate("() => gexProfile.view") == "flow"
+    assert page.evaluate("() => document.querySelector('#gexViewToggle [data-view=flow]').classList.contains('active')")
+
+
+def test_split_and_net_views_draw_a_flow_gex_tick_per_streamed_strike(page):
+    _inject_data(page, "gex", _flow_gex())
+    _settle(page)
+    assert page.evaluate("() => gexProfile.flowTicksDrawn") == 4          # four strikes carry flow GEX
+    page.click("#gexViewToggle [data-view=net]")
+    _settle(page)
+    assert page.evaluate("() => gexProfile.flowTicksDrawn") == 4
+    page.click("#gexViewToggle [data-view=flow]")                         # the Flow view has no ticks
+    _settle(page)
+    assert page.evaluate("() => gexProfile.flowTicksDrawn") == 0
+    page.click("#gexViewToggle [data-view=split]")
+    _settle(page)
+    page.click("#gexTickToggle")                                          # the Ticks switch hides them and is remembered
+    _settle(page)
+    assert page.evaluate("() => [gexProfile.flowTicksDrawn, localStorage.getItem('spx-gex-flow-ticks')]") == [0, "0"]
+    page.click("#gexTickToggle")
+    _settle(page)
+    assert page.evaluate("() => gexProfile.flowTicksDrawn") == 4
+
+
+def test_hot_strikes_get_a_gutter_dot(page):
+    _inject_data(page, "gex", _flow_gex())
+    _settle(page)
+    assert page.evaluate("() => gexProfile.hotDrawn") == 2                # the two hot strikes on screen
+    page.click("#gexHotToggle")
+    _settle(page)
+    assert page.evaluate("() => [gexProfile.hotDrawn, localStorage.getItem('spx-gex-hot')]") == [0, "0"]
+    page.click("#gexHotToggle")
+    _settle(page)
+    assert page.evaluate("() => gexProfile.hotDrawn") == 2
+
+
+def test_monthly_mode_hides_flow_elements(page):
+    # Monthly data with flow keys on it still shows no flow: the mode, not the data, decides.
+    _inject_data(page, "gex", _flow_gex())
+    _inject_data(page, "monthly_gex", _flow_gex(dealer=None))
+    try:
+        page.evaluate("() => setGexMode('monthly')")
+        page.click("#gexViewToggle [data-view=flow]")
+        _settle(page)
+        assert page.evaluate("() => [gexProfile.flowBarsDrawn, gexProfile.flowTicksDrawn, gexProfile.hotDrawn]") == [0, 0, 0]
+        flow_as_split = page.evaluate("() => gexProfile.drawn")
+        page.click("#gexViewToggle [data-view=split]")
+        _settle(page)
+        assert page.evaluate("() => gexProfile.drawn") == flow_as_split   # the Flow view draws Split in monthly mode
+    finally:
+        _restore_0dte(page)

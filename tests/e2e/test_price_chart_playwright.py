@@ -198,6 +198,34 @@ def test_level_change_moves_the_line_and_a_new_bar_extends_it(page):
     assert page.evaluate("() => priceChart.levelRows.length") == 1         # a new expiration starts a new history
 
 
+def test_zero_gamma_em_and_pin_lines_draw_from_the_level_history(page):
+    snap = {"session_date": S, "mode": "live", "bars": [_bar("09:30", 100), _bar("09:31", 101)], "overnight": [],
+            "levels": [{**_level_row("09:30", 110, 90, 100, None), "em_high": 104, "em_low": 96,
+                        "node_r1": 106, "node_s1": 94}]}
+    _inject(page, "price_snapshot", snap)
+    page.evaluate(FRAMES)
+    assert {"gamma_flip", "em_high", "em_low", "node_r1", "node_s1"} <= set(_drawn_levels(page))
+    titles = page.evaluate("() => Object.fromEntries(Object.entries(priceChart.levelSeries).map(([k, s]) => [k, s.options().title]))")
+    assert (titles["gamma_flip"], titles["em_high"], titles["em_low"], titles["node_r1"], titles["node_s1"]) == \
+        ("ZG", "EM+", "EM-", "R", "S")
+
+
+def test_the_strip_reads_the_dealer_regime_and_the_new_badges(page):
+    gex = {"call_wall": 110, "put_wall": 90, "gamma_flip": 100, "max_pain": None, "total_net_gex": -5e8,
+           "spot_price": 101, "expiration": "20990105", "timestamp": f"{S}T10:00:00-05:00",
+           "gamma_flip_cumulative": 97.5,
+           "dealer": {"regime": "long_gamma", "gamma_at_spot": 2e8,
+                      "em": {"open": 18.2, "high": 119.2, "low": 82.8, "live": 12.3, "anchor_time": "09:31"},
+                      "charm": {"to_close_usd": 12e6}, "vanna": {"usd_per_vol_down": -3e6}}}
+    _inject(page, "gex", gex)
+    page.evaluate(FRAMES)
+    assert "CONVERGING" in page.inner_text("#mmRegimeText")            # dealer regime wins over the negative net GEX
+    assert page.inner_text("#emBadge") == "±18"
+    assert page.inner_text("#charmCloseBadge") == "+$12.0M" and "badge-converging" in page.get_attribute("#charmCloseBadgeBox", "class")
+    assert page.inner_text("#vannaBadge") == "-$3.0M" and "badge-diverging" in page.get_attribute("#vannaBadgeBox", "class")
+    assert page.inner_text(".badge-gamma-flip .label") == "Zero Gamma" and "97.5" in page.get_attribute(".badge-gamma-flip", "title")
+
+
 def _charm_frame(hhmm, scale=1):
     strikes = [96, 98, 100, 102, 104]
     return {"time": f"{S}T{hhmm}", "strikes": strikes, "values": [-300 * scale, -100 * scale, 50 * scale, 200 * scale, 400 * scale]}
@@ -493,14 +521,69 @@ def test_rsi_uses_wilder_smoothing(page):
     assert page.evaluate("() => rsiValues([1, 1, 1, 1], 3)") == [None, None, None, 50]   # a flat market is 50
 
 
+# --- hedge-flow pane ---------------------------------------------------------------------------
+
+def _flow_minute(hhmm, call, put):
+    return {"time": f"{S}T{hhmm}", "call_delta_usd": call, "put_delta_usd": put,
+            "hedge_pressure_usd": call + put, "coverage_lo": 96, "coverage_hi": 104}
+
+
+def test_the_flow_pane_draws_the_snapshot_series_and_appends_the_published_minute(page):
+    bars = [_bar("09:30", 100), _bar("09:31", 101)]
+    flow = [_flow_minute("09:30", 500, -200), _flow_minute("09:31", -100, -400)]
+    _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": [], "flow": flow})
+    page.evaluate(FRAMES)
+    up, down = page.evaluate("() => [themeColors().up, themeColors().down]")
+    assert page.evaluate("() => priceChart.flowSeries.data().map(p => [p.value, p.color])") == [[300, up], [-500, down]]
+    assert page.evaluate("() => priceChart.flowCum.data().map(p => p.value)") == [300, -200]
+    # a published minute (later than the snapshot's last) is appended; the cumulative line ends at the day's sum
+    page.evaluate("g => updatePriceLevels(g)", {"timestamp": f"{S}T09:32:10-05:00", "expiration": "20990105",
+                                                "call_wall": 110, "put_wall": 90, "gamma_flip": 100, "max_pain": 105,
+                                                "dealer": {"flow": {"minute": _flow_minute("09:32", 700, 300)}}})
+    page.evaluate(FRAMES)
+    assert page.evaluate("() => priceChart.flowSeries.data().map(p => p.value)") == [300, -500, 1000]
+    cum = page.evaluate("() => priceChart.flowCum.data().map(p => p.value)")
+    assert cum == [300, -200, 800] and cum[-1] == 300 - 500 + 1000
+
+
+def test_the_flow_button_removes_and_restores_the_pane_and_is_remembered(page):
+    try:
+        assert page.evaluate("() => priceChart.chart.panes().length") == 3
+        page.click("#flowToggle")
+        assert page.evaluate("() => priceChart.chart.panes().length") == 2
+        assert page.evaluate("() => localStorage.getItem('spx-flow-pane')") == "0"
+        assert page.evaluate("() => document.getElementById('flowToggle').classList.contains('active')") is False
+        page.click("#flowToggle")
+        assert page.evaluate("() => priceChart.chart.panes().length") == 3
+        assert page.evaluate("() => localStorage.getItem('spx-flow-pane')") == "1"
+    finally:
+        page.evaluate("() => setFlowPane(true)")
+
+
+def test_the_flow_badge_shows_the_30_minute_hedge_pressure(page):
+    gex = {"call_wall": 110, "put_wall": 90, "gamma_flip": 100, "max_pain": 105, "total_net_gex": 1e8,
+           "spot_price": 101, "expiration": "20990105", "timestamp": f"{S}T10:00:00-05:00",
+           "dealer": {"regime": "long_gamma", "flow": {"hedge_pressure_15m_usd": 800000,
+                                                       "hedge_pressure_30m_usd": 1500000,
+                                                       "hedge_pressure_day_usd": 2000000,
+                                                       "minute": {"time": f"{S}T10:00", "call_delta_usd": 900000,
+                                                                  "put_delta_usd": 600000,
+                                                                  "hedge_pressure_usd": 1500000}}}}
+    _inject(page, "gex", gex)
+    page.evaluate(FRAMES)
+    assert page.inner_text("#flow30Badge") == "+$1.5M"
+    assert page.is_visible("#flow30BadgeBox") and "badge-converging" in page.get_attribute("#flow30BadgeBox", "class")
+    page.wait_for_function("() => document.getElementById('gexSumFlow30').textContent === '+$1.5M'", timeout=5000)
+
+
 def test_the_rsi_pane_follows_the_bars(page):
     bars = [_bar(f"10:{m:02d}", 100 + (m % 3)) for m in range(20)]
     _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": []})
     page.evaluate(FRAMES)
-    assert page.evaluate("() => priceChart.chart.panes().length") == 2
+    assert page.evaluate("() => priceChart.chart.panes().length") == 3      # price, RSI, hedge flow (on by default)
     share = page.evaluate("() => { const h = priceChart.chart.panes().map(p => p.getHeight());"
-                          " return h[1] / (h[0] + h[1]); }")
-    assert 0.2 <= share <= 0.3                                              # a readable strip, not a sliver
+                          " return h[1] / (h[0] + h[1] + h[2]); }")
+    assert 0.15 <= share <= 0.25                                            # a readable strip, not a sliver
     assert page.evaluate("() => priceChart.rsi.data().length") == 6            # 20 bars, the first 14 warm up
     assert page.evaluate("() => priceChart.rsi.data()[0].time") == _utc_seconds(2099, 1, 5, 10, 14)
     assert sorted(page.evaluate("() => priceChart.rsiGuides.map(l => l.options().price)")) == [30, 70]
@@ -512,3 +595,74 @@ def test_the_rsi_pane_follows_the_bars(page):
     _inject(page, "price_bar", {"session_date": S, "bar": _bar("10:20", 139)})
     page.evaluate(FRAMES)
     assert page.evaluate("() => priceChart.rsi.data().length") == 7
+
+
+# --- signal markers ----------------------------------------------------------------------------
+
+def _signal(hhmm, type_, side, text, price=101.0):
+    return {"time": f"{S}T{hhmm}", "type": type_, "side": side, "price": price, "text": text, "detail": {}}
+
+
+def test_signal_markers_snap_to_bars_and_follow_the_signals_button(page):
+    try:
+        assert page.evaluate("() => localStorage.getItem('spx-signal-markers')") is None     # off by default
+        bars = [_bar("09:30", 100), _bar("09:32", 101), _bar("09:34", 102)]
+        sigs = [_signal("09:33", "zg_cross", "bull", "ZG up"), _signal("09:29", "em_touch", "neutral", "EM+")]
+        _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": [],
+                                         "signals": sigs})
+        page.evaluate(FRAMES)
+        assert page.evaluate("() => priceChart.signalMarkers.markers().length") == 0
+        assert page.evaluate("() => priceChart.signals.length") == 2                  # kept while the markers are off
+        page.click("#signalToggle")
+        assert page.evaluate("() => localStorage.getItem('spx-signal-markers')") == "1"
+        assert page.evaluate("() => document.getElementById('signalToggle').classList.contains('active')") is True
+        markers = page.evaluate("() => priceChart.signalMarkers.markers().map(m => [m.time, m.text])")
+        assert markers == [[_utc_seconds(2099, 1, 5, 9, 32), "ZG up"]]     # 09:33 snaps to the 09:32 bar; 09:29 has none
+        pure = page.evaluate("""() => signalMarkerList(priceChart.signals,
+            Array.from(priceChart.bars.keys()).sort((a, b) => a - b)).map(m => [m.time, m.text])""")
+        assert pure == markers
+        page.click("#signalToggle")
+        assert page.evaluate("() => priceChart.signalMarkers.markers().length") == 0
+        assert page.evaluate("() => localStorage.getItem('spx-signal-markers')") == "0"
+    finally:
+        page.evaluate("() => setSignalMarkers(false)")
+
+
+def test_a_live_signal_message_adds_a_marker_while_the_markers_are_on(page):
+    try:
+        _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": [_bar("09:30", 100), _bar("09:31", 101)],
+                                         "overnight": []})
+        page.evaluate("() => setSignalMarkers(true)")
+        page.evaluate(FRAMES)
+        assert page.evaluate("() => priceChart.signalMarkers.markers().length") == 0
+        _inject(page, "signal", _signal("09:31", "node_hold", "bull", "S1", 101.0))
+        page.evaluate(FRAMES)
+        assert page.evaluate("() => priceChart.signalMarkers.markers().map(m => [m.text, m.shape, m.position])") == [
+            ["S1", "arrowUp", "belowBar"]]
+        assert page.evaluate("() => priceChart.signals.map(s => s.text)") == ["S1"]
+    finally:
+        page.evaluate("() => setSignalMarkers(false)")
+
+
+# --- carry-over A: a failing flow pane keeps the candles and RSI ---------------------------------
+
+def test_a_failing_flow_pane_keeps_the_candles_and_the_rsi(page):
+    try:
+        bars = [_bar(f"10:{m:02d}", 100 + (m % 3)) for m in range(20)]
+        _inject(page, "price_snapshot", {"session_date": S, "mode": "live", "bars": bars, "overnight": [],
+                                         "flow": [_flow_minute("10:00", 500, -200)]})
+        page.evaluate(FRAMES)
+        page.evaluate("() => setFlowPane(false)")
+        page.evaluate("() => { priceChart.chart.addSeries = () => { throw new Error('flow pane test'); }; }")
+        page.evaluate("() => setFlowPane(true)")                 # must not throw out of the toggle
+        assert page.evaluate("() => [priceChart.flowOn, priceChart.flowSeries, priceChart.chart.panes().length]") == [
+            False, None, 2]
+        assert page.evaluate("() => document.getElementById('flowToggle').classList.contains('active')") is False
+        assert page.evaluate("() => priceChart.candles.data().length") == 20
+        assert page.evaluate("() => priceChart.rsi.data().length") == 6
+        page.evaluate("() => { delete priceChart.chart.addSeries; }")
+        page.evaluate("() => setFlowPane(true)")
+        assert page.evaluate("() => [priceChart.flowOn, priceChart.flowSeries !== null, priceChart.chart.panes().length]") == [
+            True, True, 3]
+    finally:
+        page.evaluate("() => { delete priceChart.chart.addSeries; setFlowPane(true); }")

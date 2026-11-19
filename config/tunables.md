@@ -27,6 +27,7 @@ Source: spx_trade_desk/core/config.py
 - VIEWPORT_CENTER_MIN_INTERVAL = 0.2
 - PUSH_ORDERED_BACKLOG_MAX = 1000, minimum 10 (a lower value is raised to 10) (unsent critical messages, such as order status, one browser may queue before it is dropped and reconnects to a fresh init; raise it only if a slow but healthy client gets dropped during order bursts)
 - PUSH_SEND_TIMEOUT_S = 5.0, minimum 0.5 (a lower value is raised to 0.5) (one WebSocket send slower than this drops that browser only; raise it for clients on a slow remote link, lower it to shed a stuck tab sooner)
+- DEALER_POSITION_MODEL = "oi_assumed" (`oi_assumed`: dealers long calls and short puts at the open interest; `flow_blend`: open interest less today's net customer volume per strike; set in the gear menu or `.env`, not `params.yaml`; an unknown value falls back to `oi_assumed`; keep `oi_assumed` until the flow tracker has a few days of data)
 
 ## 2) Backend hardcoded tunables (not env-wired today)
 
@@ -146,6 +147,70 @@ Source: spx_trade_desk/core/config.py
 - keepalive error sleep: 0.5 s
 - websocket receive timeout: 30 s
 
+### Dealer gamma profile (Phase 1): market/dealer_model.py, levels.py, atm.py, dealer_flows.py, dealer_payload.py
+- dealer_model.MULTIPLIER = 100.0 (contract multiplier of the dealer share-equivalent delta)
+- dealer_model.IV_FLOOR = 1e-4 (lowest implied vol the greeks use, so a zero IV cannot divide by zero)
+- levels.ZERO_GAMMA_BAND = 0.05 (zero gamma is searched on spot +/- 5%; this is the search range, not the sent curve)
+- levels.PROFILE_BAND = 0.02 (the curve sent to the browser: spot +/- 2%; also the node band when no straddle exists)
+- levels.PROFILE_STEP = 1.0 (search grid step, index points)
+- levels.PROFILE_SEND_STEP = 2.5 (sent profile values and hedge step, index points)
+- levels.NODES_PER_SIDE = 3 (nodes kept above and below spot: R1..R3, S1..S3)
+- levels.NODE_RANGE_EM = 2.0 (node band: spot +/- 2.0 x the live expected move)
+- levels.NODE_MIN_PROMINENCE = 0.15 (a node's prominence must reach 15% of the band's largest |GEX|)
+- levels.VOID_FRAC = 0.10 (a void strike has |GEX| under 10% of the band's largest)
+- levels.VOID_MIN_STRIKES = 2 (a void is at least this many consecutive quiet strikes)
+- atm.EM_MAX_GAP = 10.0 points (a straddle or ATM IV bracket wider than this gives no value)
+- atm.EM_ANCHOR_TIME = 09:31 ET (the open band anchors at the first eligible publish at or after this time)
+- atm.SESSION_CLOSE = 16:00 ET (no anchor at or after the close; GTH publishes for another expiration never anchor)
+- dealer_flows.VOL_POINT = 0.01 (one vol point, absolute IV, for vanna)
+- dealer_flows.YEAR_MINUTES = 390 x 252 (trading minutes per year, the GEX time unit)
+- dealer_flows.T_END_YEARS = 1 / YEAR_MINUTES (the charm-to-close end: one minute before the close)
+- dealer_flows.CLOSE_HOUR = 16 (the close used by the charm path, ET)
+- dealer_flows charm path marks: every :00 and :30 ET before the close, plus the final minute before the close
+- dealer_payload IV change windows: 15 and 30 minutes (`iv_change_15m`, `iv_change_30m`); the ATM IV history is kept per minute and reset on each expiration
+- charm_history.DT15_YEARS = 15 / (390 x 252) (existing; the 15-minute charm step that charm_flow_15m_usd uses)
+- dealer_payload rounding: prices 2 decimals, USD whole dollars (int), profile values and hedge int, ATM IV in vol points at 2 decimals (not configurable)
+
+### Intraday flow (Phase 2): market/flow.py, chain_manager.py, chain_recorder.py
+- flow.HOT_VOL_OI = 1.0 (a strike is hot when call + put volume over open interest reaches this)
+- flow.HOT_MIN_VOL = 500 (a hot strike also needs at least this much call + put volume)
+- flow.HOT_TOP_N = 8 (a hot strike is among the N strikes with the most volume, ranked over all strikes)
+- flow.HOT_FRESH_MIN = 15 (minutes over which `vol_15m` counts the volume added)
+- flow.VOLUME_HISTORY_MINUTES = 120 (per-minute volume snapshots kept for `vol_15m`)
+- flow.FlowTracker maxlen = 1440 (minute records kept per expiration, one per ET minute)
+- chain_manager.FLOW_LOG_INTERVAL_S = 60.0 (the "Flow tracking failed" log is rate-limited to this)
+- no new settings in this phase; the browser switches of the flow UI are listed under static/js below
+
+### Signals (Phase 3): market/signals.py, price_bars.py, chain_publisher.py
+- signals.SIGNAL_COOLDOWN_MIN = 5 (minutes before the same (type, text) signal can repeat)
+- signals.NODE_TOUCH_PTS = 2.0 (a bar within this of a node opens a hold window)
+- signals.NODE_CONFIRM_BARS = 3 (bars to confirm a hold; consecutive closes beyond a node that make a break)
+- signals.NODE_CONFIRM_PTS = 3.0 (how far a close must sit from the node to confirm a hold or a break)
+- signals.SURGE_Z = 2.5 (flow surge: |minute hedge pressure| in rolling standard deviations)
+- signals.SURGE_MIN_USD = 10_000_000 (flow surge: and at least this many dollars)
+- signals.SURGE_MIN_SAMPLES = 10 (minutes of hedge pressure needed before a surge can fire)
+- signals.SURGE_WINDOW_MIN = 30 (the rolling window of the surge's standard deviation)
+- signals.DIV_WINDOW_MIN = 30 (flow divergence: the 30-minute high / low window; the price feed also passes the tracker this many bars of prior history)
+- signals.VANNA_IV_PTS = 1.5 (vanna shift: the ATM IV change over 15 minutes, in vol points, either way) A vanna shift repeats every SIGNAL_COOLDOWN_MIN minutes while |iv_change_15m| stays above VANNA_IV_PTS, and it has no RTH guard (the thresholds are placeholders).
+- signals.CHARM_WINDOW_ET = 14:00 (the charm window opens here, once per session; it closes at 16:00)
+- signals.CHARM_MIN_USD = 100_000_000 (charm window: the charm to close must be at least this size)
+- signals.MAX_SIGNALS = 500 (records kept and sent with the snapshot; cleared on an expiration change)
+- All of the above are placeholders until the Phase 5 replay (Task 14) calibrates them; they are not validated values.
+- A null `charm.to_close_usd`, or one below `CHARM_MIN_USD`, does not consume the charm window: the signal fires on the first publish from 14:00 to 16:00 ET whose value is at least the minimum.
+- static/js/price-chart.js: `SIGNAL_MARKERS_KEY` (`spx-signal-markers`: `'1'` on, `'0'` off; default off) remembers the Signals button; `SIGNALS_MAX` (500) bounds the records the browser holds.
+- static/js/price-chart.js pane stretch: price pane 3, RSI 1, hedge-flow pane 1 (candles 60%, RSI and flow 20% each); RSI keeps a quarter while the flow pane is off.
+- static/css/charts.css: `.panel-price .chart-title .help .tooltip` has `max-height: calc(100vh - 180px)` and scrolls, so a short window keeps the whole help on screen.
+- price_bars.py: no constants of its own; a bar closes once (`_last_closed`), and the bars loaded when a session starts are history.
+
+### Levels replay (Phase 5): market/levels_replay.py (offline CLI)
+- levels_replay.TOUCH_PTS = 2.0 (a bar within this of a level touches it)
+- levels_replay.HOLD_PTS = 5.0 (a close this far back on the original side holds; this far through the level breaks)
+- levels_replay.WINDOW_MIN = 30 (bars after a record, and after a touch, that can score a level)
+- levels_replay.DEDUPE_MIN = 30 (a (type, round(level)) pair is evaluated at most once per this many minutes)
+- levels_replay.HORIZONS = (15, 30, 60) (forward SPX return horizons, minutes)
+- levels_replay.TOD_BUCKETS = open 09:30-11:00, mid 11:00-14:00, late 14:00-16:00 (time-of-day buckets for the flow correlations)
+- levels_replay.MIN_CORR_SAMPLES = 10 (fewer paired samples than this gives no correlation)
+
 ## 3) Frontend hardcoded tunables (static/js)
 
 ### static/js/state.js
@@ -180,8 +245,10 @@ Source: spx_trade_desk/core/config.py
 - PERF_MAX_SAMPLES: 200 (per span name and report; the server keeps at most 50 names and 200 samples per name, and drops samples outside 0..60000 ms)
 
 ### static/js/price-chart.js
-- Level step lines (dotted, width 2): Call Wall, Put Wall, Gamma Flip, Max Pain; at most `LEVEL_ROWS_MAX` (2000) change points kept; axis tags are the codes CW / PW / GF / MP and the lines and tags are `LEVEL_ALPHA` (0.7) opaque
-- static/js/gex-profile.js: `GEX_HEAD_H` (20 px caption strip), `GEX_LABEL_ROOM` (40 px kept free for a bar's value label), `GEX_BAR_FILL` (0.74 of a strike's band) and `GEX_BAR_MAX_H` (18 px), `GEX_ZOOM_BUTTON` (1.5 per `-` / `+` click), `GEX_WHEEL_RATE` (0.0016 zoom exponent per wheel unit), `GEX_MIN_SPAN` (4 index points, the closest zoom; the widest is the strike range x 1.2 or 5% of spot), `GEX_DRAG_PX` (3 px before a press is a drag), `GEX_LABELS_PER_SIDE` (4 value labels when rows are too thin to label all); `GEX_VIEW_KEY` (`spx-gex-profile-view`) remembers Split / Net; column width `--gex-profile-w` (216 px, 150 px under 700 px) in static/css/charts.css
+- Level step lines, the entries of `PRICE_LEVELS` in `static/js/price-chart.js`: Call Wall, Put Wall, Zero Gamma and Max Pain (`style` dotted, `width` 2); Expected move high / low (`style` dashed, `width` 1, `profile: false`); the nearest pin above / below as R / S (`style` solid, `width` 1, `alpha` 0.45, `profile: false`). `profile: false` keeps an entry off the GEX profile. Each entry's `alpha` defaults to `LEVEL_ALPHA` (0.7, opaque share of the line and its tag). At most `LEVEL_ROWS_MAX` (2000) change points kept. Axis tags are the codes CW / PW / ZG / MP / EM+ / EM- / R / S.
+- static/js/gex-profile.js: `GEX_HEAD_H` (20 px caption strip), `GEX_LABEL_ROOM` (40 px kept free for a bar's value label), `GEX_BAR_FILL` (0.74 of a strike's band) and `GEX_BAR_MAX_H` (18 px), `GEX_ZOOM_BUTTON` (1.5 per `-` / `+` click), `GEX_WHEEL_RATE` (0.0016 zoom exponent per wheel unit), `GEX_MIN_SPAN` (4 index points, the closest zoom; the widest is the strike range x 1.2 or 5% of spot), `GEX_DRAG_PX` (3 px before a press is a drag), `GEX_LABELS_PER_SIDE` (4 value labels when rows are too thin to label all); `GEX_VIEW_KEY` (`spx-gex-profile-view`) remembers Split / Net; `GEX_CURVE_KEY` (`spx-gex-curve`: `'1'` on, the default, or `'0'` off) remembers the Curve button; `GEX_NODE_HALF` (4 px, half the width of a node diamond); column width `--gex-profile-w` (216 px, 150 px under 700 px) in static/css/charts.css
+- static/js/gex-profile.js (flow UI): `GEX_HOT_GUTTER` (10 px left gutter; the hot dots sit at x = 5), `GEX_HOT_STALE_FRAC` (0.05: a hot strike whose `vol_15m` is under 5% of its day call + put volume gets a ring), hot dot radius `min(4, 1.5 + vol_oi)` px, the stale ring 2 px outside it, the flow tick 2 px wide in `textMuted`, the flow bar outline 1 px; `GEX_HOT_KEY` (`spx-gex-hot`: `'1'` on, the default, or `'0'`) remembers the Hot button and `GEX_TICK_KEY` (`spx-gex-flow-ticks`, same values) the Ticks button; `GEX_VIEW_KEY` (`spx-gex-profile-view`) also takes `'flow'`; the coverage bracket is 1 px wide in `textFaint`, with 7 px caps
+- static/js/price-chart.js (flow UI): `FLOW_PANE_KEY` (`spx-flow-pane`: `'1'` on, the default, or `'0'`) remembers the Flow button; the hedge-flow pane is pane 2 under RSI with stretch factor 1, its histogram colored `up` / `down` by sign, its day total a `textMuted` line on the hidden `left` scale; the Flow 30m badge and summary row take the same `up` / `down` colors by sign
 - Charm heatmap: `CHARM_FRAMES_MAX` (1440) frames kept; `CHARM_PREF_KEY` (`spx-charm-heatmap`) remembers the Charm button
 - static/js/charm-heatmap.js: `CHARM_MIN_RATIO` (cells under 0.5% of the scale stay clear), `CHARM_ALPHA_MIN` / `CHARM_ALPHA_SPAN` (alpha 0.06 to 0.40), `CHARM_ALPHA_STEPS`, `CHARM_MAX_GAP_S` (a column is at most 5 min wide)
 - spx_trade_desk/market/charm_history.py: `CHARM_BAND` (3% of spot), `MAX_FRAMES` (1440)

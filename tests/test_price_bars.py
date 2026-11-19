@@ -8,6 +8,7 @@ import pytest
 from spx_trade_desk.core.app_state import create_app_state
 from spx_trade_desk.ib.connection import update_spx_es_prices
 from spx_trade_desk.market import price_bars
+from spx_trade_desk.market.gex import OptionData
 from spx_trade_desk.market.hours import ET
 from tests.conftest import MockIBClient
 
@@ -609,3 +610,55 @@ async def test_repeated_empty_backfills_back_off():
         clock.mono += 1.0
         await feed.tick()
     assert [round(b - a) for a, b in zip(calls, calls[1:])] == [5, 15, 60]
+
+
+def test_the_snapshot_carries_the_flow_series():
+    st = _state()
+    st.flow_tracker.update([OptionData(100.0, "C", volume=5, bid=1.0, ask=1.4, last=1.4)], {(100.0, "C")},
+                           100.0, datetime(2099, 1, 5, 10, 0, tzinfo=ET), "20990105")
+    snap = price_bars.snapshot_payload(st, rth=True, today=DAY)
+    assert snap["flow"] == st.flow_tracker.minutes() and len(snap["flow"]) == 1
+
+
+def _signal_records(msgs):
+    return [m["data"] for m in msgs if m["type"] == "signal"]
+
+
+@pytest.mark.asyncio
+async def test_loading_the_session_emits_no_signals_for_past_bars():             # Review Focus 1
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "10:30", 5), []
+    ib.live_bars_initial = [_bar(DAY, f"10:{m:02d}", 99.0 if m % 2 else 101.0) for m in range(30)]   # crosses 100 every minute
+    st.latest_dealer = {"zero_gamma": 100.0, "nodes": [], "em": {}}
+    feed = _feed(ib, st, clock, msgs)
+    await feed.start()
+    await feed.tick()
+    assert _signal_records(msgs) == []
+
+
+@pytest.mark.asyncio
+async def test_a_new_minute_evaluates_the_bar_that_just_closed():
+    ib, st, clock, msgs = MockIBClient(), _state(), Clock(DAY, "10:30", 5), []
+    ib.live_bars_initial = [_bar(DAY, f"10:{m:02d}", 99.0 if m % 2 else 101.0) for m in range(30)]   # last loaded: 10:29 (99)
+    st.latest_dealer = {"zero_gamma": 100.0, "nodes": [], "em": {}}
+    feed = _feed(ib, st, clock, msgs)
+    await feed.start()
+    rid = next(iter(ib.live_bar_subs))
+    ib.push_live_bar(rid, _bar(DAY, "10:30", 101.0))              # closes at 10:30 through zero gamma
+    ib.push_live_bar(rid, _bar(DAY, "10:31", 101.5))              # the forming minute
+    clock.set(DAY, "10:31", 5)
+    await feed.tick()
+    recs = _signal_records(msgs)
+    assert [(r["type"], r["side"], r["text"], r["time"]) for r in recs] == [
+        ("zg_cross", "bull", "ZG up", "2099-01-05T10:30")]
+    await feed.tick()                                             # the same closed bar is evaluated once
+    assert len(_signal_records(msgs)) == 1
+
+
+def test_the_snapshot_carries_the_signal_history():
+    st, clock = _state(), Clock(DAY, "10:31", 5)
+    st.latest_dealer = None
+    prev = {"time": f"{DAY}T10:29:00-05:00", "open": 99, "high": 99, "low": 99, "close": 99.0}
+    bar = {"time": f"{DAY}T10:30:00-05:00", "open": 99, "high": 101, "low": 99, "close": 101.0}
+    st.signal_tracker.on_bar_closed("20990105", bar, [prev], {"zero_gamma": 100.0, "nodes": []}, [])
+    snap = price_bars.snapshot_payload(st, True, DAY)
+    assert snap["signals"] == st.signal_tracker.history() and [s["text"] for s in snap["signals"]] == ["ZG up"]

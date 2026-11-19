@@ -127,13 +127,15 @@
         .chart-title .help:focus .tooltip {
             display: block;
         }
-        /* The price chart's help explains the levels, the charm heatmap and the GEX profile: a wide box
-           anchored at the left, so it stays on screen and short enough to fit under the title. */
+        /* The price chart's help explains the levels, the charm heatmap, the signals, the flow pane and the GEX profile:
+           a wide box anchored at the left, so it stays on screen; it scrolls when the window is shorter than the text. */
         .panel-price .chart-title .help .tooltip {
             left: 0;
             transform: none;
             width: 460px;
             max-width: min(460px, calc(100vw - 24px));
+            max-height: calc(100vh - 180px);             /* on a short window the text scrolls, the box stays on screen */
+            overflow-y: auto;
         }
         .panel-price .chart-title .help .tooltip::after { left: 12px; transform: none; }
 

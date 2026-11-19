@@ -12,10 +12,23 @@ from datetime import datetime
 
 from spx_trade_desk.core.config import CHAIN_QUOTE_MAX_AGE_S, CHAIN_REFRESH_SECONDS
 from spx_trade_desk.market.chain_manager import build_chain_quotes
+from spx_trade_desk.market.dealer_model import positions_flow_blend, positions_from_oi, strike_gammas
+from spx_trade_desk.market.dealer_payload import build_dealer, level_fields
+from spx_trade_desk.market.flow import HOT_FRESH_MIN, annotate_gex_bars, flow_gex_by_strike, hot_strikes
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict
 from spx_trade_desk.market.hours import is_cboe_options_open, now_et
+from spx_trade_desk.market.levels import resolve_gamma_flip
 
 logger = logging.getLogger(__name__)
+
+
+def _publish_signals(state, now: datetime, dealer) -> list:
+    """Publish-time signals (vanna shift, charm window). Never raises: a signal bug must not drop the GEX publish."""
+    try:
+        return state.signal_tracker.on_publish(state.expiration, now, dealer, state.spx_price)
+    except Exception:
+        logger.exception("Signal tracking failed on publish; publishing this cycle without signals")
+        return []
 
 
 def tte_years(expiration: str, now: datetime) -> float:
@@ -31,6 +44,25 @@ def tte_years(expiration: str, now: datetime) -> float:
     return max((exp_date - now.date()).days, 1) / 252.0
 
 
+def _flow_outputs(state, gex, options, dealer, now, T: float) -> None:
+    """Hot strikes, flow GEX and the flow summary, written into the gex bars and the dealer block.
+
+    Runs after the dealer block exists. ``dealer["flow"]`` is set only when there is a dealer block. Never
+    raises: a flow failure must not drop the GEX publish.
+    """
+    try:
+        state.volume_history.record(state.expiration, now.isoformat(), options)
+        recent = {o.strike: state.volume_history.added(o.strike, HOT_FRESH_MIN) for o in options}
+        hot = hot_strikes(options, recent)
+        fgex = flow_gex_by_strike(*state.flow_tracker.net_volumes(),
+                                  strike_gammas(gex, state.spx_price, T, state.risk_free_rate), state.spx_price)
+        annotate_gex_bars(state.latest_gex["gex_bars"], state.flow_tracker, hot, fgex)
+        if dealer is not None:
+            dealer["flow"] = state.flow_tracker.summary(now)
+    except Exception:
+        logger.exception("Flow outputs failed; publishing this cycle without flow")
+
+
 async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     book = state.quote_book
     if len(book) == 0 or state.spx_price <= 0:
@@ -43,13 +75,37 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
         for o in gex_opts:
             o.open_interest = o.volume
     now = now_et()
+    T = tte_years(state.expiration, now)
     gex = compute_gex(gex_opts, state.spx_price,
-                      time_to_expiry_years=tte_years(state.expiration, now),
+                      time_to_expiry_years=T,
                       risk_free_rate=state.risk_free_rate)
     gex.expiration = state.expiration
     gex.timestamp = now.isoformat()
+    pos = positions_from_oi(gex)
+    if state.dealer_model == "flow_blend":
+        try:
+            pos = positions_flow_blend(pos, *state.flow_tracker.net_volumes())
+        except Exception:
+            # Keep the OI positions for this cycle: the profile still renders and the GEX / chain publish is never dropped.
+            logger.exception("Flow-blend positions failed; using OI-assumed positions this cycle")
+    try:
+        dealer, levels = build_dealer(gex, options, pos, T, state.risk_free_rate, now, state.em_anchor,
+                                      state.atm_iv_history, state.price_history, state.price_session_date)
+    except Exception:
+        # The dealer block is an extra: a failure here must not stop the GEX, chain and strategy publish.
+        logger.exception("Dealer profile failed; publishing this cycle with the cumulative gamma flip")
+        dealer, levels = None, None
+    cumulative = gex.gamma_flip
+    gex.gamma_flip, gamma_flip_method = resolve_gamma_flip(gex, levels)   # zero gamma when the profile exists
     state.gex_result = gex
     state.latest_gex = gex_result_to_dict(gex)
+    state.latest_gex["dealer"] = dealer
+    state.latest_gex["gamma_flip_method"] = gamma_flip_method
+    state.latest_gex["gamma_flip_cumulative"] = cumulative
+    state.latest_gex.update(level_fields(dealer, state.em_anchor))
+    _flow_outputs(state, gex, options, dealer, now, T)
+    state.latest_dealer = dealer
+    signals = _publish_signals(state, now, dealer)
     state.level_history.record(state.latest_gex)
     state.charm_history.record(gex)
     state.last_chain_update = now.strftime("%H:%M:%S")
@@ -66,6 +122,8 @@ async def publish_chain(state, broadcast_fn, now_mono: float) -> bool:
     payload["es_derived"] = state.es_derived
     payload["charm_frame"] = state.charm_history.latest()     # the chart appends it to the snapshot's history
     await broadcast_fn({"type": "gex", "data": payload})
+    for rec in signals:
+        await broadcast_fn({"type": "signal", "data": rec})
     await broadcast_fn({"type": "chain_quotes", "data": state.chain_quotes_cache})
     if state.chain_fetching:
         state.chain_fetching = False      # hides the dashboard's loading overlay

@@ -264,7 +264,7 @@ def test_row_classes_and_tags_follow_atm_walls_and_itm(page):
     }"""
     first = page.evaluate(probe)
     assert first["atm"] == ["6150"]
-    assert first["walls"] == [["CW"], ["PW"], ["GF"], []]
+    assert first["walls"] == [["CW"], ["PW"], ["ZG"], []]
     assert first["wallRows"] == [["6200"], ["6100"], ["6140"]]
     assert first["callItmBelowSpot"] and not first["callItmAboveSpot"]
     assert first["putItmAboveSpot"] and not first["putItmBelowSpot"]
@@ -272,7 +272,7 @@ def test_row_classes_and_tags_follow_atm_walls_and_itm(page):
     _inject(page, "chain_quotes", _full(spot=6300, cw=6350, pw=6100, gf=6140))
     second = page.evaluate(probe)
     assert second["atm"] == ["6300"]                                  # the old ATM row lost its class
-    assert second["walls"] == [[], ["PW"], ["GF"], ["CW"]]            # the CW tag moved
+    assert second["walls"] == [[], ["PW"], ["ZG"], ["CW"]]            # the CW tag moved
     assert second["wallRows"] == [["6350"], ["6100"], ["6140"]]
 
 

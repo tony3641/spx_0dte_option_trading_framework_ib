@@ -62,6 +62,17 @@
         font-size: 13px;
     }
     .settings-field input:focus { outline: none; border-color: var(--accent); }
+    .settings-field select {
+        flex: 1;
+        min-width: 0;
+        background: var(--bg-input);
+        color: var(--text);
+        border: 1px solid var(--border-strong);
+        border-radius: 5px;
+        padding: 6px 8px;
+        font-size: 13px;
+    }
+    .settings-field select:focus { outline: none; border-color: var(--accent); }
     .settings-check {
         display: flex;
         align-items: center;

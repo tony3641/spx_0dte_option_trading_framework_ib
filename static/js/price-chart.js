@@ -3,19 +3,29 @@
     // ======================================================================
     // Each level is a dotted step line: it starts at the first bar (or when the level first appeared),
     // moves up or down at the minute GEX published a different value, and runs on to the latest bar.
+    // style: 'dotted' (default) | 'dashed' | 'solid'; width defaults to 2; alpha to LEVEL_ALPHA; profile: false
+    // keeps the entry off the GEX profile (the profile draws the expected move and the pins its own way).
     const PRICE_LEVELS = [
         { key: 'call_wall', color: 'up', name: 'Call Wall', tag: 'CW' },
         { key: 'put_wall', color: 'down', name: 'Put Wall', tag: 'PW' },
-        { key: 'gamma_flip', color: 'accent', name: 'Gamma Flip', tag: 'GF' },
+        { key: 'gamma_flip', color: 'accent', name: 'Zero Gamma', tag: 'ZG' },
         { key: 'max_pain', color: 'info', name: 'Max Pain', tag: 'MP' },
+        { key: 'em_high', color: 'textFaint', name: 'Expected move high', tag: 'EM+', style: 'dashed', width: 1, profile: false },
+        { key: 'em_low', color: 'textFaint', name: 'Expected move low', tag: 'EM-', style: 'dashed', width: 1, profile: false },
+        { key: 'node_r1', color: 'down', name: 'Nearest pin above', tag: 'R', style: 'solid', width: 1, alpha: 0.45, profile: false },
+        { key: 'node_s1', color: 'up', name: 'Nearest pin below', tag: 'S', style: 'solid', width: 1, alpha: 0.45, profile: false },
     ];
     // The axis tag of a level is its two-letter code, and the line and tag are translucent so the candles
     // behind them stay readable (the full names are in the "?" help and the Levels strip).
     const LEVEL_ALPHA = 0.7;
-    const levelColor = (c, lv) => withAlpha(c[lv.color], LEVEL_ALPHA);
+    const levelColor = (c, lv) => withAlpha(c[lv.color], lv.alpha ?? LEVEL_ALPHA);
+    const LEVEL_LINE_STYLE = { dotted: 'Dotted', dashed: 'Dashed', solid: 'Solid' };
     const LEVEL_ROWS_MAX = 2000;
     const CHARM_FRAMES_MAX = 1440;
     const CHARM_PREF_KEY = 'spx-charm-heatmap';          // localStorage '1' | '0'; default off
+    const FLOW_PANE_KEY = 'spx-flow-pane';               // localStorage '1' | '0'; the hedge-flow pane, default on
+    const SIGNAL_MARKERS_KEY = 'spx-signal-markers';     // localStorage '1' | '0'; the signal markers, default off
+    const SIGNALS_MAX = 500;                             // the server's history size (signals.MAX_SIGNALS)
     // The model (bars, overnightPts, latest) is always current; the series are brought up to date
     // only while the Dashboard tab is visible. pending* hold what the next frame must push.
     const RSI_PERIOD = 14;
@@ -26,6 +36,8 @@
         lastTime: null, lastOvernightTime: null,      // last time written to each series
         levelSeries: {}, levelRows: [], levelExpiration: null,   // rows: one per change, sorted by time
         charmFrames: [], charmVersion: 0, charmPrimitive: null, charmOn: false,   // frames: one per minute
+        flowMinutes: new Map(), flowOn: true, flowSeries: null, flowCum: null,   // minutes by time; the pane is pane 2
+        signals: [], signalsOn: false, signalMarkers: null,   // signal records (kept while the markers are off)
         needsFit: false, hadSnapshot: false,
     };
 
@@ -103,7 +115,8 @@
             const levelSeries = {};
             for (const lv of PRICE_LEVELS) {
                 levelSeries[lv.key] = chart.addSeries(LC.LineSeries, {
-                    color: levelColor(c, lv), lineWidth: 2, lineStyle: LC.LineStyle.Dotted, lineType: LC.LineType.WithSteps,
+                    color: levelColor(c, lv), lineWidth: lv.width ?? 2,
+                    lineStyle: LC.LineStyle[LEVEL_LINE_STYLE[lv.style] || 'Dotted'], lineType: LC.LineType.WithSteps,
                     priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title: lv.tag,
                     autoscaleInfoProvider: () => null,       // a far wall must not squash the candles
                 });
@@ -114,11 +127,14 @@
                 priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
                 autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
             }, 1);
-            chart.panes()[0].setStretchFactor(3);          // RSI gets a quarter of the height (the
-            chart.panes()[1].setStretchFactor(1);          // library's own default factors are not 1:1)
+            // Stretch factors 3:1:1 (price, RSI, hedge flow): the price pane takes 60% of the height and each of the
+            // two strips below it 20%. The library's own default factors are not 1:1, so they are set here.
+            chart.panes()[0].setStretchFactor(3);
+            chart.panes()[1].setStretchFactor(1);
             const rsiGuides = [70, 30].map(price => rsi.createPriceLine({
                 price, color: c.textFaint, lineWidth: 1, lineStyle: LC.LineStyle.Dashed, axisLabelVisible: false,
             }));
+            const signalMarkers = LC.createSeriesMarkers(candles, []);   // v5 markers plugin, empty until switched on
             priceChart.chart = chart;                       // published together: never a half-built chart
             priceChart.candles = candles;
             priceChart.overnight = overnight;
@@ -126,9 +142,19 @@
             priceChart.charmPrimitive = charmPrimitive;
             priceChart.rsi = rsi;
             priceChart.rsiGuides = rsiGuides;
+            priceChart.signalMarkers = signalMarkers;
             let saved = null;
             try { saved = localStorage.getItem(CHARM_PREF_KEY); } catch (e) { /* storage blocked: stays off */ }
             setCharmHeatmap(saved === '1');
+            let flowSaved = null;
+            try { flowSaved = localStorage.getItem(FLOW_PANE_KEY); } catch (e) { /* storage blocked: default on */ }
+            priceChart.flowOn = flowSaved !== '0';
+            if (priceChart.flowOn) _tryAddFlowPane();
+            _syncFlowToggle();
+            let signalSaved = null;
+            try { signalSaved = localStorage.getItem(SIGNAL_MARKERS_KEY); } catch (e) { /* storage blocked: stays off */ }
+            priceChart.signalsOn = signalSaved === '1';
+            _syncSignalToggle();
             state.priceChartReady = true;
         } catch (e) {
             console.error('Price chart unavailable', e);
@@ -167,6 +193,9 @@
             if (Array.isArray(f.strikes)) charmStrikes = f.strikes;
             recordCharmFrame(_charmFrame(Array.isArray(f.strikes) ? f : { ...f, strikes: charmStrikes }));
         }
+        priceChart.flowMinutes = new Map();                  // the snapshot's flow series replaces the model
+        for (const m of (data.flow || [])) recordFlowMinute(m);
+        priceChart.signals = (data.signals || []).slice(-SIGNALS_MAX);   // the snapshot's history replaces the model
         // Fit only the first snapshot and a new session: a reconnect snapshot of the same session keeps the zoom.
         priceChart.needsFit = priceChart.needsFit || !priceChart.hadSnapshot || prevSession !== priceChart.sessionDate;
         priceChart.hadSnapshot = true;
@@ -189,6 +218,8 @@
         priceChart.pendingBars.clear();
         priceChart.pendingOvernight = [];
         renderOverlays();
+        renderFlow();
+        renderSignalMarkers();
         if (priceChart.needsFit) {
             ts.fitContent();
             priceChart.needsFit = false;
@@ -236,6 +267,7 @@
             if (pt) priceChart.rsi.update(pt);
         }
         renderOverlays();                                    // the lines and heatmap run on to the new bar
+        if (priceChart.signalsOn && priceChart.signals.length) renderSignalMarkers();   // a signal may now snap to this bar
     }
 
     function handlePriceOvernight(data) {
@@ -392,11 +424,13 @@
     function updatePriceLevels(gexData) {
         if (!priceChart.candles || !gexData) return;
         // A new expiration is a new history (the server resets at the same moment).
+        let flowChanged = false;
         if (gexData.expiration) {
             if (priceChart.levelExpiration !== null && priceChart.levelExpiration !== gexData.expiration) {
                 priceChart.levelRows = [];
                 priceChart.charmFrames = [];
                 priceChart.charmVersion++;
+                if (priceChart.flowMinutes.size) { priceChart.flowMinutes = new Map(); flowChanged = true; }
             }
             priceChart.levelExpiration = gexData.expiration;
         }
@@ -404,14 +438,111 @@
             (priceChart.latest ? new Date(priceChart.latest.time * 1000).toISOString() : null) });
         const levelsChanged = recordLevelRow(row);
         const charmChanged = recordCharmFrame(_charmFrame(gexData.charm_frame));
-        if (!levelsChanged && !charmChanged) return;
+        const minuteChanged = recordFlowMinute(gexData.dealer && gexData.dealer.flow ? gexData.dealer.flow.minute : null);
+        flowChanged = flowChanged || minuteChanged;
+        if (!levelsChanged && !charmChanged && !flowChanged) return;
         if (state.activeTab !== 'dashboard') {
             renderWhenVisible('dashboard', 'price.snapshot', renderPriceSnapshot);   // one full redraw on show
             return;
         }
         if (levelsChanged) renderLevels();
         renderCharm();
+        if (flowChanged) renderFlow();
     }
+
+    // ---- Hedge-flow pane: the dealers' hedge dollars per minute (+ bought, - sold) as a histogram, and the day's
+    // running total as a line on its own scale. One minute per time (the last wins); the snapshot's series
+    // and the minute each GEX publish carries (dealer.flow.minute) feed it.
+    function recordFlowMinute(m) {
+        if (!m || typeof m.time !== 'string') return false;
+        const t = etIsoToChartTime(m.time);
+        if (t === null) return false;
+        const hedge = Number(m.hedge_pressure_usd);
+        if (!isFinite(hedge)) return false;
+        const row = { time: t, hedge, call: Number(m.call_delta_usd) || 0, put: Number(m.put_delta_usd) || 0 };
+        const prev = priceChart.flowMinutes.get(t);
+        if (prev && prev.hedge === row.hedge && prev.call === row.call && prev.put === row.put) return false;
+        priceChart.flowMinutes.set(t, row);
+        return true;
+    }
+
+    function renderFlow() {
+        if (!priceChart.flowSeries) return;
+        const c = themeColors();
+        const mins = Array.from(priceChart.flowMinutes.values()).sort((a, b) => a.time - b.time);
+        const hist = [], total = [];
+        let cum = 0;
+        for (const m of mins) {
+            cum += m.hedge;
+            hist.push({ time: m.time, value: m.hedge, color: m.hedge >= 0 ? c.up : c.down });
+            total.push({ time: m.time, value: cum });
+        }
+        priceChart.flowSeries.setData(hist);
+        priceChart.flowCum.setData(total);
+    }
+
+    // The pane is pane 2 (under RSI) with stretch factor 1: a histogram of the minutes and the day's total on
+    // the left scale. The series and the pane are created together and removed together.
+    function _addFlowPane() {
+        const LC = LightweightCharts;
+        const chart = priceChart.chart;
+        const { c } = chartTheme();
+        const fmt = { type: 'custom', formatter: (v) => fmtGex(v), minMove: 1 };
+        priceChart.flowSeries = chart.addSeries(LC.HistogramSeries, {
+            priceLineVisible: false, lastValueVisible: true, title: 'Hedge flow', priceFormat: fmt,
+        }, 2);
+        // The day total has its own scale (left), kept hidden: a visible left scale makes Lightweight Charts 5.2.1
+        // throw "Value is null" while painting this chart. Its level is in the Hedge flow 30m summary tooltip.
+        priceChart.flowCum = chart.addSeries(LC.LineSeries, {
+            color: c.textMuted, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false, title: 'Day', priceScaleId: 'left',
+        }, 2);
+        chart.panes()[2].setStretchFactor(1);
+        renderFlow();
+    }
+
+    function _removeFlowPane() {
+        const chart = priceChart.chart;
+        for (const s of [priceChart.flowSeries, priceChart.flowCum]) {
+            if (!s) continue;
+            try { chart.removeSeries(s); } catch (e) { /* already gone */ }
+        }
+        priceChart.flowSeries = null;
+        priceChart.flowCum = null;
+        if (chart.panes().length > 2) chart.removePane(2);
+    }
+
+    // A failing pane must not take the candles or RSI down with it (the caller is the chart's own build): the pane
+    // is removed as far as it was built, the Flow button shows it off, and a later Flow click tries again.
+    function _tryAddFlowPane() {
+        try {
+            _addFlowPane();
+        } catch (e) {
+            console.error('Hedge-flow pane unavailable; the candles and RSI still draw', e);
+            try { _removeFlowPane(); } catch (e2) { /* nothing more to clean up */ }
+            priceChart.flowSeries = null;
+            priceChart.flowCum = null;
+            priceChart.flowOn = false;
+        }
+    }
+
+    function _syncFlowToggle() {
+        const btn = document.getElementById('flowToggle');
+        if (btn) btn.classList.toggle('active', priceChart.flowOn);
+    }
+
+    // The Flow button: shows or hides the hedge-flow pane; the choice is remembered in this browser.
+    function setFlowPane(on) {
+        priceChart.flowOn = !!on;
+        if (priceChart.chart) {
+            if (priceChart.flowOn && !priceChart.flowSeries) _tryAddFlowPane();
+            else if (!priceChart.flowOn && priceChart.flowSeries) _removeFlowPane();
+        }
+        // The stored choice is the click, not the outcome: a pane that failed to build is retried on the next load.
+        try { localStorage.setItem(FLOW_PANE_KEY, on ? '1' : '0'); } catch (e) { /* not remembered */ }
+        _syncFlowToggle();
+    }
+    function toggleFlowPane() { setFlowPane(!priceChart.flowOn); }
 
     function applyPriceChartTheme() {
         if (!priceChart.chart) return;
@@ -429,8 +560,81 @@
             priceChart.levelSeries[lv.key].applyOptions({ color: levelColor(c, lv) });
         }
         priceChart.charmPrimitive.refresh();
+        if (priceChart.flowSeries) {
+            priceChart.flowCum.applyOptions({ color: c.textMuted });
+            renderFlow();                                    // the bars' up / down colors are per point
+        }
+        renderSignalMarkers();                               // marker colors are tokens: rebuilt in the new theme
     }
     window.addEventListener('themechange', applyPriceChartTheme);      // cheap: runs immediately, shown or not
+
+    // ---- Signal markers: the server's signal records (signals.py) as markers on the candles. Off by default.
+    // A record sits on the latest bar at or before its minute; before the first bar it has no marker.
+    // Shape, side and color token by type (spec 3.1): zero gamma and EM are circles, node holds arrows at the pin,
+    // node breaks squares, flow surges and vanna shifts arrows in their direction, divergences and charm circles.
+    function _signalStyle(s) {
+        const up = s.side === 'bull';
+        const side = up ? 'belowBar' : 'aboveBar';
+        switch (s.type) {
+            case 'zg_cross': return { shape: 'circle', color: 'accent', position: side };
+            case 'node_hold': return { shape: up ? 'arrowUp' : 'arrowDown', color: up ? 'up' : 'down', position: side };
+            case 'node_break': return { shape: 'square', color: 'alt', position: side };
+            case 'em_touch': return { shape: 'circle', color: 'info', position: /-$/.test(s.text || '') ? 'belowBar' : 'aboveBar' };
+            case 'flow_surge': return { shape: up ? 'arrowUp' : 'arrowDown', color: 'info', position: side };
+            case 'flow_div': return { shape: 'circle', color: 'alt', position: side };
+            case 'vanna_shift': return { shape: up ? 'arrowUp' : 'arrowDown', color: 'info', position: side };
+            case 'charm_window': return { shape: 'circle', color: 'info', position: side };
+            default: return null;
+        }
+    }
+
+    // Markers for the signals; ``barTimes`` are the chart times of the bars, ascending. Pure apart from the theme read.
+    function signalMarkerList(signals, barTimes) {
+        if (!Array.isArray(signals) || !Array.isArray(barTimes) || !barTimes.length) return [];
+        const c = themeColors();
+        const out = [];
+        for (const s of signals) {
+            const t = etIsoToChartTime(s && s.time);
+            const style = s ? _signalStyle(s) : null;
+            if (t === null || !style) continue;
+            let snap = null;                                  // the latest bar at or before the signal's minute
+            for (const bt of barTimes) {
+                if (bt <= t) snap = bt; else break;
+            }
+            if (snap === null) continue;
+            out.push({ time: snap, position: style.position, color: c[style.color], shape: style.shape, text: s.text || '' });
+        }
+        return out.sort((a, b) => a.time - b.time);
+    }
+
+    function renderSignalMarkers() {
+        if (!priceChart.signalMarkers) return;
+        const times = Array.from(priceChart.bars.keys()).sort((a, b) => a - b);
+        priceChart.signalMarkers.setMarkers(priceChart.signalsOn ? signalMarkerList(priceChart.signals, times) : []);
+    }
+
+    // A live signal record (the "signal" WS message). It is kept even while the markers are off.
+    function handleSignal(rec) {
+        if (!rec || typeof rec.time !== 'string' || !rec.type) return;
+        priceChart.signals.push(rec);
+        if (priceChart.signals.length > SIGNALS_MAX) priceChart.signals.shift();
+        if (!priceChart.signalsOn) return;
+        renderWhenVisible('dashboard', 'price.signals', renderSignalMarkers);
+    }
+
+    function _syncSignalToggle() {
+        const btn = document.getElementById('signalToggle');
+        if (btn) btn.classList.toggle('active', priceChart.signalsOn);
+    }
+
+    // The Signals button: shows or hides the markers; the choice is remembered in this browser.
+    function setSignalMarkers(on) {
+        priceChart.signalsOn = !!on;
+        try { localStorage.setItem(SIGNAL_MARKERS_KEY, priceChart.signalsOn ? '1' : '0'); } catch (e) { /* not remembered */ }
+        _syncSignalToggle();
+        renderSignalMarkers();
+    }
+    function toggleSignalMarkers() { setSignalMarkers(!priceChart.signalsOn); }
 
     function onDashboardShown() {
         flushHiddenDirty('dashboard');

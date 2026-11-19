@@ -1,8 +1,11 @@
-"""Intraday history of the four GEX levels (call wall, put wall, gamma flip, max pain).
+"""Intraday history of the GEX levels the price chart draws as step lines.
+
+The levels are call wall, put wall, gamma flip (zero gamma), max pain, the anchored open band (em_high,
+em_low) and the nearest pin node above and below spot (node_r1, node_s1).
 
 The price chart draws each level as a step line that moves when GEX publishes a different value,
 so a dashboard that opens (or reconnects) mid-session needs the earlier values too. The publisher
-records one point per change; the point carries all four levels, because they are always published
+records one point per change; the point carries every level, because they are always published
 together. Times are ET wall-clock to the minute, the resolution of the chart's bars: a second change
 within the same minute replaces the first. A new expiration (the 0DTE roll) starts a new history.
 Loop thread only.
@@ -10,7 +13,7 @@ Loop thread only.
 from collections import deque
 from typing import List, Optional
 
-LEVEL_KEYS = ("call_wall", "put_wall", "gamma_flip", "max_pain")
+LEVEL_KEYS = ("call_wall", "put_wall", "gamma_flip", "max_pain", "em_high", "em_low", "node_r1", "node_s1")
 MAX_POINTS = 2000
 
 

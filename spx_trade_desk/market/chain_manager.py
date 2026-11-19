@@ -18,7 +18,9 @@ from spx_trade_desk.core.config import CHAIN_STREAM_UPDATE_INTERVAL, MONTHLY_CAC
 from spx_trade_desk.core.perf import perf
 from spx_trade_desk.market.hours import now_et, is_cboe_options_open
 from spx_trade_desk.market.chain_fetcher import fetch_option_chain
+from spx_trade_desk.market.dealer_model import positions_from_oi
 from spx_trade_desk.market.gex import compute_gex, gex_result_to_dict, GEXResult, OptionData
+from spx_trade_desk.market.levels import profile_levels, resolve_gamma_flip
 from spx_trade_desk.market.qualification import norm_key, unknown_retry_due  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
@@ -324,6 +326,24 @@ def drop_failed_streams(state) -> int:
     return dropped
 
 
+FLOW_LOG_INTERVAL_S = 60.0     # "Flow tracking failed" is logged at most this often
+
+
+def record_flow(state, rows: List[OptionData], now: datetime) -> None:
+    """Feed one stream cycle to the flow tracker. Never raises: the stream loop's own handler sleeps 5 s.
+
+    ``rows`` is the cycle's book rows (only streams that ticked since the last pass), so the streamed key set
+    comes from ``chain_stream_tickers``. A failure is logged at most once per FLOW_LOG_INTERVAL_S.
+    """
+    try:
+        state.flow_tracker.update(rows, set(state.chain_stream_tickers), state.spx_price, now, state.expiration)
+    except Exception:
+        mono = time.monotonic()
+        if mono - getattr(state, "flow_failed_mono", float("-inf")) >= FLOW_LOG_INTERVAL_S:
+            state.flow_failed_mono = mono
+            logger.exception("Flow tracking failed")
+
+
 async def chain_stream_loop(ib, state, broadcast_fn):
     """Maintain persistent market-data subscriptions for the strikes nearest the focus.
 
@@ -423,6 +443,7 @@ async def chain_stream_loop(ib, state, broadcast_fn):
             if state.quote_book.expiry != state.expiration:
                 state.quote_book.reset(state.expiration)
             state.quote_book.update(book_options, "stream", time.monotonic())
+            record_flow(state, book_options, now_et())
 
             if state.chain_resync_requested:
                 # A browser connected since the last cycle: it starts from the cached full chain, so send
@@ -506,28 +527,34 @@ async def monthly_gex_fetch(ib, state, broadcast_fn):
             for o in options:
                 o.open_interest = o.volume
 
-        # Compute time to expiry
-        exp_date = datetime.strptime(state.monthly_expiration, "%Y%m%d").date()
+        # Time to expiry: the same rule as the 0DTE publisher (imported here: chain_publisher imports this module)
+        from spx_trade_desk.market.chain_publisher import tte_years
         now = now_et()
-        if exp_date == now.date():
-            close_dt = now.replace(hour=16, minute=0, second=0, microsecond=0)
-            mins_left = max((close_dt - now).total_seconds() / 60.0, 1.0)
-            tte_years = mins_left / (390.0 * 252.0)
-        else:
-            days_left = (exp_date - now.date()).days
-            tte_years = max(days_left, 1) / 252.0
+        tte = tte_years(state.monthly_expiration, now)
 
         gex_result = compute_gex(
             options, state.spx_price,
-            time_to_expiry_years=tte_years,
+            time_to_expiry_years=tte,
             risk_free_rate=state.risk_free_rate,
         )
         gex_result.expiration = state.monthly_expiration
         gex_result.timestamp = now_et().isoformat()
+        # Monthly has no dealer block (no ATM anchor or flow history), but zero gamma still applies.
+        cumulative = gex_result.gamma_flip
+        gamma_flip_method = "cumulative"
+        try:
+            levels = profile_levels(gex_result, positions_from_oi(gex_result), tte, state.risk_free_rate, em=None)
+            gex_result.gamma_flip, gamma_flip_method = resolve_gamma_flip(gex_result, levels)
+        except Exception as e:
+            # Zero gamma is an extra; the monthly GEX is still published with the cumulative flip.
+            logger.warning(f"Monthly zero gamma failed, keeping cumulative flip: {e}", exc_info=True)
+            gex_result.gamma_flip = cumulative
 
         state.monthly_gex_result = gex_result
         state.monthly_latest_gex = gex_result_to_dict(gex_result)
         state.monthly_latest_gex["es_derived"] = state.es_derived
+        state.monthly_latest_gex["gamma_flip_method"] = gamma_flip_method
+        state.monthly_latest_gex["gamma_flip_cumulative"] = cumulative
         state.monthly_chain_data = options
         state.monthly_last_fetch_ts = _time.monotonic()
 

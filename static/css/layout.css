@@ -66,6 +66,7 @@
         .badge-max-pain { background: var(--info-bg); color: var(--info); border: 1px solid color-mix(in srgb, var(--info) 25%, transparent); }
         .badge-mode-live { background: var(--up-bg); color: var(--up); border: 1px solid color-mix(in srgb, var(--up) 25%, transparent); }
         .badge-mode-hist { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
+        .badge-flow { background: var(--bg-raised); color: var(--text-strong); border: 1px solid color-mix(in srgb, var(--border-strong) 25%, transparent); }   /* dealer flow boxes; converging/diverging override it */
         .badge-net-gex { background: var(--bg-raised); color: var(--text-strong); border: 1px solid color-mix(in srgb, var(--border-strong) 25%, transparent); }
         .badge-converging { background: var(--up-bg); color: var(--up); border: 1px solid color-mix(in srgb, var(--up) 38%, transparent); }
         .badge-diverging  { background: var(--down-bg); color: var(--down); border: 1px solid color-mix(in srgb, var(--down) 38%, transparent); }

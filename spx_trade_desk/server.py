@@ -267,6 +267,10 @@ class SimSettingsIn(BaseModel):
     workers: int
 
 
+class DealerSettingsIn(BaseModel):
+    model: str
+
+
 @app.get("/api/settings/discord")
 async def get_discord_settings(request: Request):
     if not _is_localhost(request):
@@ -368,6 +372,34 @@ async def post_sim_settings(body: SimSettingsIn, request: Request):
         persisted = False
     return {"ok": True, "workers": body.workers,
             "cpu_count": os.cpu_count() or 1, "persisted": persisted}
+
+
+@app.get("/api/settings/dealer")
+async def get_dealer_settings(request: Request):
+    if not _is_localhost(request):
+        raise HTTPException(status_code=403, detail="Localhost only")
+    return {"model": state.dealer_model, "models": list(config.DEALER_MODELS)}
+
+
+@app.post("/api/settings/dealer")
+async def post_dealer_settings(body: DealerSettingsIn, request: Request):
+    if not _is_localhost(request):
+        raise HTTPException(status_code=403, detail="Localhost only")
+    try:
+        model = config._dealer_model(body.model)
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail=f"model must be one of {', '.join(config.DEALER_MODELS)}")
+    # Hot-apply first: the next chain publish reads state.dealer_model; the .env write only makes it survive restarts.
+    state.dealer_model = model
+    os.environ["DEALER_POSITION_MODEL"] = model
+    persisted = True
+    try:
+        update_env({"DEALER_POSITION_MODEL": model})
+    except Exception as e:
+        logger.warning(f"Failed to persist DEALER_POSITION_MODEL to .env: {e}")
+        persisted = False
+    return {"ok": True, "model": model, "persisted": persisted}
 
 
 # ---------------------------------------------------------------------------

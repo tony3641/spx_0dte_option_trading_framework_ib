@@ -66,12 +66,28 @@
             <span id="putWallBadge">-</span>
         </div>
         <div class="level-badge badge-gamma-flip">
-            <span class="label">Gamma Flip</span>
+            <span class="label">Zero Gamma</span>
             <span id="gammaFlipBadge">-</span>
         </div>
         <div class="level-badge badge-max-pain">
             <span class="label">Max Pain</span>
             <span id="maxPainBadge">-</span>
+        </div>
+        <div class="level-badge badge-flow" id="emBadgeBox" style="display:none;">
+            <span class="label">EM</span>
+            <span id="emBadge">-</span>
+        </div>
+        <div class="level-badge badge-flow" id="charmCloseBadgeBox" style="display:none;">
+            <span class="label">Charm&rarr;Close</span>
+            <span id="charmCloseBadge">-</span>
+        </div>
+        <div class="level-badge badge-flow" id="vannaBadgeBox" style="display:none;">
+            <span class="label">Vanna</span>
+            <span id="vannaBadge">-</span>
+        </div>
+        <div class="level-badge badge-flow" id="flow30BadgeBox" style="display:none;">
+            <span class="label">Flow 30m</span>
+            <span id="flow30Badge">-</span>
         </div>
         <div class="level-badge badge-net-gex" title="Net gamma exposure in dollars of SPX the dealers must trade per 1% move (gamma x open interest x 100 x spot x spot x 1%)">
             <span class="label">Net GEX</span>
@@ -99,8 +115,21 @@
                 <span class="gex-mode-toggle" id="charmToggleGroup">
                     <button class="gex-mode-btn" id="charmToggle" onclick="toggleCharmHeatmap()" title="Charm heatmap behind the candles: blue = supportive, amber = suppressive">Charm</button>
                 </span>
+                <span class="gex-mode-toggle" id="signalToggleGroup">
+                    <button class="gex-mode-btn" id="signalToggle" onclick="toggleSignalMarkers()" title="Signal markers on the candles: zero-gamma crosses, node holds and breaks, EM touches, flow surges and divergences, vanna shifts and the 14:00 charm window (thresholds are placeholders)">Signals</button>
+                </span>
+                <span class="gex-mode-toggle" id="gexCurveGroup">
+                    <button class="gex-mode-btn" id="gexCurveToggle" onclick="toggleGexCurve()" title="The dealers' gamma curve across the profile: G at each price, zero gamma where it crosses zero">Curve</button>
+                </span>
+                <span class="gex-mode-toggle" id="gexFlowGroup">
+                    <button class="gex-mode-btn" id="gexHotToggle" onclick="toggleGexHot()" title="Hot strikes: a dot in the profile's left gutter where volume is unusual against open interest (outlined when the recent volume is stale)">Hot</button>
+                    <button class="gex-mode-btn" id="gexTickToggle" onclick="toggleGexTicks()" title="Flow GEX: a tick on each streamed strike at the gamma that customer flow implies, to compare with the open-interest bar">Ticks</button>
+                </span>
+                <span class="gex-mode-toggle" id="flowToggleGroup">
+                    <button class="gex-mode-btn" id="flowToggle" onclick="toggleFlowPane()" title="Hedge-flow pane under RSI: the dealers' hedge dollars per minute (green bought, red sold) and the day's running total">Flow</button>
+                </span>
                 <span class="help" tabindex="0" aria-label="Price chart info">?
-                    <span class="tooltip" role="tooltip">During regular hours: today's session from the 09:30 ET open as 1-minute bars from IB, with the current minute following the live SPX price. Outside regular hours: the last session plus a dotted ES-derived SPX line, which resets to today's session at 09:30. In HISTORICAL mode (markets closed and no ES price) it shows the last regular session with no dotted line. Call wall (CW), put wall (PW), gamma flip (GF) and max pain (MP) are translucent dotted step lines tagged with those codes on the price axis: each starts at the first bar, moves up or down at the minute GEX published a new value and runs on to the latest bar, so you can see how the levels moved alongside SPX. The Charm button shows a heatmap behind the candles: one column per minute, one cell per strike within 3% of spot, colored by the dealers' charm exposure at that strike (the delta their options positions lose or gain as 15 minutes pass, as dollars of underlying, assuming dealers are long calls and short puts). Blue is supportive (dealers buy the underlying back as time passes), amber is suppressive (they sell); a stronger color is a larger value, scaled to the day's 95th percentile. It builds up from when the server started. The pane below is RSI(14) of the 1-minute closes (Wilder's smoothing, dashed guides at 70 and 30); it starts on the 15th bar of the session. A dashboard started mid-session still loads the bars from the open. Times are ET. The column on the right is the gamma exposure (GEX) by strike on the same price axis: each bar sits at the height of its strike on the candles, put GEX to the left and call GEX to the right of the center line (Net shows one net bar per strike), with the live quote as the NOW line and the call wall, put wall, gamma flip and max pain as dashed lines (CW, PW, GF, MP; a level outside the view shows as an arrow at the edge). Peaks are where dealer hedging concentrates; net positive GEX means dealers dampen moves (converging), net negative means they amplify them (diverging). Bars are scaled to the strikes on screen. Zoom vertically with the wheel over the profile (or - / +, which keeps the live quote in place), drag the profile up or down to pan, drag the price axis to stretch it, and use Fit (or double-click the profile) to fit the candles again or Levels to see the quote, the four levels and the whole session. 0DTE / Monthly picks the expiration for the profile and the IV smile.</span>
+                    <span class="tooltip" role="tooltip">Times are ET. During regular hours: today's session from the 09:30 open as 1-minute IB bars, with the current minute following live SPX. Outside regular hours: the last session plus a dotted ES-derived line, reset at 09:30. Historical mode (closed, no ES price): the last regular session. A mid-session start loads the bars from the open.<br><br>Levels: call wall (CW), put wall (PW), zero gamma (ZG: where dealer gamma changes sign, searched within 5% of spot, "-" when there is no sign change) and max pain (MP) are translucent step lines that move when GEX publishes a new value. Dashed EM+ / EM- are the expected move from the open straddle, anchored at the first eligible publish (the badge tooltip says when). Thin solid R / S are the nearest pins above and below spot.<br><br>The strip above the chart shows EM, Charm to close, Vanna and Flow 30m (the dealers' hedge flow over the last 30 minutes: green bought, red sold).<br><br>Charm: a heatmap behind the candles, one column per minute and one cell per strike within 3% of spot, the dealers' charm exposure (blue supportive, amber suppressive) scaled to the day's 95th percentile.<br><br>Signals (off by default): markers for zero-gamma crosses, node holds and breaks, EM touches, flow surges, flow divergences, vanna shifts and the 14:00 charm window. Their thresholds are placeholders until they are calibrated.<br><br>Below the candles: RSI(14) (dashed 70 and 30; it starts on the 15th bar), then the Flow pane (Flow button): each minute's hedge dollars (green bought, red sold). The day total is a line on its own hidden scale; its value is in the Hedge flow 30m tooltip. The flow comes from the streamed strikes only, so after a mid-session start it begins at the first minute tracked.<br><br>Right column: GEX by strike on the same price axis (put GEX left, call GEX right, the NOW line, CW / PW / ZG / MP dashed). Curve: the dealers' gamma across prices; where it crosses zero is zero gamma. Diamonds are gamma nodes: a pin (filled) where dealers are long gamma tends to hold price, an accel node (hollow) where they are short gamma tends to speed moves through. Shaded bands are voids. The thick bracket on the right is the anchored expected move, the thin one the live straddle. The Flow view (customer delta dollars per strike), Hot dots and flow Ticks are switches on the profile; its summary gives gamma at spot, the distance to zero gamma, the share of the expected move used, charm to close, vanna and the 30-minute hedge flow. Zoom with the wheel over the profile, drag to pan, Fit or Levels to reset. 0DTE / Monthly picks the expiration.</span>
                 </span>
             </div>
             <div class="price-body">
@@ -117,6 +146,7 @@
                             <span class="gex-mode-toggle" id="gexViewToggle">
                                 <button class="gex-mode-btn active" data-view="split" onclick="setGexView('split')" title="Put and call GEX side by side: puts left, calls right">Split</button>
                                 <button class="gex-mode-btn" data-view="net" onclick="setGexView('net')" title="One bar per strike: net GEX">Net</button>
+                                <button class="gex-mode-btn" data-view="flow" onclick="setGexView('flow')" title="Customer net delta dollars per strike: calls right, puts left; filled when customers net bought, outlined when they net sold (0DTE only; Monthly draws Split)">Flow</button>
                             </span>
                         </div>
                         <div class="gex-foot-row gex-zoom" id="gexZoom" role="group" aria-label="Vertical zoom">
@@ -128,8 +158,14 @@
                         <div class="gex-summary">
                             <div class="gex-sum-label" id="gexChartLabel">GEX by strike</div>
                             <div class="gex-sum-row"><span class="k">Net GEX</span><span class="v"><span id="gexSumNet">-</span> <span class="gex-sum-regime" id="gexSumRegime"></span></span></div>
+                            <div class="gex-sum-row"><span class="k" title="Dealer gamma at spot: long gamma (converging) when positive">Gamma at spot</span><span class="v" id="gexSumGamma">-</span></div>
+                            <div class="gex-sum-row"><span class="k" title="Spot minus zero gamma: negative means spot is below zero gamma">Zero gamma dist.</span><span class="v" id="gexSumZgDist">-</span></div>
                             <div class="gex-sum-row"><span class="k">Call / Put OI</span><span class="v" id="gexSumOi">-</span></div>
                             <div class="gex-sum-row"><span class="k" title="Put OI / call OI, and the call share of gross GEX">P/C &middot; Call GEX</span><span class="v"><span id="gexSumPc">-</span> &middot; <span id="gexSumSkew">-</span></span></div>
+                            <div class="gex-sum-row"><span class="k" title="Session range over the open band width (2 x the open straddle)">EM used</span><span class="v" id="gexSumEmUsed">-</span></div>
+                            <div class="gex-sum-row"><span class="k" title="Dealer hedge flow from now to the close at constant spot">Charm to close</span><span class="v" id="gexSumCharm">-</span></div>
+                            <div class="gex-sum-row"><span class="k" title="Dealer hedge flow if implied vol fell one point, at constant spot">Vanna</span><span class="v" id="gexSumVanna">-</span></div>
+                            <div class="gex-sum-row"><span class="k" title="Customer flow the dealers hedged over the last 30 minutes: + they bought the underlying, - they sold">Hedge flow 30m</span><span class="v" id="gexSumFlow30">-</span></div>
                         </div>
                     </div>
                     <div class="gex-loading hidden" id="gexLoading">
@@ -717,6 +753,20 @@
                 <div class="order-modal-footer">
                     <button class="order-modal-cancel" onclick="closeSettings()">Cancel</button>
                     <button class="order-modal-confirm" id="setSimApplyBtn" onclick="applySimSettings()">Apply Workers</button>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <div class="settings-section-title">Dealer model</div>
+                <label class="settings-field">
+                    <span>Dealer position model</span>
+                    <select id="setDealerModel"></select>
+                </label>
+                <div class="settings-status off" id="setDealerHint">-</div>
+                <div class="settings-result" id="setDealerResult"></div>
+                <div class="order-modal-footer">
+                    <button class="order-modal-cancel" onclick="closeSettings()">Cancel</button>
+                    <button class="order-modal-confirm" id="setDealerApplyBtn" onclick="applyDealerSettings()">Apply Model</button>
                 </div>
             </div>
         </div>

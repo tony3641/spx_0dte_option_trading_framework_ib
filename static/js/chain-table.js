@@ -243,7 +243,7 @@
         if (strike === ctx.atm) rowClasses.push('row-atm');
         if (ctx.cw !== null && strike === ctx.cw) { rowClasses.push('row-call-wall'); tags += '<span class="strike-tag strike-tag-cw">CW</span>'; }
         if (ctx.pw !== null && strike === ctx.pw) { rowClasses.push('row-put-wall'); tags += '<span class="strike-tag strike-tag-pw">PW</span>'; }
-        if (ctx.gf !== null && Math.abs(strike - ctx.gf) < 2.5) { rowClasses.push('row-gamma-flip'); tags += '<span class="strike-tag strike-tag-gf">GF</span>'; }
+        if (ctx.gf !== null && Math.abs(strike - ctx.gf) < 2.5) { rowClasses.push('row-gamma-flip'); tags += '<span class="strike-tag strike-tag-gf">ZG</span>'; }
         const rowClass = rowClasses.join(' ');
         if (entry.tr.className !== rowClass) entry.tr.className = rowClass;
         const strikeCell = entry.cells.strike;
